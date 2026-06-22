@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Pre-commit hook:
+#   1) lint-staged 对暂存文件运行 prettier / cargo fmt
+#   2) 全局 Rust 格式检查 (即使没有 .rs 文件改动)
+
+. "$(dirname -- "$0")/_/husky.sh"
+
+# 让 cargo 可用 (rustup 默认安装路径)
+[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+
+# 1) lint-staged: prettier 格式化 TS/TSX/CSS + cargo fmt 格式化 Rust
+pnpm exec lint-staged
+
+# 2) Rust 全局格式检查
+if command -v cargo >/dev/null 2>&1; then
+  (cd src-tauri && cargo fmt -- --check) || {
+    echo ""
+    echo "❌ Rust 格式检查失败。"
+    echo "   运行: cd src-tauri && cargo fmt"
+    echo ""
+    exit 1
+  }
+else
+  echo "⚠️  cargo 未找到,跳过 Rust 格式检查 (CI 会捕获)"
+fi

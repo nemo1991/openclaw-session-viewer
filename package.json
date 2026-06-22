@@ -11,7 +11,10 @@
     "dev:tauri": "pnpm tauri dev",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,css,md}\"",
+    "format:rust": "cd src-tauri && cargo fmt",
+    "prepare": "husky"
   },
   "engines": {
     "node": ">=20",
@@ -20,7 +23,10 @@
   "packageManager": "pnpm@10.26.2",
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.3",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.8",
     "playwright-core": "^1.61.0",
+    "prettier": "^3.8.4",
     "tsx": "^4.22.4"
   }
 }
