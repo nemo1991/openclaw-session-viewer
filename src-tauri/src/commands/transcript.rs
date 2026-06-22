@@ -53,36 +53,32 @@ pub async fn stream_transcript(
     let (tx, mut rx) = mpsc::channel::<StreamBatch>(64);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let result: AppResult<()> = (|| {
-            jsonl::stream_batches(&p, 500, |batch| {
-                let entries: Vec<TranscriptEntryOut> = batch
-                    .records
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, v)| {
-                        let idx = batch.start_index + i;
-                        let norm = if is_openclaw {
-                            normalize_entry(v, idx)
-                        } else {
-                            normalize(v, idx)
-                        }?;
-                        Some(TranscriptEntryOut {
-                            index: idx,
-                            byte_offset: batch.start_byte,
-                            raw: v.clone(),
-                            normalized: norm,
-                        })
+        let _ = jsonl::stream_batches(&p, 500, |batch| {
+            let entries: Vec<TranscriptEntryOut> = batch
+                .records
+                .iter()
+                .enumerate()
+                .filter_map(|(i, v)| {
+                    let idx = batch.start_index + i;
+                    let norm = if is_openclaw {
+                        normalize_entry(v, idx)
+                    } else {
+                        normalize(v, idx)
+                    }?;
+                    Some(TranscriptEntryOut {
+                        index: idx,
+                        byte_offset: batch.start_byte,
+                        raw: v.clone(),
+                        normalized: norm,
                     })
-                    .collect();
-                let _ = tx.blocking_send(StreamBatch {
-                    start_index: batch.start_index,
-                    entries,
-                });
-            })
-        })();
-        if let Err(e) = result {
-            log::error!("stream_transcript 失败 ({}): {}", path_for_log, e);
-        }
+                })
+                .collect();
+            let _ = tx.blocking_send(StreamBatch {
+                start_index: batch.start_index,
+                entries,
+            });
+        })
+        .map_err(|e| log::error!("stream_transcript 失败 ({}): {}", path_for_log, e));
     });
 
     // 把 batch 通过 event 推送到前端

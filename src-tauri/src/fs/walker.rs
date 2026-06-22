@@ -26,6 +26,7 @@ pub fn list_jsonl_files(dir: &Path) -> AppResult<Vec<PathBuf>> {
 }
 
 /// 列举目录下所有 .json 文件(非递归,一层)
+#[allow(dead_code)]
 pub fn list_json_files_shallow(dir: &Path) -> AppResult<Vec<PathBuf>> {
     if !dir.exists() {
         return Ok(vec![]);

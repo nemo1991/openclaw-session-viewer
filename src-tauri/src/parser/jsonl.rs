@@ -128,6 +128,7 @@ pub fn count_lines(path: &Path) -> AppResult<u64> {
 }
 
 /// 从文件尾部读取(用于"加载更新的尾部")
+#[allow(dead_code)]
 pub fn tail_lines(path: &Path, n: usize) -> AppResult<Vec<serde_json::Value>> {
     use std::io::Read;
 
