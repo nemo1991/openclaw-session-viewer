@@ -60,7 +60,7 @@ pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<Ses
     }
 
     // 按最后更新时间倒序
-    out.sort_by(|a, b| b.mtime_ms.cmp(&a.mtime_ms));
+    out.sort_by_key(|s| std::cmp::Reverse(s.mtime_ms));
     log::info!("list_sessions: 返回 {} 个会话", out.len());
     Ok(out)
 }

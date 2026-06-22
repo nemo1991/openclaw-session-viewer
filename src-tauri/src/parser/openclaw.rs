@@ -29,7 +29,7 @@ pub fn normalize_entry(record: &Value, index: usize) -> Option<NormalizedMessage
             .unwrap_or("user")
             .to_string();
 
-        if let Some(message) = obj.get("message") {
+        if let Some(_message) = obj.get("message") {
             // Claude 格式把 tool result 作为 user 消息
             let claude_type = match original_role.as_str() {
                 "assistant" => "assistant",
@@ -94,7 +94,8 @@ pub fn normalize_entry(record: &Value, index: usize) -> Option<NormalizedMessage
             raw_type: r#type.to_string(),
         });
     }
-
+    // unreachable: message 分支在上面已经 return,这里只是为了让编译器满意
+    #[allow(unreachable_code)]
     normalize(&Value::Object(transformed), index)
 }
 

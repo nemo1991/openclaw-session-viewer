@@ -56,7 +56,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // 解析路径
-            let home = dirs::home_dir().ok_or_else(|| error::AppError::NoHomeDir)?;
+            let home = dirs::home_dir().ok_or(error::AppError::NoHomeDir)?;
             let paths = AppPaths::new(home);
 
             log::info!(

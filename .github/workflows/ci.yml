@@ -61,7 +61,7 @@ jobs:
 
   lint:
     name: Lint & Format Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +71,20 @@ jobs:
         with:
           # 不指定 node-version,使用 runner 默认(当前为 Node 24)
           cache: pnpm
+
+      - name: Install system deps (GTK for clippy build scripts)
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: dtolnay/rust-toolchain@stable
 
       - run: pnpm install --frozen-lockfile
 

@@ -86,21 +86,6 @@ impl AppPaths {
     }
 }
 
-/// 路径安全检查:确保目标在 base 下,防止 ../../etc/passwd
-pub fn assert_within(base: &Path, target: &Path) -> crate::error::AppResult<()> {
-    let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-    let canon_target = target
-        .canonicalize()
-        .unwrap_or_else(|_| target.to_path_buf());
-    if !canon_target.starts_with(&canon_base) {
-        return Err(crate::error::AppError::PathSecurity(format!(
-            "路径 {:?} 超出 {:?}",
-            canon_target, canon_base
-        )));
-    }
-    Ok(())
-}
-
 /// 路径安全检查(允许路径不存在):只做词法校验
 pub fn assert_within_lexical(base: &Path, target: &Path) -> crate::error::AppResult<()> {
     let base_canon = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
@@ -116,6 +101,7 @@ pub fn assert_within_lexical(base: &Path, target: &Path) -> crate::error::AppRes
 }
 
 /// Claude 项目目录名编码(对应前端 paths.ts)
+#[allow(dead_code)]
 pub fn encode_project_key(abs_path: &str) -> String {
     const MAX: usize = 200;
     let sanitized: String = abs_path
@@ -129,10 +115,12 @@ pub fn encode_project_key(abs_path: &str) -> String {
     format!("{}-{}", &sanitized[..MAX], hash)
 }
 
+#[allow(dead_code)]
 fn simple_hash36(input: &str) -> String {
     let mut hash: u32 = 0;
     for b in input.bytes() {
-        hash = (hash.wrapping_mul(31).wrapping_add(b as u32)) & 0xFFFFFFFF;
+        // wrapping_mul + wrapping_add 在 u32 上已经保证 wrap,不需要 & 0xFFFFFFFF
+        hash = hash.wrapping_mul(31).wrapping_add(b as u32);
     }
     let mut n = hash;
     if n == 0 {
