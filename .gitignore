@@ -1,0 +1,54 @@
+# Node
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+src-tauri/WixTools/
+
+# Claude Code 自身的工作目录(避免污染项目)
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Build
+*.dmg
+*.app
+*.exe
+*.msi
+*.AppImage
+*.deb
+*.rpm
+
+# Test
+coverage/
+.playwright/
+playwright-report/
+test-results/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Editor backups
+*.swp
+*.swo
+*~
+*.bak
