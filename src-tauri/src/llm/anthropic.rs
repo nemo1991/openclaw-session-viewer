@@ -54,8 +54,8 @@ async fn run_stream(
 
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    let api_key_value = HeaderValue::from_str(&req.api_key)
-        .map_err(|e| AppError::Llm(e.to_string()))?;
+    let api_key_value =
+        HeaderValue::from_str(&req.api_key).map_err(|e| AppError::Llm(e.to_string()))?;
     headers.insert(HeaderName::from_static("x-api-key"), api_key_value);
     headers.insert(
         HeaderName::from_static("anthropic-version"),
@@ -178,5 +178,7 @@ fn parse_sse_event(event_str: &str) -> Option<(String, Value)> {
     if data_str.is_empty() {
         return None;
     }
-    serde_json::from_str(&data_str).ok().map(|v| (event_type, v))
+    serde_json::from_str(&data_str)
+        .ok()
+        .map(|v| (event_type, v))
 }

@@ -77,7 +77,11 @@ impl AppPaths {
         Self {
             home: home_dir,
             claude,
-            openclaw: if openclaw.exists() { Some(openclaw) } else { None },
+            openclaw: if openclaw.exists() {
+                Some(openclaw)
+            } else {
+                None
+            },
         }
     }
 }
@@ -85,7 +89,9 @@ impl AppPaths {
 /// 路径安全检查:确保目标在 base 下,防止 ../../etc/passwd
 pub fn assert_within(base: &Path, target: &Path) -> crate::error::AppResult<()> {
     let canon_base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-    let canon_target = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    let canon_target = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
     if !canon_target.starts_with(&canon_base) {
         return Err(crate::error::AppError::PathSecurity(format!(
             "路径 {:?} 超出 {:?}",
@@ -97,9 +103,7 @@ pub fn assert_within(base: &Path, target: &Path) -> crate::error::AppResult<()> 
 
 /// 路径安全检查(允许路径不存在):只做词法校验
 pub fn assert_within_lexical(base: &Path, target: &Path) -> crate::error::AppResult<()> {
-    let base_canon = base
-        .canonicalize()
-        .unwrap_or_else(|_| base.to_path_buf());
+    let base_canon = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     let base_str = base_canon.to_string_lossy();
     let target_str = target.to_string_lossy();
     if !target_str.starts_with(base_str.as_ref()) {
@@ -116,13 +120,7 @@ pub fn encode_project_key(abs_path: &str) -> String {
     const MAX: usize = 200;
     let sanitized: String = abs_path
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c
-            } else {
-                '-'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     if sanitized.len() <= MAX {
         return sanitized;
@@ -144,7 +142,11 @@ fn simple_hash36(input: &str) -> String {
     while n > 0 {
         let r = n % 36;
         n /= 36;
-        let c = if r < 10 { b'0' + r as u8 } else { b'a' + (r - 10) as u8 } as char;
+        let c = if r < 10 {
+            b'0' + r as u8
+        } else {
+            b'a' + (r - 10) as u8
+        } as char;
         out.push(c);
     }
     out.chars().rev().collect()

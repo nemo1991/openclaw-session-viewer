@@ -9,7 +9,12 @@ pub fn build_context(entries: &[NormalizedMessage], range: &AnalyzeRange) -> Str
     let only_user = range.only_user.unwrap_or(false);
 
     let mut out = String::new();
-    out.push_str(&format!("共 {} 条消息(范围 {} - {})\n\n", entries.len(), from, to));
+    out.push_str(&format!(
+        "共 {} 条消息(范围 {} - {})\n\n",
+        entries.len(),
+        from,
+        to
+    ));
 
     for (i, e) in entries.iter().enumerate() {
         if i < from || i >= to {
@@ -18,7 +23,12 @@ pub fn build_context(entries: &[NormalizedMessage], range: &AnalyzeRange) -> Str
         if only_user && e.role != "user" {
             continue;
         }
-        out.push_str(&format!("\n--- [{}] {} · {} ---\n", i, e.timestamp.clone().unwrap_or_default(), e.role));
+        out.push_str(&format!(
+            "\n--- [{}] {} · {} ---\n",
+            i,
+            e.timestamp.clone().unwrap_or_default(),
+            e.role
+        ));
         for block in &e.blocks {
             match block.kind.as_str() {
                 "text" => {
@@ -37,7 +47,11 @@ pub fn build_context(entries: &[NormalizedMessage], range: &AnalyzeRange) -> Str
                     out.push_str(&format!("[思考] {}\n", text));
                 }
                 "tool_use" => {
-                    let name = block.data.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                    let name = block
+                        .data
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
                     let input = block
                         .data
                         .get("input")
@@ -63,7 +77,11 @@ pub fn build_context(entries: &[NormalizedMessage], range: &AnalyzeRange) -> Str
                         .get("is_error")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    let label = if is_err { "[工具结果:失败]" } else { "[工具结果]" };
+                    let label = if is_err {
+                        "[工具结果:失败]"
+                    } else {
+                        "[工具结果]"
+                    };
                     // 截断过长的输出
                     let truncated = truncate(&content, 4000);
                     out.push_str(&format!("{} {}\n", label, truncated));

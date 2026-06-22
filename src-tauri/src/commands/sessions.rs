@@ -182,10 +182,22 @@ fn build_claude_session_meta(
                         *model_count.entry(model.to_string()).or_insert(0) += 1;
                     }
                     if let Some(usage) = msg.get("usage") {
-                        token_total.input += usage.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-                        token_total.output += usage.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-                        token_total.cache_read += usage.get("cache_read_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
-                        token_total.cache_write += usage.get("cache_creation_input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                        token_total.input += usage
+                            .get("input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0);
+                        token_total.output += usage
+                            .get("output_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0);
+                        token_total.cache_read += usage
+                            .get("cache_read_input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0);
+                        token_total.cache_write += usage
+                            .get("cache_creation_input_tokens")
+                            .and_then(|x| x.as_u64())
+                            .unwrap_or(0);
                     }
                 }
             }
@@ -205,7 +217,11 @@ fn build_claude_session_meta(
 
     // 完整计数 (可能比 50 多)
     let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
-    let message_count = if total > head.len() as u32 { total } else { message_count.max(total) };
+    let message_count = if total > head.len() as u32 {
+        total
+    } else {
+        message_count.max(total)
+    };
 
     // 主模型 (使用次数最多的)
     let primary_model = model_count
@@ -221,7 +237,13 @@ fn build_claude_session_meta(
         .with_extension("")
         .join("subagents")
         .exists()
-        .then(|| jsonl_path.with_extension("").join("subagents").to_string_lossy().to_string());
+        .then(|| {
+            jsonl_path
+                .with_extension("")
+                .join("subagents")
+                .to_string_lossy()
+                .to_string()
+        });
 
     let _ = state; // 暂不缓存读取
 
@@ -303,7 +325,11 @@ fn build_openclaw_session_meta(jsonl_path: &Path, agent_id: &str) -> AppResult<S
     }
 
     let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
-    let message_count = if total > head.len() as u32 { total } else { message_count.max(total) };
+    let message_count = if total > head.len() as u32 {
+        total
+    } else {
+        message_count.max(total)
+    };
 
     Ok(SessionMeta {
         session_id,

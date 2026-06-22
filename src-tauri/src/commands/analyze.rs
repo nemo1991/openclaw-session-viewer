@@ -40,9 +40,16 @@ pub struct AnalyzeRange {
 #[derive(Serialize, Clone)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum AnalyzeEvent {
-    Delta { text: String },
-    Done { total_input_tokens: Option<u32>, total_output_tokens: Option<u32> },
-    Error { message: String },
+    Delta {
+        text: String,
+    },
+    Done {
+        total_input_tokens: Option<u32>,
+        total_output_tokens: Option<u32>,
+    },
+    Error {
+        message: String,
+    },
 }
 
 /// 开始分析
@@ -109,16 +116,20 @@ pub async fn analyze_session(args: AnalyzeArgs, app: AppHandle) -> AppResult<()>
                         continue;
                     }
                 }
-                Err(e) => AnalyzeEvent::Error { message: e.to_string() },
+                Err(e) => AnalyzeEvent::Error {
+                    message: e.to_string(),
+                },
             };
             if tx.send(evt).await.is_err() {
                 break;
             }
         }
-        let _ = tx.send(AnalyzeEvent::Done {
-            total_input_tokens: None,
-            total_output_tokens: None,
-        }).await;
+        let _ = tx
+            .send(AnalyzeEvent::Done {
+                total_input_tokens: None,
+                total_output_tokens: None,
+            })
+            .await;
     });
 
     tauri::async_runtime::spawn(async move {

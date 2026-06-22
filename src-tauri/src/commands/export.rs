@@ -94,16 +94,26 @@ fn append_message_md(md: &mut String, n: &crate::parser::claude::NormalizedMessa
                     .and_then(|v| v.as_str())
                     .or_else(|| block.data.get("text").and_then(|v| v.as_str()))
                     .unwrap_or("");
-                md.push_str(&format!("<details><summary>💭 思考</summary>\n\n{}\n\n</details>\n\n", text));
+                md.push_str(&format!(
+                    "<details><summary>💭 思考</summary>\n\n{}\n\n</details>\n\n",
+                    text
+                ));
             }
             "tool_use" => {
-                let name = block.data.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let name = block
+                    .data
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 let input = block
                     .data
                     .get("input")
                     .map(|v| serde_json::to_string_pretty(v).unwrap_or_default())
                     .unwrap_or_default();
-                md.push_str(&format!("### 🔧 工具调用: `{}`\n\n```json\n{}\n```\n\n", name, input));
+                md.push_str(&format!(
+                    "### 🔧 工具调用: `{}`\n\n```json\n{}\n```\n\n",
+                    name, input
+                ));
             }
             "tool_result" => {
                 let content = block
@@ -123,7 +133,11 @@ fn append_message_md(md: &mut String, n: &crate::parser::claude::NormalizedMessa
                     .get("is_error")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let label = if is_err { "❌ 工具结果 (失败)" } else { "✅ 工具结果" };
+                let label = if is_err {
+                    "❌ 工具结果 (失败)"
+                } else {
+                    "✅ 工具结果"
+                };
                 md.push_str(&format!("### {} \n\n```\n{}\n```\n\n", label, content));
             }
             "meta" => {
@@ -159,7 +173,9 @@ fn append_message_html(body: &mut String, n: &crate::parser::claude::NormalizedM
     };
     body.push_str(&format!(
         r#"<div class="msg {}"><div class="msg-header">{} · {}</div>"#,
-        role_class, role_label, escape_html(&ts)
+        role_class,
+        role_label,
+        escape_html(&ts)
     ));
     if let Some(model) = &n.model {
         body.push_str(&format!(
@@ -188,7 +204,11 @@ fn append_message_html(body: &mut String, n: &crate::parser::claude::NormalizedM
                 ));
             }
             "tool_use" => {
-                let name = block.data.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+                let name = block
+                    .data
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 let input = block
                     .data
                     .get("input")
@@ -218,7 +238,11 @@ fn append_message_html(body: &mut String, n: &crate::parser::claude::NormalizedM
                     .get("is_error")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                let cls = if is_err { "tool-result err" } else { "tool-result" };
+                let cls = if is_err {
+                    "tool-result err"
+                } else {
+                    "tool-result"
+                };
                 body.push_str(&format!(
                     r#"<div class="{}"><pre>{}</pre></div>"#,
                     cls,
@@ -231,7 +255,10 @@ fn append_message_html(body: &mut String, n: &crate::parser::claude::NormalizedM
                     .get("label")
                     .and_then(|v| v.as_str())
                     .unwrap_or("meta");
-                body.push_str(&format!(r#"<div class="meta">📎 {}</div>"#, escape_html(label)));
+                body.push_str(&format!(
+                    r#"<div class="meta">📎 {}</div>"#,
+                    escape_html(label)
+                ));
             }
             _ => {
                 body.push_str(&format!(

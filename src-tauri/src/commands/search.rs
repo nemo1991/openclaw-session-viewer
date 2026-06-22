@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use regex::Regex;
 use serde::Serialize;
-use tauri::State;
 use tauri::AppHandle;
 use tauri::Emitter;
+use tauri::State;
 use tokio::sync::mpsc;
 
 use crate::error::AppResult;
@@ -40,11 +40,7 @@ pub struct GlobalSearchHitOut {
 
 /// 在单个会话内搜索
 #[tauri::command]
-pub async fn search_session(
-    path: String,
-    query: String,
-    app: AppHandle,
-) -> AppResult<()> {
+pub async fn search_session(path: String, query: String, app: AppHandle) -> AppResult<()> {
     let (tx, mut rx) = mpsc::channel::<SearchHitOut>(128);
     let app_clone = app.clone();
 
@@ -89,7 +85,11 @@ pub async fn search_session(
 
 /// 跨所有会话搜索
 #[tauri::command]
-pub async fn search_all(query: String, state: State<'_, Arc<AppState>>, app: AppHandle) -> AppResult<()> {
+pub async fn search_all(
+    query: String,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> AppResult<()> {
     let (tx, mut rx) = mpsc::channel::<GlobalSearchHitOut>(128);
     let app_clone = app.clone();
 

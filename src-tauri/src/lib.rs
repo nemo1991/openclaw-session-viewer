@@ -12,13 +12,13 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
+mod cache;
+mod commands;
 mod error;
 mod fs;
-mod cache;
-mod parser;
-mod commands;
 mod llm;
 mod model;
+mod parser;
 
 use error::AppResult;
 use fs::paths::AppPaths;
@@ -56,14 +56,16 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // 解析路径
-            let home = dirs::home_dir()
-                .ok_or_else(|| error::AppError::NoHomeDir)?;
+            let home = dirs::home_dir().ok_or_else(|| error::AppError::NoHomeDir)?;
             let paths = AppPaths::new(home);
 
             log::info!(
                 "应用启动: claude_home={}, openclaw_home={:?}",
                 paths.claude.home.display(),
-                paths.openclaw.as_ref().map(|o| o.home.display().to_string())
+                paths
+                    .openclaw
+                    .as_ref()
+                    .map(|o| o.home.display().to_string())
             );
 
             let state = AppState::new(paths)?;
