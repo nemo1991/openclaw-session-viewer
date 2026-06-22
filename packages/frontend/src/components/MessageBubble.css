@@ -1,0 +1,146 @@
+.msg {
+  margin: 12px 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  overflow: hidden;
+}
+
+.msg-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--color-bg-hover);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.msg-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+.msg-user .msg-avatar {
+  background: var(--color-primary);
+  color: white;
+}
+
+.msg-assistant .msg-avatar {
+  background: var(--color-accent);
+  color: white;
+}
+
+.msg-tool .msg-avatar {
+  background: var(--color-warning);
+  color: white;
+}
+
+.msg-header-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.msg-role {
+  font-weight: 600;
+}
+
+.msg-model {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--color-bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+}
+
+.msg-time {
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+}
+
+.msg-tokens {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.msg-cache {
+  color: var(--color-accent);
+}
+
+.msg-body {
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.msg-user {
+  background: var(--color-msg-user);
+}
+
+.msg-assistant {
+  background: var(--color-msg-assistant);
+}
+
+.msg-tool {
+  background: var(--color-msg-tool);
+}
+
+.msg-system {
+  background: var(--color-msg-system);
+}
+
+.msg-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0;
+  padding-left: 12px;
+  border-left: 2px solid var(--color-border);
+}
+
+.msg-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.block-text {
+  margin: 4px 0;
+}
+
+.block-text p {
+  margin: 8px 0;
+}
+
+.block-text p:first-child {
+  margin-top: 0;
+}
+
+.block-text p:last-child {
+  margin-bottom: 0;
+}
+
+.block-image,
+.block-unknown {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-style: italic;
+}

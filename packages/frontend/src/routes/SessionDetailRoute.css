@@ -1,0 +1,95 @@
+.session-detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--color-bg);
+}
+
+.session-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.session-header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-header-info h1 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.session-header-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+}
+
+.session-header-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.session-header-actions button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.session-header-actions .primary {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.session-header-actions .primary:hover {
+  background: var(--color-primary);
+  opacity: 0.9;
+}
+
+.model-pill {
+  background: var(--color-bg-hover);
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.live-pill {
+  background: var(--color-success);
+  color: white;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}

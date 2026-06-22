@@ -1,0 +1,63 @@
+.tool-use-card {
+  margin: 6px 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.tool-use-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  text-align: left;
+  border: none;
+  background: var(--color-bg);
+  border-radius: 0;
+}
+
+.tool-use-header:hover {
+  background: var(--color-bg-hover);
+}
+
+.tool-name {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--color-warning);
+}
+
+.tool-summary {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-subtle);
+}
+
+.tool-use-body {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  max-height: 400px;
+  overflow: auto;
+}
+
+.tool-use-body pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

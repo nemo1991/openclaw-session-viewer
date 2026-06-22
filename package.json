@@ -1,0 +1,26 @@
+{
+  "name": "openclaw-session-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "跨平台桌面应用 - 浏览本地 OpenClaw / Claude Code 会话",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @ocsv/frontend dev",
+    "build": "pnpm --filter @ocsv/shared build && pnpm --filter @ocsv/frontend build",
+    "build:tauri": "pnpm tauri build",
+    "dev:tauri": "pnpm tauri dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@10.26.2",
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.3",
+    "playwright-core": "^1.61.0",
+    "tsx": "^4.22.4"
+  }
+}
