@@ -46,12 +46,7 @@ where
                 index += 1;
             }
             Err(e) => {
-                log::warn!(
-                    "跳过损坏的 JSONL 行 ({}:{}): {}",
-                    path.display(),
-                    index,
-                    e
-                );
+                log::warn!("跳过损坏的 JSONL 行 ({}:{}): {}", path.display(), index, e);
             }
         }
     }
@@ -93,12 +88,7 @@ where
                 index += 1;
             }
             Err(e) => {
-                log::warn!(
-                    "跳过损坏的 JSONL 行 ({}:{}): {}",
-                    path.display(),
-                    index,
-                    e
-                );
+                log::warn!("跳过损坏的 JSONL 行 ({}:{}): {}", path.display(), index, e);
             }
         }
     }
@@ -180,10 +170,7 @@ mod tests {
 
     #[test]
     fn test_count_lines_basic() {
-        let p = write_temp(
-            "count_basic.jsonl",
-            "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n",
-        );
+        let p = write_temp("count_basic.jsonl", "{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n");
         assert_eq!(count_lines(&p).unwrap(), 3);
     }
 
@@ -204,9 +191,7 @@ mod tests {
 
     #[test]
     fn test_stream_batches() {
-        let content: String = (0..100)
-            .map(|i| format!("{{\"i\":{}}}\n", i))
-            .collect();
+        let content: String = (0..100).map(|i| format!("{{\"i\":{}}}\n", i)).collect();
         let p = write_temp("stream.jsonl", &content);
         let mut total = 0;
         let mut max_batch = 0;
@@ -235,9 +220,7 @@ mod tests {
 
     #[test]
     fn test_parse_first_n() {
-        let content: String = (0..10)
-            .map(|i| format!("{{\"i\":{}}}\n", i))
-            .collect();
+        let content: String = (0..10).map(|i| format!("{{\"i\":{}}}\n", i)).collect();
         let p = write_temp("first_n.jsonl", &content);
         let first = parse_first_n(&p, 5).unwrap();
         assert_eq!(first.len(), 5);

@@ -12,7 +12,11 @@ pub fn list_jsonl_files(dir: &Path) -> AppResult<Vec<PathBuf>> {
         return Ok(vec![]);
     }
     let mut out = Vec::new();
-    for entry in WalkDir::new(dir).max_depth(4).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(dir)
+        .max_depth(4)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let p = entry.path();
         if p.is_file() && p.extension().map(|e| e == "jsonl").unwrap_or(false) {
             out.push(p.to_path_buf());

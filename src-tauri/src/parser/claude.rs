@@ -55,7 +55,10 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
         .get("timestamp")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let parent_uuid = obj.get("parentUuid").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let parent_uuid = obj
+        .get("parentUuid")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let is_sidechain = obj.get("isSidechain").and_then(|v| v.as_bool());
 
     let mut msg = NormalizedMessage {
@@ -97,8 +100,14 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
                 }
                 if let Some(usage) = message.get("usage") {
                     msg.token_usage = Some(TokenUsageOut {
-                        input: usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                        output: usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                        input: usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
+                        output: usage
+                            .get("output_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0),
                         cache_read: usage
                             .get("cache_read_input_tokens")
                             .and_then(|v| v.as_u64())
@@ -146,7 +155,10 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
                 .unwrap_or("")
                 .to_string();
             let mut data = serde_json::Map::new();
-            data.insert("label".to_string(), Value::String(format!("mode: {}", mode)));
+            data.insert(
+                "label".to_string(),
+                Value::String(format!("mode: {}", mode)),
+            );
             msg.blocks.push(NormalizedBlock {
                 kind: "meta".to_string(),
                 data,
@@ -159,7 +171,10 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
                 .unwrap_or("")
                 .to_string();
             let mut data = serde_json::Map::new();
-            data.insert("label".to_string(), Value::String(format!("permission: {}", mode)));
+            data.insert(
+                "label".to_string(),
+                Value::String(format!("permission: {}", mode)),
+            );
             msg.blocks.push(NormalizedBlock {
                 kind: "meta".to_string(),
                 data,
@@ -182,7 +197,10 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
         "last-prompt" => {
             let prompt = obj.get("prompt").cloned().unwrap_or(Value::Null);
             let mut data = serde_json::Map::new();
-            data.insert("label".to_string(), Value::String("last-prompt".to_string()));
+            data.insert(
+                "label".to_string(),
+                Value::String("last-prompt".to_string()),
+            );
             data.insert("payload".to_string(), prompt);
             msg.blocks.push(NormalizedBlock {
                 kind: "meta".to_string(),
@@ -204,7 +222,10 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
         }
         "task_reminder" => {
             let mut data = serde_json::Map::new();
-            data.insert("label".to_string(), Value::String("task-reminder".to_string()));
+            data.insert(
+                "label".to_string(),
+                Value::String("task-reminder".to_string()),
+            );
             data.insert("payload".to_string(), Value::Object(obj.clone()));
             msg.blocks.push(NormalizedBlock {
                 kind: "meta".to_string(),
@@ -374,14 +395,26 @@ mod tests {
                 "permission-mode",
                 json!({ "type": "permission-mode", "permissionMode": "acceptEdits" }),
             ),
-            ("custom-title", json!({ "type": "custom-title", "title": "My session" })),
-            ("ai-title", json!({ "type": "ai-title", "title": "AI title" })),
-            ("task_reminder", json!({ "type": "task_reminder", "itemCount": 3 })),
-            ("file-history-snapshot", json!({
-                "type": "file-history-snapshot",
-                "messageId": "m1",
-                "snapshot": { "trackedFileBackups": {} }
-            })),
+            (
+                "custom-title",
+                json!({ "type": "custom-title", "title": "My session" }),
+            ),
+            (
+                "ai-title",
+                json!({ "type": "ai-title", "title": "AI title" }),
+            ),
+            (
+                "task_reminder",
+                json!({ "type": "task_reminder", "itemCount": 3 }),
+            ),
+            (
+                "file-history-snapshot",
+                json!({
+                    "type": "file-history-snapshot",
+                    "messageId": "m1",
+                    "snapshot": { "trackedFileBackups": {} }
+                }),
+            ),
         ];
         for (label, v) in cases {
             let n = normalize(&v, 0).unwrap_or_else(|| panic!("{label}"));
