@@ -1,0 +1,4 @@
+{
+  "*.{ts,tsx,css}": "prettier --write",
+  "*.{rs,toml}": "cd src-tauri && cargo fmt --"
+}
