@@ -118,9 +118,12 @@ export function resolveOpenClawPaths(homeDir: string): OpenClawPaths {
   };
 }
 
-/** 跨平台路径拼接 (浏览器/Rust 端都用 /) */
-export function joinPath(...parts: string[]): string {
-  const filtered = parts.filter((p) => p != null && p !== "");
+/** 跨平台路径拼接 (浏览器/Rust 端都用 /)
+ *
+ * 接受 (string | null | undefined) 数组,空值会被忽略。
+ */
+export function joinPath(...parts: Array<string | null | undefined>): string {
+  const filtered = parts.filter((p): p is string => p != null && p !== "");
   if (filtered.length === 0) return "";
 
   const first = filtered[0]!;

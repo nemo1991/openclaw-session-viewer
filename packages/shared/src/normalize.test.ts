@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import type { ClaudeRecord } from "./claude-types.js";
+import type { OpenClawEntry } from "./openclaw-types.js";
 import {
   normalizeClaudeRecord,
   normalizeOpenClawEntry,
@@ -15,14 +17,14 @@ describe("normalizeClaudeRecord", () => {
         uuid: "u1",
         timestamp: "2026-06-20T00:00:00Z",
         message: { role: "user", content: "Hello" },
-      },
+      } as ClaudeRecord,
       0
     );
     expect(r).not.toBeNull();
     expect(r!.role).toBe("user");
     expect(r!.id).toBe("u1");
     expect(r!.blocks).toHaveLength(1);
-    expect(r!.blocks[0].kind).toBe("text");
+    expect(r!.blocks[0]?.kind).toBe("text");
   });
 
   it("normalizes user with content blocks", () => {
@@ -37,7 +39,7 @@ describe("normalizeClaudeRecord", () => {
             { type: "text", text: "second" },
           ],
         },
-      },
+      } as ClaudeRecord,
       0
     );
     expect(r!.blocks).toHaveLength(2);
@@ -60,7 +62,7 @@ describe("normalizeClaudeRecord", () => {
             cache_read_input_tokens: 20,
           },
         },
-      },
+      } as ClaudeRecord,
       0
     );
     expect(r!.role).toBe("assistant");
@@ -72,7 +74,7 @@ describe("normalizeClaudeRecord", () => {
       cacheRead: 20,
       cacheWrite: 0,
     });
-    expect(r!.blocks[0].kind).toBe("tool_use");
+    expect(r!.blocks[0]?.kind).toBe("tool_use");
   });
 
   it("normalizes thinking block", () => {
@@ -86,16 +88,22 @@ describe("normalizeClaudeRecord", () => {
           stop_reason: "end_turn",
           usage: { input_tokens: 1, output_tokens: 1 },
         },
-      },
+      } as ClaudeRecord,
       0
     );
-    expect(r!.blocks[0].kind).toBe("thinking");
+    expect(r!.blocks[0]?.kind).toBe("thinking");
   });
 
   it("normalizes meta records", () => {
-    const cases = ["mode", "permission-mode", "custom-title", "ai-title", "task_reminder"];
-    for (const type of cases) {
-      const r = normalizeClaudeRecord({ type }, 0);
+    const types: Array<ClaudeRecord["type"]> = [
+      "mode",
+      "permission-mode",
+      "custom-title",
+      "ai-title",
+      "task_reminder",
+    ];
+    for (const type of types) {
+      const r = normalizeClaudeRecord({ type } as ClaudeRecord, 0);
       expect(r).not.toBeNull();
       expect(r!.role).toBe("meta");
     }
@@ -106,16 +114,16 @@ describe("normalizeClaudeRecord", () => {
       {
         type: "attachment",
         attachment: { type: "skill_listing", names: ["x"] },
-      },
+      } as ClaudeRecord,
       0
     );
     expect(r!.role).toBe("meta");
-    expect(r!.blocks[0].kind).toBe("meta");
+    expect(r!.blocks[0]?.kind).toBe("meta");
   });
 
   it("uses index when uuid missing", () => {
     const r = normalizeClaudeRecord(
-      { type: "user", message: { role: "user", content: "x" } },
+      { type: "user", message: { role: "user", content: "x" } } as ClaudeRecord,
       42
     );
     expect(r!.id).toBe("idx-42");
@@ -127,7 +135,7 @@ describe("normalizeClaudeRecord", () => {
   });
 
   it("handles empty record as unknown meta", () => {
-    const r = normalizeClaudeRecord({}, 0);
+    const r = normalizeClaudeRecord({} as ClaudeRecord, 0);
     expect(r).not.toBeNull();
     expect(r!.role).toBe("meta");
     // 无 type 字段 → rawType 是 undefined
@@ -139,7 +147,13 @@ describe("normalizeOpenClawEntry", () => {
   it("returns null for session header", () => {
     expect(
       normalizeOpenClawEntry(
-        { type: "session", version: 1, id: "s1", cwd: "/tmp", timestamp: "2026-06-20T00:00:00Z" },
+        {
+          type: "session",
+          version: 1,
+          id: "s1",
+          cwd: "/tmp",
+          timestamp: "2026-06-20T00:00:00Z",
+        } as OpenClawEntry,
         0
       )
     ).toBeNull();
@@ -153,12 +167,12 @@ describe("normalizeOpenClawEntry", () => {
         parentId: null,
         timestamp: "2026-06-20T00:00:00Z",
         message: { role: "user", content: "Hi" },
-      },
+      } as OpenClawEntry,
       0
     );
     expect(r).not.toBeNull();
     expect(r!.role).toBe("user");
-    expect(r!.blocks[0].kind).toBe("text");
+    expect(r!.blocks[0]?.kind).toBe("text");
   });
 
   it("handles camelCase toolUse in content", () => {
@@ -175,12 +189,12 @@ describe("normalizeOpenClawEntry", () => {
             { type: "toolUse", id: "tu1", name: "Read", input: { path: "/tmp" } },
           ],
         },
-      },
+      } as unknown as OpenClawEntry,
       1
     );
     expect(r!.blocks).toHaveLength(2);
-    expect(r!.blocks[0].kind).toBe("text");
-    expect(r!.blocks[1].kind).toBe("tool_use");
+    expect(r!.blocks[0]?.kind).toBe("text");
+    expect(r!.blocks[1]?.kind).toBe("tool_use");
   });
 
   it("preserves parentId as parentUuid", () => {
@@ -191,7 +205,7 @@ describe("normalizeOpenClawEntry", () => {
         parentId: "m1",
         timestamp: "2026-06-20T00:00:00Z",
         message: { role: "user", content: "x" },
-      },
+      } as OpenClawEntry,
       0
     );
     expect(r!.parentUuid).toBe("m1");
@@ -216,16 +230,20 @@ describe("emptyQuickMeta + mergeQuickMeta", () => {
     const b = {
       messageCount: 5,
       totalTokens: { input: 50, output: 25, cacheRead: 5, cacheWrite: 0 },
-      models: new Map([["claude-sonnet-4-6", 3], ["claude-opus-4-8", 1]]),
+      models: new Map([
+        ["claude-sonnet-4-6", 3],
+        ["claude-opus-4-8", 1],
+      ]),
       firstTimestamp: "2026-06-19T22:00:00Z",
       lastTimestamp: "2026-06-20T02:00:00Z",
     };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const merged = mergeQuickMeta(a as any, b as any);
     expect(merged.messageCount).toBe(15);
     expect(merged.totalTokens.input).toBe(150);
     expect(merged.totalTokens.cacheRead).toBe(15);
-    expect(merged.firstTimestamp).toBe("2026-06-19T22:00:00Z"); // earlier
-    expect(merged.lastTimestamp).toBe("2026-06-20T02:00:00Z"); // later
+    expect(merged.firstTimestamp).toBe("2026-06-19T22:00:00Z");
+    expect(merged.lastTimestamp).toBe("2026-06-20T02:00:00Z");
   });
 });
 
