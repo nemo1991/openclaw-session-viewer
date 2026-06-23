@@ -219,6 +219,12 @@ pnpm tauri build
 
 详见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
+### 数据格式
+
+OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语义,以及本应用
+如何归一化/过滤,见 [docs/OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md)
+(从 openclaw 源码 + 官方文档交叉验证)。
+
 ## 🛠 开发
 
 ### 项目结构
