@@ -59,12 +59,17 @@ git push origin main --tags
 
 构建产物:
 
-| 平台    | 资产                                                     |
-| ------- | -------------------------------------------------------- |
-| macOS   | `OpenClaw 会话查看器_X.Y.Z_aarch64.dmg`                  |
-| Linux   | `OpenClaw 会话查看器_X.Y.Z_amd64.AppImage` / `.deb`      |
-| Windows | `OpenClaw 会话查看器_X.Y.Z_x64_en-US.msi` / `-setup.exe` |
-| 校验    | `SHA256SUMS.txt`                                         |
+| 平台    | 资产                                                         |
+| ------- | ------------------------------------------------------------ |
+| macOS   | `OpenClaw Session Viewer_X.Y.Z_aarch64.dmg`                  |
+| Linux   | `OpenClaw Session Viewer_X.Y.Z_amd64.AppImage` / `.deb`      |
+| Windows | `OpenClaw Session Viewer_X.Y.Z_x64_en-US.msi` / `-setup.exe` |
+| 校验    | `SHA256SUMS.txt`                                             |
+
+> **为什么不是中文名?**: Tauri bundler 在 Windows MSI 阶段用 WiX 3.x 的 `light.exe`,
+> 它对非 ASCII 文件名支持差([issue #8363](https://github.com/tauri-apps/tauri/issues/8363))。
+> 解决方案是 `productName` 用 ASCII。**窗口标题仍然是中文**(`app.windows[].title`),
+> 仅 bundler 输出的文件名是英文。
 
 ### 4. Review draft release
 
