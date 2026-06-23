@@ -45,7 +45,10 @@ pub async fn search_session(path: String, query: String, app: AppHandle) -> AppR
     let app_clone = app.clone();
 
     tauri::async_runtime::spawn_blocking(move || {
-        // 第二层兜底: 单会话 panic 不影响其他会话/前端
+        // 第二层兜底: 单会话 panic 不影响其他会话/前端。
+        // 用 catch_unwind catch + log + 吞掉(不要 rethrow — rethrow
+        // 在 Rust 2024 下会触发 "Rust panics must be rethrown, aborting"
+        // 导致 catch_unwind 反而把进程杀掉)。
         let inner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> AppResult<()> {
             let p = Path::new(&path);
             if !p.exists() {
@@ -75,7 +78,16 @@ pub async fn search_session(path: String, query: String, app: AppHandle) -> AppR
         match inner {
             Ok(Ok(())) => {}
             Ok(Err(e)) => log::error!("search_session 内部错误: {}", e),
-            Err(_) => log::error!("search_session panic,此会话未完成搜索"),
+            // 故意吞掉 panic payload — panic hook 已经 log 了位置 + 内容,
+            // 这里不再 rethrow,避免 Rust 2024 aborting 整套进程
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "<non-string panic>".to_string());
+                log::error!("search_session panic,此会话未完成搜索: {}", msg);
+            }
         }
     });
 
@@ -162,7 +174,14 @@ pub async fn search_all(
         }));
         match inner {
             Ok(()) => {}
-            Err(_) => log::error!("search_all panic,部分会话可能未搜索到"),
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "<non-string panic>".to_string());
+                log::error!("search_all panic,部分会话可能未搜索到: {}", msg);
+            }
         }
     });
 
