@@ -50,6 +50,26 @@ pub fn run() {
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .try_init();
 
+    // 自定义 panic hook: 只 log,不 abort。
+    // 之前默认行为是 panic → abort 整个 Tauri 进程,任何 search/parse
+    // 单条记录出问题都会让用户重启 App。改为: log + 继续运行。
+    std::panic::set_hook(Box::new(|info| {
+        // 取 location,尽力还原 panic 在哪个文件/行
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        log::error!(
+            "RUST PANIC at {}: {} (search/analyze 中单条记录异常不会终止 App)",
+            loc,
+            info.payload()
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| info.payload().downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "<non-string panic>".to_string())
+        );
+    }));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
