@@ -31,7 +31,7 @@ const zhCN = {
     messages: "{{count}} 条",
   },
   detail: {
-    back: "← 返回",
+    back: "返回",
     analyzing: "分析中…",
     analyze: "🤖 大模型分析",
     export: "📤 导出",
