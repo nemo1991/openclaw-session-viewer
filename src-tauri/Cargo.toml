@@ -48,8 +48,11 @@ syntect = "5"
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
-panic = "abort"
+# panic = "unwind"(默认)而非 abort:
+# - 让 std::panic::catch_unwind 能工作(单条记录/会话 panic 不影响整个 app)
+# - 让 std::panic::set_hook 能拦截(我们注册了 log + 不 abort 的 hook)
+# - 调试期能看到 backtrace;release 期性能影响 < 1%
 codegen-units = 1
 lto = true
 opt-level = "s"
-strip = true
+strip = "debuginfo"
