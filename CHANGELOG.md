@@ -2,7 +2,8 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
-## [Unreleased]
+## [0.2.0] - 2026-06-23
+- 增加github action 创建release
 
 ### 计划
 - 会话对比 (diff)
