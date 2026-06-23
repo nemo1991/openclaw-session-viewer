@@ -146,10 +146,16 @@ pnpm tauri build
 
 构建产物:
 
-- **macOS**: `src-tauri/target/release/bundle/macos/OpenClaw 会话查看器.app`
+- **macOS**: `src-tauri/target/release/bundle/macos/OpenClaw Session Viewer.app`
 - **DMG**: `src-tauri/target/release/bundle/dmg/*.dmg`
 - **Linux AppImage/deb**: `src-tauri/target/release/bundle/{appimage,deb}/*`
 - **Windows MSI**: `src-tauri/target/release/bundle/msi/*.msi`
+
+> ℹ️ **为什么是英文文件名?**: Tauri bundler 在 Windows MSI 阶段用 WiX 3.x 的
+> `light.exe`,对非 ASCII 文件名支持差
+> ([tauri-apps/tauri#8363](https://github.com/tauri-apps/tauri/issues/8363))。
+> 所以 `productName` 用 ASCII,只在窗口标题(`app.windows[].title`)
+> 保留中文显示。
 
 > ⚠️ **不要** 直接运行 `target/release/openclaw-session-viewer` 裸二进制。macOS 上 Tauri 2 必须在 `.app` bundle 内运行才能正确初始化 webview,否则窗口会出现但内容空白。详见 [故障排除](#-故障排除)。
 
