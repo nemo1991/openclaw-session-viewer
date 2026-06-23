@@ -44,6 +44,13 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bash .github/workflows/scripts/inject-version.sh
 
+      - name: Ensure platform icons present
+        run: |
+          if [ ! -f src-tauri/icons/icon.ico ] || [ ! -f src-tauri/icons/icon.icns ]; then
+            echo "Icons missing — regenerating from icon.png"
+            pnpm tauri icon src-tauri/icons/icon.png
+          fi
+
       - name: Build .app + .dmg
         run: pnpm tauri build
 
@@ -100,6 +107,13 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bash .github/workflows/scripts/inject-version.sh
 
+      - name: Ensure platform icons present
+        run: |
+          if [ ! -f src-tauri/icons/icon.ico ] || [ ! -f src-tauri/icons/icon.icns ]; then
+            echo "Icons missing — regenerating from icon.png"
+            pnpm tauri icon src-tauri/icons/icon.png
+          fi
+
       - name: Build AppImage + .deb
         run: pnpm tauri build
 
@@ -145,6 +159,14 @@ jobs:
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bash .github/workflows/scripts/inject-version.sh
+
+      - name: Ensure platform icons present
+        shell: bash
+        run: |
+          if [ ! -f src-tauri/icons/icon.ico ] || [ ! -f src-tauri/icons/icon.icns ]; then
+            echo "Icons missing — regenerating from icon.png"
+            pnpm tauri icon src-tauri/icons/icon.png
+          fi
 
       - name: Build .msi + .exe
         run: pnpm tauri build
