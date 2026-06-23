@@ -1,9 +1,7 @@
-#!/usr/bin/env sh
 # Pre-commit hook:
 #   1) lint-staged 对暂存文件运行 prettier / cargo fmt
 #   2) 全局 Rust 格式检查 (即使没有 .rs 文件改动)
-
-. "$(dirname -- "$0")/_/husky.sh"
+# husky v9 直接执行该文件,不需要 shebang 或 shim。
 
 # 让 cargo 可用 (rustup 默认安装路径)
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
