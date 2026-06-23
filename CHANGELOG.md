@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-23
+
+### 修复
+
+- 🐛 macOS 搜索会话崩溃: `Cargo.toml` 里 `panic = "abort"` 编译期
+  把 `catch_unwind` / `panic::set_hook` 全部绕过,改回默认
+  `panic = "unwind"` 即可;`search.rs` 里再加 UTF-8 char boundary
+  防护(`floor_char_boundary`)+ 单条记录 panic log + 吞掉(rust
+  2024 不允许 rethrow),单条坏数据不再拉整 App 陪葬。
+- 🐛 会话列表把 `*.trajectory.jsonl` 误当成 session 列出来
+  (openclaw 写在每个 session 旁边的观测/trace 副产物,不是用户
+  会话;`Path::extension()` 只取最后一段所以会漏过)。walker 加
+  `file_stem` 末缀过滤 + 单测。
+- 🐛 会话详情返回按钮渲染了两把箭头(JSX 里 `<ArrowLeft />` +
+  i18n `back` 字符串里的字面 `←`)。删掉 i18n 里的字面箭头。
+
 ## [0.2.2] - 2026-06-23
 
 ### 修复
