@@ -297,11 +297,20 @@ fn normalize_content_block(item: &Value) -> Option<NormalizedBlock> {
     let kind = match r#type {
         "text" => "text".to_string(),
         "thinking" | "redacted_thinking" => "thinking".to_string(),
-        "tool_use" | "toolUse" | "tool_call" | "function_call" => "tool_use".to_string(),
+        // v0.2.6: 加 `toolCall` 别名 — pi-coding-agent 的工具调用格式
+        // ({ type: "toolCall", id, name, arguments })
+        // 跟 Claude 工具调用的差异:`input` 字段叫 `arguments`
+        "tool_use" | "toolUse" | "tool_call" | "function_call" | "toolCall" => {
+            // 兼容 pi-agent:把 arguments 重命名为 input,前端 ToolUseCard
+            // 不需要特殊处理
+            if let Some(args) = data.remove("arguments") {
+                data.insert("input".to_string(), args);
+            }
+            "tool_use".to_string()
+        }
         "tool_result" | "toolResult" => "tool_result".to_string(),
         "image" => "image".to_string(),
         _ => {
-            // v0.2.6 调查:未知 content block type
             log::warn!(
                 "normalize_content_block: 未知 block type={:?}, 完整对象: {:#?}",
                 r#type,
@@ -493,6 +502,47 @@ mod tests {
         let n = normalize(&v, 0).unwrap();
         assert_eq!(n.role, "meta");
         assert_eq!(n.raw_type, "weird-future-type");
+    }
+
+    /// v0.2.6: pi-coding-agent 用 `toolCall` type + `arguments` 字段(不是
+    /// Claude 的 `tool_use` + `input`)。归一化后应当映射到 kind=tool_use
+    /// 且 `arguments` 重命名为 `input`。
+    #[test]
+    fn test_normalize_tool_call_alias() {
+        let v = json!({
+            "type": "assistant",
+            "uuid": "a1",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call_abc",
+                        "name": "read",
+                        "arguments": { "path": "/tmp/x.md" }
+                    }
+                ],
+                "model": "claude-sonnet-4-6",
+                "stop_reason": "tool_use",
+                "usage": { "input_tokens": 1, "output_tokens": 1 }
+            }
+        });
+        let n = normalize(&v, 0).unwrap();
+        assert_eq!(n.blocks.len(), 1);
+        let b = &n.blocks[0];
+        assert_eq!(b.kind, "tool_use");
+        assert_eq!(b.data.get("id").and_then(|v| v.as_str()), Some("call_abc"));
+        assert_eq!(b.data.get("name").and_then(|v| v.as_str()), Some("read"));
+        // arguments → input 重命名
+        assert_eq!(
+            b.data
+                .get("input")
+                .and_then(|v| v.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("/tmp/x.md")
+        );
+        // 原始 arguments 字段已移除
+        assert!(b.data.get("arguments").is_none());
     }
 
     #[test]
