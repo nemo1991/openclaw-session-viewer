@@ -19,8 +19,8 @@ pub async fn get_tool_result_file(
     if !p.exists() {
         return Err(AppError::NotFound(path));
     }
-    // 必须在 ~/.claude/projects/ 下
-    paths::assert_within_lexical(&state.paths.claude.projects_dir, p)?;
+    // 路径安全:遍历所有 root 验证(支持 custom_root,Claude 的 spillover 也可能来自 custom root)
+    paths::assert_within_any_root(&state.paths.read(), p)?;
 
     let meta = std::fs::metadata(p)?;
     // 限制最大 50MB,避免 OOM

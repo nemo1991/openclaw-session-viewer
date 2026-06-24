@@ -20,14 +20,25 @@ mod llm;
 mod model;
 mod parser;
 
-use error::AppResult;
+use error::{AppError, AppResult};
 use fs::paths::AppPaths;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+use crate::commands::settings::AppSettings;
 
 /// 全局应用状态
+///
+/// v0.2.5: `paths` 和 `settings` 用 `RwLock` 包裹,以支持 save_settings 时
+/// 热重载路径(无需重启 App)。锁粒度要小,只 wrap 路径访问,不要 wrap IO。
 pub struct AppState {
-    pub paths: AppPaths,
+    /// 用户的 home 目录(常量,启动时确定)
+    pub app_home: PathBuf,
+    /// 当前生效的 AppPaths(default + 所有 custom_roots)
+    pub paths: RwLock<AppPaths>,
+    /// 当前生效的 AppSettings(供 get_settings 立即返回最新值)
+    pub settings: RwLock<AppSettings>,
     /// mtime 缓存
     pub session_meta_cache: cache::mtime::MetaCache,
     /// 全局 AbortController: 分析中止信号
@@ -35,9 +46,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(paths: AppPaths) -> AppResult<Self> {
+    pub fn new(app_home: PathBuf, paths: AppPaths, settings: AppSettings) -> AppResult<Self> {
         Ok(Self {
-            paths,
+            app_home,
+            paths: RwLock::new(paths),
+            settings: RwLock::new(settings),
             session_meta_cache: cache::mtime::MetaCache::new(),
             analyze_aborts: RwLock::new(HashMap::new()),
         })
@@ -77,18 +90,30 @@ pub fn run() {
         .setup(|app| {
             // 解析路径
             let home = dirs::home_dir().ok_or(error::AppError::NoHomeDir)?;
-            let paths = AppPaths::new(home);
+
+            // 启动时读 settings(custom_roots 需要)
+            // 用与 get_settings 一样的逻辑,但不通过 Tauri command(避免循环依赖)
+            let settings = load_settings_on_startup(&app.handle())?;
+            let runtime_roots = commands::settings::to_runtime_custom_roots(&settings.custom_roots);
+            let paths = AppPaths::new(home.clone(), &runtime_roots);
 
             log::info!(
-                "应用启动: claude_home={}, openclaw_home={:?}",
-                paths.claude.home.display(),
+                "应用启动: claude_home={}, openclaw_home={:?}, custom_roots={}",
                 paths
+                    .default_root
+                    .claude
+                    .as_ref()
+                    .map(|c| c.home.display().to_string())
+                    .unwrap_or_else(|| "(none)".into()),
+                paths
+                    .default_root
                     .openclaw
                     .as_ref()
-                    .map(|o| o.home.display().to_string())
+                    .map(|o| o.home.display().to_string()),
+                paths.custom_roots.len()
             );
 
-            let state = AppState::new(paths)?;
+            let state = AppState::new(home, paths, settings)?;
             app.manage(Arc::new(state));
             Ok(())
         })
@@ -114,4 +139,18 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 启动失败");
+}
+
+/// 启动时读 settings.json(直接文件 IO,不走 Tauri command 路径)
+fn load_settings_on_startup(app: &tauri::AppHandle) -> AppResult<AppSettings> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    let p = dir.join("settings.json");
+    if !p.exists() {
+        return Ok(AppSettings::default());
+    }
+    let text = std::fs::read_to_string(&p).map_err(AppError::Io)?;
+    Ok(serde_json::from_str(&text).unwrap_or_default())
 }

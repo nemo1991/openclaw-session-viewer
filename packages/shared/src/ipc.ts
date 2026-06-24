@@ -60,11 +60,25 @@ export interface AnthropicConfig {
   maxTokens: number;
 }
 
+/** v0.2.5: 用户在 settings 里添加的额外数据根目录 */
+export type CustomRootKind = "Claude" | "OpenClaw" | "Both";
+
+export interface CustomRootConfig {
+  /** 用户起的标签(如 "Downloads") */
+  label: string;
+  /** 绝对路径 */
+  path: string;
+  /** 自动探测出的类型 */
+  kind: CustomRootKind;
+}
+
 export interface AppSettings {
   anthropic: AnthropicConfig;
   theme: "dark" | "light" | "system";
   uiLanguage: "zh-CN" | "en-US";
   defaultExportDir?: string;
+  /** v0.2.5: 用户自定义的额外数据根目录 */
+  customRoots?: CustomRootConfig[];
 }
 
 /** 分析范围 */
@@ -139,4 +153,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   theme: "dark",
   uiLanguage: "zh-CN",
+  customRoots: [],
 };

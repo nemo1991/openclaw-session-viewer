@@ -65,6 +65,12 @@ impl MetaCache {
         // 实际场景下 notify watcher 会触发列表重扫
         let _ = path;
     }
+
+    /// v0.2.5: 全量清空缓存(热重载时调用)
+    pub async fn invalidate_all(&self) {
+        // moka 0.12 的 invalidate_all 是同步的
+        self.inner.invalidate_all();
+    }
 }
 
 impl Default for MetaCache {
