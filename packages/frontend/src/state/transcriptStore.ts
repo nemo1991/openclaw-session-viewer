@@ -66,7 +66,6 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
       // v0.2.6: 提取真实 error 消息 — invoke 抛 error 对象时
       // String(e) 是 "[object Object]"。用 message / kind 字段优先。
       const errMsg = extractErrorMessage(e);
-      console.error("[stream_transcript:error]", { e, errMsg });
       set({ error: errMsg, loading: false });
       unlisteners.forEach((u) => u());
     }
