@@ -32,6 +32,19 @@ pub struct SessionMeta {
     pub subagent_dir: Option<String>,
     pub total_tokens: Option<TokenUsage>,
     pub primary_model: Option<String>,
+    // --- v0.2.4 多 agent 支持 ---
+    /// OpenClaw agentId(如 "main" / "liushuyou");Claude 始终为 None
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// 来自 sessions.json 的友好标签,如 "forcetone (@forcetone) id:6030344417"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_label: Option<String>,
+    /// 渠道,如 "telegram" / "feishu" / "main"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_channel: Option<String>,
+    /// 渠道 target,如 "telegram:6030344417"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

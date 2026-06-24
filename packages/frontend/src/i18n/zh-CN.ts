@@ -14,6 +14,8 @@ const zhCN = {
       hasSubagents: "包含子代理",
       last7Days: "最近 7 天",
       source: "数据源",
+      agent: "按 Agent 过滤",
+      allAgents: "所有 Agent",
     },
     source: {
       claude: "Claude Code",
@@ -29,6 +31,7 @@ const zhCN = {
     liveBadge: "运行中",
     size: "{{size}}",
     messages: "{{count}} 条",
+    perGroupCount: "{{count}} 个会话",
   },
   detail: {
     back: "返回",

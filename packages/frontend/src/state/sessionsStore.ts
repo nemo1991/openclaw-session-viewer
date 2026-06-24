@@ -12,6 +12,8 @@ interface SessionsFilter {
   hasSubagents: boolean;
   last7Days: boolean;
   source: "all" | "claude" | "openclaw";
+  /** 按 OpenClaw agentId 过滤;undefined / "all" 不过滤 */
+  agentId?: string;
 }
 
 interface SessionsStore {
@@ -23,6 +25,8 @@ interface SessionsStore {
   refresh: () => Promise<void>;
   setFilter: (f: Partial<SessionsFilter>) => void;
   filteredSessions: () => SessionMeta[];
+  /** 当前 sessions 中出现的所有 agentId(去重) */
+  availableAgentIds: () => string[];
 }
 
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
@@ -35,6 +39,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     hasSubagents: false,
     last7Days: false,
     source: "all",
+    agentId: undefined,
   },
   load: async () => {
     set({ loading: true, error: null });
@@ -60,6 +65,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return sessions.filter((s) => {
       if (filter.source !== "all" && s.source !== filter.source) return false;
+      if (filter.agentId && s.source === "openclaw" && s.agentId !== filter.agentId) return false;
       if (filter.liveOnly && !s.livePid) return false;
       if (filter.hasSubagents && !s.subagentDir) return false;
       if (filter.last7Days && s.mtimeMs < cutoff) return false;
@@ -69,6 +75,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
           s.sessionId,
           s.projectKey,
           s.workspaceGuess ?? "",
+          s.agentId ?? "",
+          s.agentLabel ?? "",
+          s.agentTarget ?? "",
         ]
           .join(" ")
           .toLowerCase();
@@ -76,5 +85,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       }
       return true;
     });
+  },
+  availableAgentIds: () => {
+    const seen = new Set<string>();
+    for (const s of get().sessions) {
+      if (s.source === "openclaw" && s.agentId) seen.add(s.agentId);
+    }
+    return Array.from(seen).sort();
   },
 }));
