@@ -103,51 +103,60 @@ fn agent_info_from_index(
 pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<SessionMeta>> {
     let mut out = Vec::new();
 
-    // 1) 先扫 ~/.claude/sessions/<pid>.json, 拿到 sessionId → pid 映射
-    let live_pids = scan_live_pids(&state.paths.claude.sessions_dir).unwrap_or_default();
+    // 锁粒度小:只 wrap 路径访问,不要 wrap 整个 list_sessions
+    let paths_snapshot = state.paths.read().clone();
 
-    // 2) 扫 Claude 项目目录
-    let claude_jsonls = match walker::list_jsonl_files(&state.paths.claude.projects_dir) {
-        Ok(v) => v,
-        Err(e) => {
-            log::warn!("无法列出 Claude 项目目录: {}", e);
-            vec![]
-        }
+    // 1) 先扫 default Claude live pids(只有默认 ~/.claude 有 sessions/<pid>.json 机制)
+    let live_pids = if let Some(c) = paths_snapshot.default_root.claude.as_ref() {
+        scan_live_pids(&c.sessions_dir).unwrap_or_default()
+    } else {
+        HashMap::new()
     };
-    for jsonl_path in claude_jsonls {
-        match build_claude_session_meta(&jsonl_path, &state, &live_pids) {
-            Ok(meta) => out.push(meta),
-            Err(e) => log::warn!("解析会话失败 {:?}: {}", jsonl_path, e),
+
+    // 2) 扫所有 Claude 项目目录(default + 每个 custom_root)
+    for projects_dir in paths_snapshot.all_claude_projects_dirs() {
+        let claude_jsonls = match walker::list_jsonl_files(projects_dir) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("无法列出 Claude 项目目录 {:?}: {}", projects_dir, e);
+                continue;
+            }
+        };
+        for jsonl_path in claude_jsonls {
+            match build_claude_session_meta(&jsonl_path, &state, &live_pids) {
+                Ok(meta) => out.push(meta),
+                Err(e) => log::warn!("解析会话失败 {:?}: {}", jsonl_path, e),
+            }
         }
     }
 
-    // 3) 扫 OpenClaw (按 agent 分组)
-    if let Some(oc) = &state.paths.openclaw {
-        if oc.agents_dir.exists() {
-            let agents: Vec<_> = std::fs::read_dir(&oc.agents_dir)
-                .map(|d| d.filter_map(|e| e.ok()).collect())
-                .unwrap_or_default();
-            for agent_dir in agents {
-                let sessions_dir = agent_dir.path().join("sessions");
-                if !sessions_dir.exists() {
-                    continue;
-                }
-                let agent_id = agent_dir.file_name().to_string_lossy().to_string();
-                let sessions_index = read_sessions_index(&sessions_dir.join("sessions.json"));
-                let (agent_label, agent_channel, agent_target) =
-                    agent_info_from_index(&sessions_index);
-                let oc_jsonls = walker::list_jsonl_files(&sessions_dir).unwrap_or_default();
-                for jsonl_path in oc_jsonls {
-                    match build_openclaw_session_meta(
-                        &jsonl_path,
-                        &agent_id,
-                        agent_label.clone(),
-                        agent_channel.clone(),
-                        agent_target.clone(),
-                    ) {
-                        Ok(meta) => out.push(meta),
-                        Err(e) => log::warn!("解析 OpenClaw 会话失败 {:?}: {}", jsonl_path, e),
-                    }
+    // 3) 扫所有 OpenClaw agents 目录(default + 每个 custom_root)
+    for agents_dir in paths_snapshot.all_openclaw_agents_dirs() {
+        if !agents_dir.exists() {
+            continue;
+        }
+        let agents: Vec<_> = std::fs::read_dir(agents_dir)
+            .map(|d| d.filter_map(|e| e.ok()).collect())
+            .unwrap_or_default();
+        for agent_dir in agents {
+            let sessions_dir = agent_dir.path().join("sessions");
+            if !sessions_dir.exists() {
+                continue;
+            }
+            let agent_id = agent_dir.file_name().to_string_lossy().to_string();
+            let sessions_index = read_sessions_index(&sessions_dir.join("sessions.json"));
+            let (agent_label, agent_channel, agent_target) = agent_info_from_index(&sessions_index);
+            let oc_jsonls = walker::list_jsonl_files(&sessions_dir).unwrap_or_default();
+            for jsonl_path in oc_jsonls {
+                match build_openclaw_session_meta(
+                    &jsonl_path,
+                    &agent_id,
+                    agent_label.clone(),
+                    agent_channel.clone(),
+                    agent_target.clone(),
+                ) {
+                    Ok(meta) => out.push(meta),
+                    Err(e) => log::warn!("解析 OpenClaw 会话失败 {:?}: {}", jsonl_path, e),
                 }
             }
         }
@@ -166,18 +175,17 @@ pub async fn get_session_meta(
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<SessionMeta> {
     let p = Path::new(&path);
-    // 路径安全
-    if let Some(parent) = p.parent() {
-        if parent.starts_with(&state.paths.claude.projects_dir) {
-            paths::assert_within_lexical(&state.paths.claude.projects_dir, p)?;
-        } else if let Some(oc) = &state.paths.openclaw {
-            if parent.starts_with(&oc.agents_dir) {
-                paths::assert_within_lexical(&oc.agents_dir, p)?;
-            }
-        }
-    }
 
-    let live_pids = scan_live_pids(&state.paths.claude.sessions_dir)?;
+    // 路径安全:遍历所有 root 验证(支持 custom_root)
+    paths::assert_within_any_root(&state.paths.read(), p)?;
+
+    // live_pids 只来自 default Claude(机制是 ~/.claude/sessions/<pid>.json)
+    let live_pids = if let Some(c) = state.paths.read().default_root.claude.as_ref() {
+        scan_live_pids(&c.sessions_dir)?
+    } else {
+        HashMap::new()
+    };
+
     if path.contains("openclaw") || path.contains(".openclaw") {
         // 从路径反推 agentId: <root>/agents/<agentId>/sessions/<id>.jsonl
         let agent_id = p

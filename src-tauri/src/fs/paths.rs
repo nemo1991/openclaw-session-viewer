@@ -63,30 +63,209 @@ impl OpenClawPaths {
     }
 }
 
+/// v0.2.5: 自定义根目录,自动探测含 Claude 和/或 OpenClaw 数据
+///
+/// `path` 是用户在 settings 里填的绝对路径(可能是 `~/Downloads/.openclaw/` 这种)。
+/// `kind` 是探测出来的类型,扫描时只走对应的子目录。
+#[derive(Debug, Clone)]
+pub struct CustomRoot {
+    /// 用户起的标签(如 "Downloads")
+    pub label: String,
+    /// 绝对路径
+    pub path: PathBuf,
+    /// 探测出的内容类型
+    pub kind: RootKind,
+    /// path/projects/<encoded-cwd>/* 路径(仅 kind 含 Claude 时 Some)
+    pub claude_projects_dir: Option<PathBuf>,
+    /// path/agents/<agentId>/sessions/* 路径(仅 kind 含 OpenClaw 时 Some)
+    pub openclaw_agents_dir: Option<PathBuf>,
+}
+
+/// 自动探测一个根目录含哪种数据
+///
+/// 约定:
+/// - 含 `projects/` 子目录 → 视作 Claude
+/// - 含 `agents/` 子目录 → 视作 OpenClaw
+/// - 两者都含 → Both
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootKind {
+    Claude,
+    OpenClaw,
+    Both,
+}
+
+impl CustomRoot {
+    /// 探测一个用户提供的路径,返回 None 如果该路径啥都不是
+    pub fn probe(path: PathBuf) -> Option<Self> {
+        if !path.exists() || !path.is_dir() {
+            return None;
+        }
+        let claude_projects = path.join("projects");
+        let openclaw_agents = path.join("agents");
+        let has_claude = claude_projects.exists() && claude_projects.is_dir();
+        let has_openclaw = openclaw_agents.exists() && openclaw_agents.is_dir();
+
+        let kind = match (has_claude, has_openclaw) {
+            (true, true) => RootKind::Both,
+            (true, false) => RootKind::Claude,
+            (false, true) => RootKind::OpenClaw,
+            (false, false) => return None,
+        };
+
+        Some(Self {
+            label: path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string()),
+            path,
+            kind,
+            claude_projects_dir: has_claude.then_some(claude_projects),
+            openclaw_agents_dir: has_openclaw.then_some(openclaw_agents),
+        })
+    }
+}
+
+/// 应用所有可用的根目录(default + custom)。
+///
+/// `default_root` 是 `~/.claude` 和 `~/.openclaw` 默认组合。
+/// `custom_roots` 是用户在 Settings 里加的(可能多个)。
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub home: PathBuf,
-    pub claude: ClaudePaths,
+    pub default_root: RootSource,
+    pub custom_roots: Vec<RootSource>,
+}
+
+/// 单个数据根来源(默认或自定义),含 Claude + OpenClaw 子目录
+#[derive(Debug, Clone)]
+pub struct RootSource {
+    pub label: String,
+    pub path: PathBuf,
+    pub claude: Option<ClaudePaths>,
     pub openclaw: Option<OpenClawPaths>,
 }
 
 impl AppPaths {
-    pub fn new(home_dir: PathBuf) -> Self {
-        let claude = ClaudePaths::new(&home_dir);
-        let openclaw = OpenClawPaths::new(&home_dir);
-        Self {
-            home: home_dir,
-            claude,
-            openclaw: if openclaw.exists() {
-                Some(openclaw)
+    pub fn new(home_dir: PathBuf, custom_roots: &[CustomRoot]) -> Self {
+        let default_root = RootSource {
+            label: "Default".to_string(),
+            path: home_dir.clone(),
+            claude: Some(ClaudePaths::new(&home_dir)),
+            openclaw: if OpenClawPaths::new(&home_dir).exists() {
+                Some(OpenClawPaths::new(&home_dir))
             } else {
                 None
             },
+        };
+
+        let custom_roots = custom_roots
+            .iter()
+            .map(|cr| RootSource {
+                label: cr.label.clone(),
+                path: cr.path.clone(),
+                claude: cr.claude_projects_dir.as_ref().map(|_| ClaudePaths {
+                    // 复用 ClaudePaths 结构,但实际只用 projects_dir
+                    home: cr.path.clone(),
+                    projects_dir: cr.claude_projects_dir.clone().unwrap(),
+                    sessions_dir: cr.path.join("sessions"),
+                    session_env_dir: cr.path.join("session-env"),
+                    tasks_dir: cr.path.join("tasks"),
+                    shell_snapshots_dir: cr.path.join("shell-snapshots"),
+                    backups_dir: cr.path.join("backups"),
+                    file_history_dir: cr.path.join("file-history"),
+                    plugins_dir: cr.path.join("plugins"),
+                    skills_dir: cr.path.join("skills"),
+                    cache_dir: cr.path.join("cache"),
+                    history_file: cr.path.join("history.jsonl"),
+                    settings_file: cr.path.join("settings.json"),
+                }),
+                openclaw: cr.openclaw_agents_dir.as_ref().map(|_| OpenClawPaths {
+                    home: cr.path.clone(),
+                    agents_dir: cr.openclaw_agents_dir.clone().unwrap(),
+                }),
+            })
+            .collect();
+
+        Self {
+            home: home_dir,
+            default_root,
+            custom_roots,
         }
+    }
+
+    /// 列出所有 Claude 项目目录(default + custom)
+    pub fn all_claude_projects_dirs(&self) -> Vec<&Path> {
+        let mut out = Vec::new();
+        if let Some(c) = &self.default_root.claude {
+            out.push(c.projects_dir.as_path());
+        }
+        for cr in &self.custom_roots {
+            if let Some(c) = &cr.claude {
+                out.push(c.projects_dir.as_path());
+            }
+        }
+        out
+    }
+
+    /// 列出所有 OpenClaw agents 目录(default + custom)
+    pub fn all_openclaw_agents_dirs(&self) -> Vec<&Path> {
+        let mut out = Vec::new();
+        if let Some(o) = &self.default_root.openclaw {
+            out.push(o.agents_dir.as_path());
+        }
+        for cr in &self.custom_roots {
+            if let Some(o) = &cr.openclaw {
+                out.push(o.agents_dir.as_path());
+            }
+        }
+        out
+    }
+
+    /// 默认 Claude 路径(兼容老代码 — 主要供 lib.rs 启动 log 用)
+    pub fn claude(&self) -> Option<&ClaudePaths> {
+        self.default_root.claude.as_ref()
+    }
+
+    /// 默认 OpenClaw 路径
+    pub fn openclaw(&self) -> Option<&OpenClawPaths> {
+        self.default_root.openclaw.as_ref()
     }
 }
 
-/// 路径安全检查(允许路径不存在):只做词法校验
+/// 路径安全检查(允许路径不存在):遍历所有 root 验证
+pub fn assert_within_any_root(paths: &AppPaths, target: &Path) -> crate::error::AppResult<()> {
+    // 1) default claude.projects_dir
+    if let Some(c) = &paths.default_root.claude {
+        if target.starts_with(&c.projects_dir) {
+            return assert_within_lexical(&c.projects_dir, target);
+        }
+    }
+    // 2) default openclaw.agents_dir
+    if let Some(o) = &paths.default_root.openclaw {
+        if target.starts_with(&o.agents_dir) {
+            return assert_within_lexical(&o.agents_dir, target);
+        }
+    }
+    // 3) 每个 custom_root
+    for cr in &paths.custom_roots {
+        if let Some(c) = &cr.claude {
+            if target.starts_with(&c.projects_dir) {
+                return assert_within_lexical(&c.projects_dir, target);
+            }
+        }
+        if let Some(o) = &cr.openclaw {
+            if target.starts_with(&o.agents_dir) {
+                return assert_within_lexical(&o.agents_dir, target);
+            }
+        }
+    }
+    Err(crate::error::AppError::PathSecurity(format!(
+        "词法检查: {:?} 不在任一已知 root 下",
+        target
+    )))
+}
+
+/// 路径安全检查(允许路径不存在):只做词法校验(单一 base,保留向后兼容)
 pub fn assert_within_lexical(base: &Path, target: &Path) -> crate::error::AppResult<()> {
     let base_canon = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
     let base_str = base_canon.to_string_lossy();
@@ -186,5 +365,49 @@ mod tests {
         let base = std::path::Path::new("/Users/foo");
         let target = std::path::Path::new("/etc/passwd");
         assert!(assert_within_lexical(base, target).is_err());
+    }
+
+    #[test]
+    fn test_custom_root_probe_none_for_nonexistent() {
+        let result = CustomRoot::probe(PathBuf::from("/nonexistent/path/xyz"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_custom_root_probe_none_for_empty_dir() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let result = CustomRoot::probe(dir.path().to_path_buf());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_custom_root_probe_openclaw_only() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let agents = dir.path().join("agents");
+        std::fs::create_dir(&agents).unwrap();
+        let result = CustomRoot::probe(dir.path().to_path_buf()).expect("probe");
+        assert_eq!(result.kind, RootKind::OpenClaw);
+        assert_eq!(result.openclaw_agents_dir, Some(agents));
+        assert!(result.claude_projects_dir.is_none());
+    }
+
+    #[test]
+    fn test_custom_root_probe_claude_only() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        let projects = dir.path().join("projects");
+        std::fs::create_dir(&projects).unwrap();
+        let result = CustomRoot::probe(dir.path().to_path_buf()).expect("probe");
+        assert_eq!(result.kind, RootKind::Claude);
+        assert_eq!(result.claude_projects_dir, Some(projects));
+        assert!(result.openclaw_agents_dir.is_none());
+    }
+
+    #[test]
+    fn test_custom_root_probe_both() {
+        let dir = tempfile::tempdir().expect("create tempdir");
+        std::fs::create_dir(dir.path().join("projects")).unwrap();
+        std::fs::create_dir(dir.path().join("agents")).unwrap();
+        let result = CustomRoot::probe(dir.path().to_path_buf()).expect("probe");
+        assert_eq!(result.kind, RootKind::Both);
     }
 }

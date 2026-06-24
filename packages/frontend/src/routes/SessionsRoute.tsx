@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Settings, Search, RefreshCw, Filter, Bot, MessageSquare } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 
 import { useSessionsStore } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
@@ -43,6 +44,25 @@ export default function SessionsRoute() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // v0.2.5: 监听 sessions-updated 事件(custom_roots 变更后后端热重载会发)
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    listen("sessions-updated", () => {
+      void refresh();
+    }).then((u) => {
+      if (cancelled) {
+        u();
+      } else {
+        unlisten = u;
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [refresh]);
 
   useKey("cmd+k", (e) => {
     e.preventDefault();

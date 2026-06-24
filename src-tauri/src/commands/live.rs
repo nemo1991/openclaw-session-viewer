@@ -10,7 +10,19 @@ use crate::model::LivePidMeta;
 use crate::AppState;
 
 /// 列出所有运行中的 CLI 进程
+///
+/// live_pid 机制只来自 default `~/.claude/sessions/<pid>.json`(openclaw 没有这个)
 #[tauri::command]
 pub async fn list_live_pids(state: State<'_, Arc<AppState>>) -> AppResult<Vec<LivePidMeta>> {
-    read_live_pids_meta(&state.paths.claude.sessions_dir)
+    let dir = state
+        .paths
+        .read()
+        .default_root
+        .claude
+        .as_ref()
+        .map(|c| c.sessions_dir.clone());
+    match dir {
+        Some(d) => read_live_pids_meta(&d),
+        None => Ok(vec![]),
+    }
 }
