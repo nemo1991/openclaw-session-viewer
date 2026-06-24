@@ -233,50 +233,81 @@ impl AppPaths {
 }
 
 /// 路径安全检查(允许路径不存在):遍历所有 root 验证
+///
+/// v0.2.6: 改用 Path 组件级比较 (Path::starts_with) 而不是字符串前缀。
+/// 之前用 `target.to_string_lossy().starts_with(base.to_string_lossy())` 在 Windows
+/// 上失败:base canonicalize 后会带 `\\?\` UNC 前缀,target 是短路径,
+/// 字符串比较失败但实际是子路径。
 pub fn assert_within_any_root(paths: &AppPaths, target: &Path) -> crate::error::AppResult<()> {
     // 1) default claude.projects_dir
     if let Some(c) = &paths.default_root.claude {
-        if target.starts_with(&c.projects_dir) {
-            return assert_within_lexical(&c.projects_dir, target);
+        if path_starts_with(target, &c.projects_dir) {
+            return Ok(());
         }
     }
     // 2) default openclaw.agents_dir
     if let Some(o) = &paths.default_root.openclaw {
-        if target.starts_with(&o.agents_dir) {
-            return assert_within_lexical(&o.agents_dir, target);
+        if path_starts_with(target, &o.agents_dir) {
+            return Ok(());
         }
     }
     // 3) 每个 custom_root
     for cr in &paths.custom_roots {
         if let Some(c) = &cr.claude {
-            if target.starts_with(&c.projects_dir) {
-                return assert_within_lexical(&c.projects_dir, target);
+            if path_starts_with(target, &c.projects_dir) {
+                return Ok(());
             }
         }
         if let Some(o) = &cr.openclaw {
-            if target.starts_with(&o.agents_dir) {
-                return assert_within_lexical(&o.agents_dir, target);
+            if path_starts_with(target, &o.agents_dir) {
+                return Ok(());
             }
         }
     }
     Err(crate::error::AppError::PathSecurity(format!(
-        "词法检查: {:?} 不在任一已知 root 下",
+        "路径安全: {:?} 不在任一已知 root 下",
         target
     )))
 }
 
+/// 路径"target 是 base 的子路径"比较,跨平台安全:
+///
+/// - 把 `\` 和 `/` 都规范化为 `/`,避免 Windows 上两种分隔符混用
+/// - 去掉 `\\?\` UNC 前缀(canonicalize 会加)
+/// - 大小写不敏感(Windows 路径是大小写不敏感的)
+/// - 不依赖 canonicalize,允许路径不存在
+fn path_starts_with(target: &Path, base: &Path) -> bool {
+    let norm = |p: &Path| -> String {
+        let s = p.to_string_lossy();
+        // 去掉 Windows extended-length prefix `\\?\`
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+        // 统一分隔符为 /
+        s.replace('\\', "/").to_lowercase()
+    };
+    let t = norm(target);
+    let b = norm(base);
+
+    if t == b {
+        return true;
+    }
+    // 必须以 separator 结尾避免 `/foo/bar` 通过 `/foo/b` 检查
+    let b_with_sep = if b.ends_with('/') {
+        b.clone()
+    } else {
+        format!("{}/", b)
+    };
+    t.starts_with(&b_with_sep)
+}
+
 /// 路径安全检查(允许路径不存在):只做词法校验(单一 base,保留向后兼容)
 pub fn assert_within_lexical(base: &Path, target: &Path) -> crate::error::AppResult<()> {
-    let base_canon = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
-    let base_str = base_canon.to_string_lossy();
-    let target_str = target.to_string_lossy();
-    if !target_str.starts_with(base_str.as_ref()) {
-        return Err(crate::error::AppError::PathSecurity(format!(
-            "词法检查: {:?} 不在 {:?} 下",
-            target, base
-        )));
+    if path_starts_with(target, base) {
+        return Ok(());
     }
-    Ok(())
+    Err(crate::error::AppError::PathSecurity(format!(
+        "词法检查: {:?} 不在 {:?} 下",
+        target, base
+    )))
 }
 
 /// Claude 项目目录名编码(对应前端 paths.ts)
@@ -365,6 +396,53 @@ mod tests {
         let base = std::path::Path::new("/Users/foo");
         let target = std::path::Path::new("/etc/passwd");
         assert!(assert_within_lexical(base, target).is_err());
+    }
+
+    /// v0.2.6 回归测试:Windows 上 base 是短路径 (`C:\Users\keepn\.openclaw\agents`),
+    /// target 是子路径 (`C:\Users\keepn\.openclaw\agents\liushuyou\sessions\abc.jsonl`),
+    /// 之前用 string starts_with 失败(因为 canonicalize base 后带 \\?\ UNC 前缀)。
+    #[test]
+    fn test_path_starts_with_windows_style_subpath() {
+        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        let target = std::path::Path::new(
+            "C:\\Users\\keepn\\.openclaw\\agents\\liushuyou\\sessions\\94424018-a80d-49c3-bf9b-4116c1435b6d.jsonl",
+        );
+        assert!(path_starts_with(target, base));
+    }
+
+    #[test]
+    fn test_path_starts_with_windows_style_exact_match() {
+        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        assert!(path_starts_with(base, base));
+    }
+
+    #[test]
+    fn test_path_starts_with_windows_style_rejects_sibling() {
+        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        // Sibling not child
+        let target = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents-backup");
+        assert!(!path_starts_with(target, base));
+    }
+
+    #[test]
+    fn test_path_starts_with_windows_style_rejects_other_drive() {
+        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        let target = std::path::Path::new("D:\\Users\\keepn\\.openclaw\\agents\\foo.jsonl");
+        assert!(!path_starts_with(target, base));
+    }
+
+    #[test]
+    fn test_path_starts_with_handles_trailing_separator() {
+        let base = std::path::Path::new("/Users/foo/");
+        let target = std::path::Path::new("/Users/foo/bar");
+        assert!(path_starts_with(target, base));
+    }
+
+    #[test]
+    fn test_path_starts_with_unix_style_still_works() {
+        let base = std::path::Path::new("/Users/foo/bar");
+        let target = std::path::Path::new("/Users/foo/bar/baz/qux.jsonl");
+        assert!(path_starts_with(target, base));
     }
 
     #[test]
