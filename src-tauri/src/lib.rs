@@ -93,7 +93,7 @@ pub fn run() {
 
             // 启动时读 settings(custom_roots 需要)
             // 用与 get_settings 一样的逻辑,但不通过 Tauri command(避免循环依赖)
-            let settings = load_settings_on_startup(&app.handle())?;
+            let settings = load_settings_on_startup(app.handle())?;
             let runtime_roots = commands::settings::to_runtime_custom_roots(&settings.custom_roots);
             let paths = AppPaths::new(home.clone(), &runtime_roots);
 
