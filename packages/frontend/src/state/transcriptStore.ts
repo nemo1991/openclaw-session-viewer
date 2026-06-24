@@ -63,6 +63,15 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
     try {
       await invoke("stream_transcript", { path });
     } catch (e) {
+      // v0.2.6 调查:Windows 上 [object Object] 的真凶 — invoke 抛 error
+      // 对象时 String(e) 是 "[object Object]"。打印真实结构。
+      console.error("[stream_transcript:error]", {
+        e,
+        typeofE: typeof e,
+        keys: e && typeof e === "object" ? Object.keys(e) : null,
+        json: JSON.stringify(e),
+        toString: String(e),
+      });
       set({ error: String(e), loading: false });
       unlisteners.forEach((u) => u());
     }
