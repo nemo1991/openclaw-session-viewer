@@ -13,10 +13,30 @@ interface Props {
   entry: TranscriptEntryOut;
 }
 
+// v0.2.6 调查:全局错误捕获 — 抓"页面崩但 console 啥都没有"的诡异情况
+window.addEventListener("error", (e) => {
+  console.error("[WINDOW:error]", { msg: e.message, filename: e.filename, lineno: e.lineno });
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[WINDOW:unhandledrejection]", { reason: e.reason });
+});
+const origConsoleError = console.error;
+console.error = (...args: unknown[]) => {
+  origConsoleError("[console.error]", ...args);
+};
+
 export function MessageBubble({ entry }: Props) {
   const { t } = useTranslation();
   const msg = entry.normalized;
   const role = msg.role;
+  // v0.2.6 调查:这个 entry 长啥样
+  console.log("[MessageBubble:render]", {
+    id: msg.id,
+    role,
+    rawType: msg.rawType,
+    blockCount: msg.blocks.length,
+    blockKinds: msg.blocks.map((b) => b.kind),
+  });
   const roleLabel = getRoleLabel(role, t);
   const RoleIcon = getRoleIcon(role);
 
@@ -27,7 +47,18 @@ export function MessageBubble({ entry }: Props) {
         {msg.blocks.map((b, i) => (
           <span key={i} className="msg-meta-pill">
             <FileText size={11} />
-            {String(b.label ?? b.kind)}
+            {/* v0.2.6 调查:label 是对象时 String() 会变 [object Object] */}
+            {(() => {
+              const labelValue = b.label ?? b.kind;
+              if (typeof labelValue !== "string") {
+                console.warn("[MessageBubble:meta-label-not-string]", {
+                  b,
+                  typeofLabel: typeof b.label,
+                  kind: b.kind,
+                });
+              }
+              return String(labelValue);
+            })()}
           </span>
         ))}
       </div>
