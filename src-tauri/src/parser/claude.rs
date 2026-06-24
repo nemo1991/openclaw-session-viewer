@@ -250,7 +250,8 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
     Some(msg)
 }
 
-fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
+/// 归一化 content(字符串或数组)。公开给 openclaw.rs 直接调用。
+pub(crate) fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
     let mut out = Vec::new();
     match content {
         Value::String(s) => {
