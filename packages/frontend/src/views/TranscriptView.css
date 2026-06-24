@@ -20,6 +20,36 @@
   color: var(--color-text-muted);
 }
 
+.transcript-sort-bar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 16px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sort-btn {
+  padding: 2px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sort-btn:hover {
+  background: var(--color-bg-hover);
+}
+
+.sort-btn-active {
+  background: var(--color-primary-bg, #3b82f620);
+  border-color: var(--color-primary, #3b82f6);
+  color: var(--color-primary, #3b82f6);
+  font-weight: 600;
+}
+
 .transcript-footer {
   padding: 6px 16px;
   background: var(--color-bg-elevated);

@@ -10,6 +10,27 @@
 - 拖拽导入 JSONL
 - VS Code 路径跳转
 
+## [0.3.1] - 2026-06-24
+
+### 新增
+
+- ✨ **会话详情排序切换**：TranscriptView 顶部新增正序/倒序按钮，支持按消息顺序切换
+- ✨ **4 个新 BlockHandler**：`agent_listing_delta`、`skill_listing`、`plan_mode`、
+  `file_history_snapshot` 现在有专属渲染（之前走兜底 UnknownBlockCard）
+- 📝 README 新增 macOS Gatekeeper 临时解决方案
+
+### 修复
+
+- 🐛 修复编译告警：新 handler 测试模块移除多余的 `use super::*` 导入
+
+### 重构
+
+- ♻️ 新增 `agent_listing.rs`、`skill_listing.rs`、`plan_mode.rs`、`file_snapshot.rs` handler
+
+### 测试
+
+- 🧪 Rust 单元测试 85 个（+8）
+
 ## [0.3.0] - 2026-06-24
 
 ### 重构
@@ -188,7 +209,8 @@
 - 📝 docs/CROSS_PLATFORM_BUILD.md — 跨平台构建指南
 - 📝 docs/TROUBLESHOOTING.md — 已知问题与解决方案
 
-[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.4...v0.2.5
