@@ -1,14 +1,28 @@
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Settings, Search, RefreshCw, Filter } from "lucide-react";
+import { Settings, Search, RefreshCw, Filter, Bot, MessageSquare } from "lucide-react";
 
 import { useSessionsStore } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
 import { useKey } from "../lib/keymap";
 import { formatBytes, formatTime } from "../lib/format";
 import { SearchPalette } from "../views/SearchPalette";
+import type { SessionMeta } from "@ocsv/shared";
 import "./SessionsRoute.css";
+
+interface Group {
+  /** 二级分组 key(workspace 或 agentId) */
+  key: string;
+  /** 顶层标题:对 OpenClaw 是 agent,带 label;对 Claude 是 workspace 路径 */
+  title: string;
+  /** 副标题(channel / target / workspaceGuess) */
+  subtitle?: string;
+  /** 顶层 icon:Bot (agent) | MessageSquare (workspace) */
+  kind: "agent" | "workspace";
+  /** 该组下的 session 列表 */
+  sessions: SessionMeta[];
+}
 
 export default function SessionsRoute() {
   const navigate = useNavigate();
@@ -22,6 +36,7 @@ export default function SessionsRoute() {
     load,
     refresh,
     filteredSessions,
+    availableAgentIds,
   } = useSessionsStore();
   const search = useSearchStore();
 
@@ -39,21 +54,54 @@ export default function SessionsRoute() {
   });
 
   const filtered = filteredSessions();
+  const agents = availableAgentIds();
 
-  // 按 workspace 分组
-  const grouped = useMemo(() => {
-    const m = new Map<string, typeof filtered>();
+  // 二级分组:OpenClaw 按 agentId(顶层)→ workspaceGuess(二级,可空);Claude 按 workspaceGuess(顶层)
+  const grouped = useMemo<Group[]>(() => {
+    const byAgent = new Map<string, Group>();
+    const byWorkspace = new Map<string, Group>();
+
     for (const s of filtered) {
-      const key = s.workspaceGuess || s.projectKey || "(未知)";
-      const list = m.get(key) ?? [];
-      list.push(s);
-      m.set(key, list);
+      if (s.source === "openclaw") {
+        const agentId = s.agentId ?? "(未知 agent)";
+        let g = byAgent.get(agentId);
+        if (!g) {
+          g = {
+            key: `agent:${agentId}`,
+            title: agentId,
+            subtitle: [s.agentChannel, s.agentLabel].filter(Boolean).join(" · ") || undefined,
+            kind: "agent",
+            sessions: [],
+          };
+          byAgent.set(agentId, g);
+        }
+        g.sessions.push(s);
+      } else {
+        const wsKey = s.workspaceGuess || s.projectKey || "(未知工作区)";
+        let g = byWorkspace.get(wsKey);
+        if (!g) {
+          g = {
+            key: `ws:${wsKey}`,
+            title: wsKey,
+            subtitle: undefined,
+            kind: "workspace",
+            sessions: [],
+          };
+          byWorkspace.set(wsKey, g);
+        }
+        g.sessions.push(s);
+      }
     }
-    return Array.from(m.entries()).sort((a, b) => {
-      const aLatest = Math.max(...a[1].map((s) => s.mtimeMs));
-      const bLatest = Math.max(...b[1].map((s) => s.mtimeMs));
+
+    // 按该组最近 mtime 倒序
+    const sortByLatest = (a: Group, b: Group) => {
+      const aLatest = Math.max(...a.sessions.map((s) => s.mtimeMs));
+      const bLatest = Math.max(...b.sessions.map((s) => s.mtimeMs));
       return bLatest - aLatest;
-    });
+    };
+    return [...Array.from(byAgent.values()), ...Array.from(byWorkspace.values())].sort(
+      sortByLatest
+    );
   }, [filtered]);
 
   return (
@@ -135,10 +183,37 @@ export default function SessionsRoute() {
               {t("sessions.source.openclaw")}
             </label>
 
+            {/* v0.2.4: 按 agent 过滤 */}
+            {agents.length > 1 && (
+              <>
+                <h4 style={{ marginTop: 16 }}>{t("sessions.filter.agent")}</h4>
+                <label>
+                  <input
+                    type="radio"
+                    name="agent"
+                    checked={!filter.agentId}
+                    onChange={() => setFilter({ agentId: undefined })}
+                  />
+                  {t("sessions.filter.allAgents")}
+                </label>
+                {agents.map((id) => (
+                  <label key={id}>
+                    <input
+                      type="radio"
+                      name="agent"
+                      checked={filter.agentId === id}
+                      onChange={() => setFilter({ agentId: id })}
+                    />
+                    {id}
+                  </label>
+                ))}
+              </>
+            )}
+
             <input
               type="text"
               className="search-box"
-              placeholder="搜索标题/路径…"
+              placeholder="搜索标题/路径/agent…"
               value={filter.query}
               onChange={(e) => setFilter({ query: e.target.value })}
             />
@@ -153,20 +228,26 @@ export default function SessionsRoute() {
             </div>
           )}
           {!loading && filtered.length === 0 && (
-            <div className="empty">{sessions.length === 0 ? t("sessions.empty") : t("sessions.noMatch")}</div>
+            <div className="empty">
+              {sessions.length === 0 ? t("sessions.empty") : t("sessions.noMatch")}
+            </div>
           )}
 
           <div className="sessions-count">
             {t("sessions.totalCount", { count: filtered.length })}
           </div>
 
-          {grouped.map(([workspace, list]) => (
-            <section key={workspace} className="workspace-group">
+          {grouped.map((group) => (
+            <section key={group.key} className={`workspace-group group-${group.kind}`}>
               <h2 className="workspace-title">
-                {workspace}
-                <span className="workspace-count">{list.length}</span>
+                {group.kind === "agent" ? <Bot size={16} /> : <MessageSquare size={16} />}
+                <span className="group-title-main">{group.title}</span>
+                {group.subtitle && <span className="group-title-sub"> · {group.subtitle}</span>}
+                <span className="workspace-count">
+                  {t("sessions.perGroupCount", { count: group.sessions.length })}
+                </span>
               </h2>
-              {list.map((s) => (
+              {group.sessions.map((s) => (
                 <article
                   key={`${s.source}-${s.sessionId}`}
                   className="session-card"
@@ -202,6 +283,12 @@ export default function SessionsRoute() {
                       <>
                         <span>·</span>
                         <span className="model-badge">{s.primaryModel}</span>
+                      </>
+                    )}
+                    {s.agentChannel && (
+                      <>
+                        <span>·</span>
+                        <span className="agent-channel-badge">{s.agentChannel}</span>
                       </>
                     )}
                   </div>

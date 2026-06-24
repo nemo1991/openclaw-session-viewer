@@ -47,6 +47,9 @@ syntect = "5"
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 # panic = "unwind"(默认)而非 abort:
 # - 让 std::panic::catch_unwind 能工作(单条记录/会话 panic 不影响整个 app)
