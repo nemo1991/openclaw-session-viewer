@@ -63,10 +63,36 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
     try {
       await invoke("stream_transcript", { path });
     } catch (e) {
-      set({ error: String(e), loading: false });
+      // v0.2.6: 提取真实 error 消息 — invoke 抛 error 对象时
+      // String(e) 是 "[object Object]"。用 message / kind 字段优先。
+      const errMsg = extractErrorMessage(e);
+      console.error("[stream_transcript:error]", { e, errMsg });
+      set({ error: errMsg, loading: false });
       unlisteners.forEach((u) => u());
     }
   },
 }));
 
 export type { NormalizedMessageFE };
+
+/**
+ * 从 invoke error 对象提取可读消息。
+ * Tauri 抛的错误通常有结构:`{ kind: "PathSecurity", message: "..." }`
+ * 优先用 `message` 字段,避免 `String(obj)` 出 "[object Object]"。
+ */
+function extractErrorMessage(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object") {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj.message === "string") return obj.message;
+    if (typeof obj.kind === "string") {
+      return typeof obj.message === "string" ? `${obj.kind}: ${obj.message}` : String(obj.kind);
+    }
+    try {
+      return JSON.stringify(e);
+    } catch {
+      return String(e);
+    }
+  }
+  return String(e);
+}

@@ -13,10 +13,39 @@ interface Props {
   entry: TranscriptEntryOut;
 }
 
+// v0.2.6 调查:全局错误捕获 — 抓"页面崩但 console 啥都没有"的诡异情况
+window.addEventListener("error", (e) => {
+  console.error("[WINDOW:error]", { msg: e.message, filename: e.filename, lineno: e.lineno });
+});
+window.addEventListener("unhandledrejection", (e) => {
+  console.error("[WINDOW:unhandledrejection]", { reason: e.reason });
+});
+const origConsoleError = console.error;
+console.error = (...args: unknown[]) => {
+  origConsoleError("[console.error]", ...args);
+};
+
+// v0.2.6: 用户报告控制台完全无输出 — 加一个不可错过的
+// 醒目 banner,就算 DevTools 没开也会写到 page title (WebView2 窗口标题)。
+const banner = "[v0.2.6 LOGS ACTIVE] 如果你看到这行在 console 里,说明 devtools 通了";
+console.warn(banner);
+console.warn("[v0.2.6] 当前 url:", window.location.href);
+console.warn("[v0.2.6] 当前时间:", new Date().toISOString());
+// 也写到 window.title,这样窗口标题也会变(就算 DevTools 没装)
+document.title = "[v0.2.6] " + (document.title || "OpenClaw Session Viewer");
+
 export function MessageBubble({ entry }: Props) {
   const { t } = useTranslation();
   const msg = entry.normalized;
   const role = msg.role;
+  // v0.2.6 调查:这个 entry 长啥样
+  console.log("[MessageBubble:render]", {
+    id: msg.id,
+    role,
+    rawType: msg.rawType,
+    blockCount: msg.blocks.length,
+    blockKinds: msg.blocks.map((b) => b.kind),
+  });
   const roleLabel = getRoleLabel(role, t);
   const RoleIcon = getRoleIcon(role);
 
@@ -27,7 +56,18 @@ export function MessageBubble({ entry }: Props) {
         {msg.blocks.map((b, i) => (
           <span key={i} className="msg-meta-pill">
             <FileText size={11} />
-            {String(b.label ?? b.kind)}
+            {/* v0.2.6 调查:label 是对象时 String() 会变 [object Object] */}
+            {(() => {
+              const labelValue = b.label ?? b.kind;
+              if (typeof labelValue !== "string") {
+                console.warn("[MessageBubble:meta-label-not-string]", {
+                  b,
+                  typeofLabel: typeof b.label,
+                  kind: b.kind,
+                });
+              }
+              return String(labelValue);
+            })()}
           </span>
         ))}
       </div>
@@ -71,12 +111,20 @@ export function MessageBubble({ entry }: Props) {
 function BlockRenderer({ block }: { block: Record<string, unknown> }) {
   const kind = block.kind as string;
   switch (kind) {
-    case "text":
+    case "text": {
+      // v0.2.6 调查:Windows 上 liushuyou/91d1796e 报 [object Object],
+      // 怀疑 block.text 在 IPC 后变成对象。先 console.log 拿真实数据再修。
+      console.log("[BlockRenderer:text]", {
+        block,
+        typeofText: typeof block.text,
+        value: block.text,
+      });
       return (
         <div className="block-text">
           <Markdown text={String(block.text ?? "")} />
         </div>
       );
+    }
     case "thinking":
       return <ThinkingBlock text={String(block.thinking ?? block.text ?? "")} />;
     case "tool_use":
@@ -99,11 +147,17 @@ function BlockRenderer({ block }: { block: Record<string, unknown> }) {
     case "image":
       return (
         <div className="block-image">
-          <em>📷 图片 (data:{String(block.mediaType ?? "image/png")}, {String(block.dataBase64 ?? "").length} 字符)</em>
+          <em>
+            📷 图片 (data:{String(block.mediaType ?? "image/png")},{" "}
+            {String(block.dataBase64 ?? "").length} 字符)
+          </em>
         </div>
       );
-    default:
+    default: {
+      // v0.2.6 调查:未知 kind 打 console.warn 收集证据
+      console.warn("[BlockRenderer:unknown]", { kind, block });
       return <div className="block-unknown">[{kind}]</div>;
+    }
   }
 }
 
@@ -115,20 +169,30 @@ function fmtTokens(n: number): string {
 
 function getRoleLabel(role: string, t: (k: string) => string): string {
   switch (role) {
-    case "user": return t("blocks.text") === "文本" ? "用户" : t("blocks.text"); // fallback
-    case "assistant": return "助手";
-    case "tool": return "工具";
-    case "system": return "系统";
-    default: return role;
+    case "user":
+      return t("blocks.text") === "文本" ? "用户" : t("blocks.text"); // fallback
+    case "assistant":
+      return "助手";
+    case "tool":
+      return "工具";
+    case "system":
+      return "系统";
+    default:
+      return role;
   }
 }
 
 function getRoleIcon(role: string) {
   switch (role) {
-    case "user": return User;
-    case "assistant": return Bot;
-    case "tool": return Wrench;
-    case "system": return Settings;
-    default: return FileText;
+    case "user":
+      return User;
+    case "assistant":
+      return Bot;
+    case "tool":
+      return Wrench;
+    case "system":
+      return Settings;
+    default:
+      return FileText;
   }
 }

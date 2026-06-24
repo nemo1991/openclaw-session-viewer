@@ -251,6 +251,7 @@ fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
     let mut out = Vec::new();
     match content {
         Value::String(s) => {
+            log::trace!("normalize_content: string len={}", s.len());
             let mut data = serde_json::Map::new();
             data.insert("text".to_string(), Value::String(s.clone()));
             out.push(NormalizedBlock {
@@ -259,13 +260,29 @@ fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
             });
         }
         Value::Array(arr) => {
+            log::trace!("normalize_content: array len={}", arr.len());
             for item in arr {
                 if let Some(b) = normalize_content_block(item) {
                     out.push(b);
                 }
             }
         }
-        _ => {}
+        other => {
+            // v0.2.6 调查:Windows 上 liushuyou/91d1796e 报 [object Object],
+            // 可能是 content 是单个对象(不是数组)且类型不在已知列表里。
+            log::warn!(
+                "normalize_content: 未知 content 形态 {:?} - {:#?}",
+                match other {
+                    Value::Null => "null",
+                    Value::Bool(_) => "bool",
+                    Value::Number(_) => "number",
+                    Value::Object(_) => "object",
+                    Value::String(_) => "string",
+                    Value::Array(_) => "array",
+                },
+                other
+            );
+        }
     }
     out
 }
@@ -277,17 +294,23 @@ fn normalize_content_block(item: &Value) -> Option<NormalizedBlock> {
     for (k, v) in obj {
         data.insert(k.clone(), v.clone());
     }
-    Some(NormalizedBlock {
-        kind: match r#type {
-            "text" => "text".to_string(),
-            "thinking" | "redacted_thinking" => "thinking".to_string(),
-            "tool_use" | "toolUse" | "tool_call" | "function_call" => "tool_use".to_string(),
-            "tool_result" | "toolResult" => "tool_result".to_string(),
-            "image" => "image".to_string(),
-            _ => "meta".to_string(),
-        },
-        data,
-    })
+    let kind = match r#type {
+        "text" => "text".to_string(),
+        "thinking" | "redacted_thinking" => "thinking".to_string(),
+        "tool_use" | "toolUse" | "tool_call" | "function_call" => "tool_use".to_string(),
+        "tool_result" | "toolResult" => "tool_result".to_string(),
+        "image" => "image".to_string(),
+        _ => {
+            // v0.2.6 调查:未知 content block type
+            log::warn!(
+                "normalize_content_block: 未知 block type={:?}, 完整对象: {:#?}",
+                r#type,
+                obj
+            );
+            "meta".to_string()
+        }
+    };
+    Some(NormalizedBlock { kind, data })
 }
 
 #[cfg(test)]
