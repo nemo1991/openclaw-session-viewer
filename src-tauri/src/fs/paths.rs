@@ -300,6 +300,10 @@ fn path_starts_with(target: &Path, base: &Path) -> bool {
 }
 
 /// 路径安全检查(允许路径不存在):只做词法校验(单一 base,保留向后兼容)
+///
+/// v0.2.6: 内部已用 path_starts_with 替代,所有 caller 都走
+/// assert_within_any_root。保留这个函数供旧代码 + 测试用。
+#[allow(dead_code)]
 pub fn assert_within_lexical(base: &Path, target: &Path) -> crate::error::AppResult<()> {
     if path_starts_with(target, base) {
         return Ok(());
