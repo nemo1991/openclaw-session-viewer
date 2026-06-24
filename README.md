@@ -67,7 +67,7 @@ chmod +x OpenClaw*.AppImage
 
 ### 核心
 
-- 📜 **完整会话转录** — 文本、思考、工具调用、工具结果、附件、压缩事件，所有类型
+- 📜 **完整会话转录** — 文本、思考、工具调用、工具结果、图片、附件、压缩事件，所有类型
 - 🔍 **三种搜索**:
   - 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
   - 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
@@ -84,13 +84,17 @@ chmod +x OpenClaw*.AppImage
   - 支持任何 Anthropic 兼容 API (MiniMax、自定义代理)
 - 📤 **导出** — Markdown + HTML(独立可分享,带暗色主题)
 - 🌐 **多源支持** — 同时支持 Claude Code (`~/.claude/`) 和 OpenClaw (`~/.openclaw/`)
+- 📂 **自定义数据源** — 在设置页添加任意自定义根目录，自动探测类型，保存即热重载
+- 🧩 **扩展设计** — `BlockRegistry` 模式 + `BlockHandler` trait，新 block type 只需实现一个 handler + register
+- 🔮 **未知 block 兜底** — 新出现的 block type 自动显示为 `UnknownBlockCard`（字段表 + hint 推断 + 复制/报告）
 - 🎨 **主题** — 深色/浅色/跟随系统
 - 🌏 **中文界面** — 默认 zh-CN,可选 en-US
 
 ### 工程化
 
-- ✅ **单元测试** — Rust 28 个 + TS 41 个 = **69 个测试**
+- ✅ **单元测试** — Rust 77 个 + TS 41 个 = **118 个测试**
 - 🔒 **路径安全** — 所有 Tauri 命令做词法检查,防止 `../../etc/passwd`
+- ♻️ **BlockRegistry 模式** — `BlockHandler` trait + 可扩展注册表,符合开闭原则
 - 🚀 **自动更新** — Tauri updater + GitHub Releases
 - 📦 **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
 - 🛠️ **CI/CD** — GitHub Actions 三平台并行构建
@@ -213,9 +217,10 @@ pnpm tauri build
 
 1. **Tauri 2 + Rust 后端** — 包小(~5MB)、性能好(8MB JSONL 流式解析 600ms)
 2. **共享类型包 (`packages/shared`)** — 前端和后端共用 TypeScript 类型定义
-3. **Moka 缓存 + mtime 失效** — 重复打开会话零延迟
-4. **虚拟列表 (`@tanstack/react-virtual`)** — 2 万条记录仍 60fps
-5. **路径白名单** — 所有 FS 操作必须落在 `~/.claude/` 或 `~/.openclaw/` 下
+3. **BlockRegistry 模式** — `BlockHandler` trait + 可注册 registry，新增 block type 无需改 match
+4. **Moka 缓存 + mtime 失效** — 重复打开会话零延迟
+5. **虚拟列表 (`@tanstack/react-virtual`)** — 2 万条记录仍 60fps
+6. **路径白名单** — 所有 FS 操作必须落在已知 root 下
 
 详见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -237,6 +242,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 ├── src-tauri/            # Rust 后端 (Tauri 2)
 │   ├── src/
 │   │   ├── parser/       # 流式 JSONL 解析 + 归一化
+│   │   │   ├── blocks/   # BlockRegistry + handler 独立文件
 │   │   ├── commands/     # 12 个 Tauri 命令
 │   │   ├── llm/          # Anthropic 兼容 API 客户端
 │   │   ├── fs/           # 路径解析 + 安全检查
@@ -255,7 +261,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 ### 测试
 
 ```bash
-# Rust 单元测试 (28 个)
+# Rust 单元测试 (77 个)
 cd src-tauri && cargo test --lib
 
 # TypeScript 单元测试 (41 个)
@@ -379,7 +385,11 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] Markdown/HTML 导出
 - [x] OpenClaw 存储支持
 - [x] 实时 PID 状态
-- [x] 单元测试 (69 个)
+- [x] 多 Agent UI 二级分组
+- [x] 自定义数据源根目录 + 热重载
+- [x] Windows [object Object] 修复
+- [x] BlockRegistry 模式重构 + UnknownBlockCard
+- [x] 单元测试 (118 个)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [ ] **会话对比** — diff 两个会话的工具调用差异
 - [ ] **插件系统** — 第三方分析器
