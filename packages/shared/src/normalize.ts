@@ -31,6 +31,15 @@ export interface SessionMeta {
   totalTokens?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** 主要使用的模型 */
   primaryModel?: string;
+  // --- v0.2.4 多 agent 支持 ---
+  /** OpenClaw agentId(如 "main" / "liushuyou");Claude 始终为 undefined */
+  agentId?: string;
+  /** 来自 sessions.json 的友好标签,如 "forcetone (@forcetone) id:6030344417" */
+  agentLabel?: string;
+  /** 渠道: "telegram" / "feishu" / "main" */
+  agentChannel?: string;
+  /** 渠道 target,如 "telegram:6030344417" */
+  agentTarget?: string;
 }
 
 /** 归一化后的内容块 */
@@ -103,7 +112,9 @@ export function normalizeClaudeRecord(
       return {
         ...base,
         role: "user",
-        blocks: content.map((b) => normalizeContentBlock(b)).filter((b): b is NormalizedBlock => b !== null),
+        blocks: content
+          .map((b) => normalizeContentBlock(b))
+          .filter((b): b is NormalizedBlock => b !== null),
         rawType: "user",
       };
     }
@@ -120,7 +131,9 @@ export function normalizeClaudeRecord(
           cacheRead: m.usage.cache_read_input_tokens ?? 0,
           cacheWrite: m.usage.cache_creation_input_tokens ?? 0,
         },
-        blocks: m.content.map((b) => normalizeContentBlock(b)).filter((b): b is NormalizedBlock => b !== null),
+        blocks: m.content
+          .map((b) => normalizeContentBlock(b))
+          .filter((b): b is NormalizedBlock => b !== null),
         rawType: "assistant",
       };
     }
@@ -202,7 +215,12 @@ function normalizeContentBlock(block: ContentBlock): NormalizedBlock | null {
     case "tool_result": {
       const c = block.content;
       if (typeof c === "string") {
-        return { kind: "tool_result", toolUseId: block.tool_use_id, content: c, isError: block.is_error };
+        return {
+          kind: "tool_result",
+          toolUseId: block.tool_use_id,
+          content: c,
+          isError: block.is_error,
+        };
       }
       const text = c
         .map((it) => toolResultItemToString(it))
@@ -233,7 +251,10 @@ function toolResultItemToString(item: ToolResultItem): string {
 }
 
 /** 归一化 OpenClaw 记录 */
-export function normalizeOpenClawEntry(entry: OpenClawEntry, index: number): NormalizedMessage | null {
+export function normalizeOpenClawEntry(
+  entry: OpenClawEntry,
+  index: number
+): NormalizedMessage | null {
   const base = {
     id: entry.id,
     timestamp: entry.timestamp,
@@ -281,7 +302,11 @@ export function normalizeOpenClawEntry(entry: OpenClawEntry, index: number): Nor
         ...base,
         role: "meta",
         blocks: [
-          { kind: "meta", label: "compaction", payload: { summary: entry.summary, tokensBefore: entry.tokensBefore } },
+          {
+            kind: "meta",
+            label: "compaction",
+            payload: { summary: entry.summary, tokensBefore: entry.tokensBefore },
+          },
         ],
         rawType: "compaction",
       };
@@ -289,14 +314,26 @@ export function normalizeOpenClawEntry(entry: OpenClawEntry, index: number): Nor
       return {
         ...base,
         role: "meta",
-        blocks: [{ kind: "meta", label: "branch-summary", payload: { fromId: entry.fromId, summary: entry.summary } }],
+        blocks: [
+          {
+            kind: "meta",
+            label: "branch-summary",
+            payload: { fromId: entry.fromId, summary: entry.summary },
+          },
+        ],
         rawType: "branch_summary",
       };
     case "label":
       return {
         ...base,
         role: "meta",
-        blocks: [{ kind: "meta", label: "label", payload: { targetId: entry.targetId, text: entry.label } }],
+        blocks: [
+          {
+            kind: "meta",
+            label: "label",
+            payload: { targetId: entry.targetId, text: entry.label },
+          },
+        ],
         rawType: "label",
       };
     case "session_info":
@@ -317,7 +354,9 @@ export function normalizeOpenClawEntry(entry: OpenClawEntry, index: number): Nor
       return {
         ...base,
         role: "meta",
-        blocks: [{ kind: "meta", label: `custom-msg: ${entry.customType}`, payload: entry.content }],
+        blocks: [
+          { kind: "meta", label: `custom-msg: ${entry.customType}`, payload: entry.content },
+        ],
         rawType: "custom_message",
       };
   }
@@ -357,7 +396,11 @@ function openClawContentToBlocks(content: unknown): NormalizedBlock[] {
         });
         break;
       case "image":
-        out.push({ kind: "image", mediaType: String(it.mediaType ?? "image/png"), dataBase64: it.data as string | undefined });
+        out.push({
+          kind: "image",
+          mediaType: String(it.mediaType ?? "image/png"),
+          dataBase64: it.data as string | undefined,
+        });
         break;
       default:
         // 未知块,原样塞到 meta

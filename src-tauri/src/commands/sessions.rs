@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use serde::Deserialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
@@ -12,6 +13,90 @@ use crate::fs::walker;
 use crate::model::{LivePidMeta, SessionMeta, TokenUsage};
 use crate::parser::jsonl;
 use crate::AppState;
+
+/// sessions.json 中的每个 entry (只取必要字段,容错其它大块)
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionsIndexEntry {
+    #[serde(default)]
+    session_id: String,
+    #[serde(default)]
+    origin: SessionsIndexOrigin,
+    #[serde(default)]
+    last_channel: String,
+    #[serde(default)]
+    last_to: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SessionsIndexOrigin {
+    #[serde(default)]
+    label: String,
+}
+
+/// sessions.json 索引:sessionId → 元信息
+type SessionsIndex = HashMap<String, SessionsIndexEntry>;
+
+/// 读 sessions.json 索引。文件不存在或 JSON 损坏时返回空 HashMap,不报错。
+fn read_sessions_index(path: &Path) -> SessionsIndex {
+    let mut out = SessionsIndex::new();
+    if !path.exists() {
+        return out;
+    }
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            log::warn!("读取 sessions.json 失败 {:?}: {}", path, e);
+            return out;
+        }
+    };
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("解析 sessions.json 失败 {:?}: {}", path, e);
+            return out;
+        }
+    };
+    let obj = match value.as_object() {
+        Some(o) => o,
+        None => return out,
+    };
+    for (_key, entry) in obj {
+        if let Ok(parsed) = serde_json::from_value::<SessionsIndexEntry>(entry.clone()) {
+            if !parsed.session_id.is_empty() {
+                out.insert(parsed.session_id.clone(), parsed);
+            }
+        }
+    }
+    out
+}
+
+/// 从 sessions.json 索引里取 agent 的"代表性"展示信息(label/channel/target)
+/// 用法:同 agent 下可能有多个 sessionKey (如 telegram direct/group/feishu),
+/// 这里取 sessions.json 中第一个 entry 的字段作为 agent 默认展示。
+fn agent_info_from_index(
+    index: &SessionsIndex,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(first) = index.values().next() else {
+        return (None, None, None);
+    };
+    let label = if first.origin.label.is_empty() {
+        None
+    } else {
+        Some(first.origin.label.clone())
+    };
+    let channel = if first.last_channel.is_empty() {
+        None
+    } else {
+        Some(first.last_channel.clone())
+    };
+    let target = if first.last_to.is_empty() {
+        None
+    } else {
+        Some(first.last_to.clone())
+    };
+    (label, channel, target)
+}
 
 /// 列出所有 Claude + OpenClaw 会话
 #[tauri::command]
@@ -36,7 +121,7 @@ pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<Ses
         }
     }
 
-    // 3) 扫 OpenClaw
+    // 3) 扫 OpenClaw (按 agent 分组)
     if let Some(oc) = &state.paths.openclaw {
         if oc.agents_dir.exists() {
             let agents: Vec<_> = std::fs::read_dir(&oc.agents_dir)
@@ -48,9 +133,18 @@ pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<Ses
                     continue;
                 }
                 let agent_id = agent_dir.file_name().to_string_lossy().to_string();
+                let sessions_index = read_sessions_index(&sessions_dir.join("sessions.json"));
+                let (agent_label, agent_channel, agent_target) =
+                    agent_info_from_index(&sessions_index);
                 let oc_jsonls = walker::list_jsonl_files(&sessions_dir).unwrap_or_default();
                 for jsonl_path in oc_jsonls {
-                    match build_openclaw_session_meta(&jsonl_path, &agent_id) {
+                    match build_openclaw_session_meta(
+                        &jsonl_path,
+                        &agent_id,
+                        agent_label.clone(),
+                        agent_channel.clone(),
+                        agent_target.clone(),
+                    ) {
                         Ok(meta) => out.push(meta),
                         Err(e) => log::warn!("解析 OpenClaw 会话失败 {:?}: {}", jsonl_path, e),
                     }
@@ -85,13 +179,22 @@ pub async fn get_session_meta(
 
     let live_pids = scan_live_pids(&state.paths.claude.sessions_dir)?;
     if path.contains("openclaw") || path.contains(".openclaw") {
+        // 从路径反推 agentId: <root>/agents/<agentId>/sessions/<id>.jsonl
         let agent_id = p
             .ancestors()
             .nth(2)
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        build_openclaw_session_meta(p, &agent_id)
+        // 读 agent 的 sessions.json 索引以补 agent 元信息
+        let sessions_index = read_sessions_index(
+            &p.ancestors()
+                .nth(1)
+                .unwrap_or_else(|| Path::new("/"))
+                .join("sessions.json"),
+        );
+        let (agent_label, agent_channel, agent_target) = agent_info_from_index(&sessions_index);
+        build_openclaw_session_meta(p, &agent_id, agent_label, agent_channel, agent_target)
     } else {
         build_claude_session_meta(p, &state, &live_pids)
     }
@@ -263,10 +366,20 @@ fn build_claude_session_meta(
         subagent_dir,
         total_tokens: Some(token_total),
         primary_model,
+        agent_id: None,
+        agent_label: None,
+        agent_channel: None,
+        agent_target: None,
     })
 }
 
-fn build_openclaw_session_meta(jsonl_path: &Path, agent_id: &str) -> AppResult<SessionMeta> {
+fn build_openclaw_session_meta(
+    jsonl_path: &Path,
+    agent_id: &str,
+    agent_label: Option<String>,
+    agent_channel: Option<String>,
+    agent_target: Option<String>,
+) -> AppResult<SessionMeta> {
     let meta = std::fs::metadata(jsonl_path)?;
     let mtime_ms = meta
         .modified()
@@ -331,9 +444,13 @@ fn build_openclaw_session_meta(jsonl_path: &Path, agent_id: &str) -> AppResult<S
         message_count.max(total)
     };
 
+    // projectKey 加 "openclaw:" 前缀,避免和 Claude 的 projectKey 冲突
+    // (例如 Claude 恰好有 projectKey="main" 的目录)
+    let project_key = format!("openclaw:{}", agent_id);
+
     Ok(SessionMeta {
         session_id,
-        project_key: agent_id.to_string(),
+        project_key,
         workspace_guess: None,
         source: "openclaw".to_string(),
         jsonl_path: jsonl_path.to_string_lossy().to_string(),
@@ -347,6 +464,10 @@ fn build_openclaw_session_meta(jsonl_path: &Path, agent_id: &str) -> AppResult<S
         subagent_dir: None,
         total_tokens: None,
         primary_model: None,
+        agent_id: Some(agent_id.to_string()),
+        agent_label,
+        agent_channel,
+        agent_target,
     })
 }
 
@@ -455,4 +576,99 @@ pub fn read_live_pids_meta(dir: &Path) -> AppResult<Vec<LivePidMeta>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    /// 写入指定内容到临时文件
+    fn write_temp(content: &str) -> NamedTempFile {
+        let mut f = NamedTempFile::new().expect("create tempfile");
+        f.write_all(content.as_bytes()).expect("write");
+        f
+    }
+
+    #[test]
+    fn read_sessions_index_missing_file_returns_empty() {
+        let path = Path::new("/nonexistent/sessions.json");
+        let idx = read_sessions_index(path);
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn read_sessions_index_parses_known_fields() {
+        let json = r#"{
+            "agent:main:main": {
+                "sessionId": "abc-123",
+                "origin": { "label": "Main Agent" },
+                "lastChannel": "main",
+                "lastTo": "main"
+            },
+            "agent:telegram:direct:42": {
+                "sessionId": "def-456",
+                "origin": { "label": "forcetone (@forcetone) id:42" },
+                "lastChannel": "telegram",
+                "lastTo": "telegram:42"
+            }
+        }"#;
+        let f = write_temp(json);
+        let idx = read_sessions_index(f.path());
+        assert_eq!(idx.len(), 2);
+        assert_eq!(idx.get("abc-123").unwrap().last_channel, "main");
+        assert_eq!(
+            idx.get("def-456").unwrap().origin.label,
+            "forcetone (@forcetone) id:42"
+        );
+    }
+
+    #[test]
+    fn read_sessions_index_ignores_entries_with_missing_session_id() {
+        let json = r#"{
+            "a": { "lastChannel": "x" },
+            "b": { "sessionId": "valid", "lastChannel": "y" }
+        }"#;
+        let f = write_temp(json);
+        let idx = read_sessions_index(f.path());
+        assert_eq!(idx.len(), 1);
+        assert!(idx.contains_key("valid"));
+    }
+
+    #[test]
+    fn read_sessions_index_handles_garbage_json() {
+        let f = write_temp("not json at all {{");
+        let idx = read_sessions_index(f.path());
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn agent_info_from_index_extracts_first_entry() {
+        let mut idx = SessionsIndex::new();
+        idx.insert(
+            "abc".into(),
+            SessionsIndexEntry {
+                session_id: "abc".into(),
+                origin: SessionsIndexOrigin {
+                    label: "forcetone".into(),
+                },
+                last_channel: "telegram".into(),
+                last_to: "telegram:42".into(),
+            },
+        );
+        let (label, channel, target) = agent_info_from_index(&idx);
+        assert_eq!(label.as_deref(), Some("forcetone"));
+        assert_eq!(channel.as_deref(), Some("telegram"));
+        assert_eq!(target.as_deref(), Some("telegram:42"));
+    }
+
+    #[test]
+    fn agent_info_from_index_returns_none_when_empty() {
+        let idx = SessionsIndex::new();
+        let (label, channel, target) = agent_info_from_index(&idx);
+        assert!(label.is_none());
+        assert!(channel.is_none());
+        assert!(target.is_none());
+    }
 }

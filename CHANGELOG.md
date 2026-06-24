@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-24
+
+### 新增
+
+- ✨ **多 Agent UI**:OpenClaw 按 agent 二级分组(顶层紫色 Bot icon,
+  副标题显示 channel · label,卡片底部 channel badge)。
+  - `SessionMeta` 加 `agentId` / `agentLabel` / `agentChannel` /
+    `agentTarget` 4 个字段(都 optional,向后兼容)
+  - 后端从 per-agent `sessions.json` 索引读 label/channel/target
+    (文件不存在或 JSON 损坏返回空,不阻塞列表加载)
+  - `projectKey` 加 `openclaw:` 前缀避免与 Claude projectKey 冲突
+  - 前端 sessionsStore 加 `agentId` filter(只在 > 1 个 agent 时显示)
+  - 文本搜索范围扩展到 `agentId` / `agentLabel` / `agentTarget`
+
+### 测试
+
+- 🧪 Rust 单元测试 35 → 41(+6 sessions.json 容错/解析测试)
+
 ## [0.2.3] - 2026-06-23
 
 ### 修复
