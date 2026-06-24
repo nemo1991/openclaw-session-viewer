@@ -25,6 +25,15 @@ console.error = (...args: unknown[]) => {
   origConsoleError("[console.error]", ...args);
 };
 
+// v0.2.6: 用户报告控制台完全无输出 — 加一个不可错过的
+// 醒目 banner,就算 DevTools 没开也会写到 page title (WebView2 窗口标题)。
+const banner = "[v0.2.6 LOGS ACTIVE] 如果你看到这行在 console 里,说明 devtools 通了";
+console.warn(banner);
+console.warn("[v0.2.6] 当前 url:", window.location.href);
+console.warn("[v0.2.6] 当前时间:", new Date().toISOString());
+// 也写到 window.title,这样窗口标题也会变(就算 DevTools 没装)
+document.title = "[v0.2.6] " + (document.title || "OpenClaw Session Viewer");
+
 export function MessageBubble({ entry }: Props) {
   const { t } = useTranslation();
   const msg = entry.normalized;
