@@ -28,18 +28,28 @@
 //!
 //! | type(s)                          | normalized kind | handler               |
 //! |----------------------------------|-----------------|-----------------------|
-//! | `text`                           | text            | TextBlockHandler      |
-//! | `thinking` / `redacted_thinking` | thinking        | ThinkingBlockHandler  |
-//! | `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | tool_use | ToolUseBlockHandler |
-//! | `tool_result` / `toolResult`     | tool_result     | ToolResultBlockHandler|
-//! | `image`                          | image           | ImageBlockHandler     |
-//! | (其它)                           | meta            | MetaBlockHandler      |
+//! | type(s)                          | normalized kind | file                 |
+//! |----------------------------------|-----------------|----------------------|
+//! | `text`                           | text            | `text.rs`            |
+//! | `thinking` / `redacted_thinking` | thinking        | `thinking.rs`         |
+//! | `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | tool_use | `tool_use.rs` |
+//! | `tool_result` / `toolResult`     | tool_result     | `tool_result.rs`     |
+//! | `image`                          | image           | `image.rs`           |
+//! | (其它)                           | meta            | `meta.rs`            |
 
+pub mod image;
+pub mod meta;
 pub mod text;
 pub mod thinking;
+pub mod tool_result;
+pub mod tool_use;
 
+pub use image::ImageBlockHandler;
+pub use meta::MetaBlockHandler;
 pub use text::TextBlockHandler;
 pub use thinking::ThinkingBlockHandler;
+pub use tool_result::ToolResultBlockHandler;
+pub use tool_use::ToolUseBlockHandler;
 
 use serde_json::Value;
 
@@ -112,162 +122,6 @@ impl Default for BlockRegistry {
     }
 }
 
-// ============================================================================
-// 内嵌 handler 实现(PR 1 阶段;PR 2/3 会拆成独立文件)
-// ============================================================================
-
-/// tool_use block: 5 个 alias (tool_use/toolUse/tool_call/function_call/toolCall)
-/// 注意 pi-coding-agent 的 toolCall 用 `arguments` 而不是 `input`,这里统一重命名。
-pub struct ToolUseBlockHandler;
-
-impl BlockHandler for ToolUseBlockHandler {
-    fn matches(&self, item: &Value) -> bool {
-        matches!(
-            item.get("type").and_then(|v| v.as_str()),
-            Some("tool_use" | "toolUse" | "tool_call" | "function_call" | "toolCall")
-        )
-    }
-
-    fn normalize(&self, item: &Value) -> BlockResult {
-        let id = item
-            .get("id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| BlockError::Invalid("tool_use block missing 'id'".into()))?
-            .to_string();
-        let name = item
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| BlockError::Invalid("tool_use block missing 'name'".into()))?
-            .to_string();
-        // 字段翻译:`input` (Claude 标准) / `arguments` (pi-coding-agent)
-        let input = item
-            .get("input")
-            .or_else(|| item.get("arguments"))
-            .cloned()
-            .unwrap_or(Value::Null);
-
-        let mut data = serde_json::Map::new();
-        data.insert("id".to_string(), Value::String(id));
-        data.insert("name".to_string(), Value::String(name));
-        data.insert("input".to_string(), input);
-        Ok(NormalizedBlock {
-            kind: "tool_use".to_string(),
-            data,
-        })
-    }
-
-    fn name(&self) -> &'static str {
-        "tool_use"
-    }
-}
-
-/// tool_result block: `{ type: "tool_result" | "toolResult", tool_use_id | toolCallId, content, is_error? }`
-pub struct ToolResultBlockHandler;
-
-impl BlockHandler for ToolResultBlockHandler {
-    fn matches(&self, item: &Value) -> bool {
-        matches!(
-            item.get("type").and_then(|v| v.as_str()),
-            Some("tool_result" | "toolResult")
-        )
-    }
-
-    fn normalize(&self, item: &Value) -> BlockResult {
-        // tool_use_id (Claude) / toolCallId (pi-agent)
-        let tool_use_id = item
-            .get("tool_use_id")
-            .or_else(|| item.get("toolCallId"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let content = item.get("content").cloned().unwrap_or(Value::Null);
-        let is_error = item
-            .get("is_error")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let mut data = serde_json::Map::new();
-        data.insert("tool_use_id".to_string(), Value::String(tool_use_id));
-        data.insert("content".to_string(), content);
-        data.insert("is_error".to_string(), Value::Bool(is_error));
-        Ok(NormalizedBlock {
-            kind: "tool_result".to_string(),
-            data,
-        })
-    }
-
-    fn name(&self) -> &'static str {
-        "tool_result"
-    }
-}
-
-/// image block: `{ type: "image", mediaType?, data? }`
-pub struct ImageBlockHandler;
-
-impl BlockHandler for ImageBlockHandler {
-    fn matches(&self, item: &Value) -> bool {
-        item.get("type").and_then(|v| v.as_str()) == Some("image")
-    }
-
-    fn normalize(&self, item: &Value) -> BlockResult {
-        let media_type = item
-            .get("mediaType")
-            .or_else(|| item.get("media_type"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("image/png")
-            .to_string();
-        let mut data = serde_json::Map::new();
-        data.insert("mediaType".to_string(), Value::String(media_type));
-        if let Some(d) = item.get("data") {
-            data.insert("data".to_string(), d.clone());
-        }
-        Ok(NormalizedBlock {
-            kind: "image".to_string(),
-            data,
-        })
-    }
-
-    fn name(&self) -> &'static str {
-        "image"
-    }
-}
-
-/// meta block: 兜底 + 未知 type 包装
-///
-/// 输出 shape(serde flatten 后):
-/// `{ kind: "meta", label: "原始 type 字符串", payload: 整个 obj }`
-///
-/// 前端依赖:
-/// - `b.label` (string) 用于 pill 显示
-/// - `b.payload` (object) 用于 UnknownBlockCard 字段表
-pub struct MetaBlockHandler;
-
-impl BlockHandler for MetaBlockHandler {
-    fn matches(&self, _item: &Value) -> bool {
-        // 兜底:永远匹配
-        true
-    }
-
-    fn normalize(&self, item: &Value) -> BlockResult {
-        let type_str = item
-            .get("type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let mut data = serde_json::Map::new();
-        data.insert("label".to_string(), Value::String(type_str));
-        data.insert("payload".to_string(), item.clone());
-        Ok(NormalizedBlock {
-            kind: "meta".to_string(),
-            data,
-        })
-    }
-
-    fn name(&self) -> &'static str {
-        "meta"
-    }
-}
-
 /// 全局默认 registry
 ///
 /// 注册顺序很关键:MetaBlockHandler 必须放最后(永远匹配,否则会"吞掉"其它 type)。
@@ -288,130 +142,6 @@ mod tests {
 
     fn reg() -> BlockRegistry {
         default_registry()
-    }
-
-    #[test]
-    fn tool_use_block_handler_arguments_to_input() {
-        // pi-coding-agent toolCall + arguments
-        let r = reg();
-        let n = r
-            .normalize(&json!({
-                "type": "toolCall",
-                "id": "call_abc",
-                "name": "read",
-                "arguments": {"path": "/tmp/x"}
-            }))
-            .unwrap();
-        assert_eq!(n.kind, "tool_use");
-        assert_eq!(n.data.get("id").and_then(|v| v.as_str()), Some("call_abc"));
-        assert_eq!(n.data.get("name").and_then(|v| v.as_str()), Some("read"));
-        assert_eq!(
-            n.data
-                .get("input")
-                .and_then(|v| v.get("path"))
-                .and_then(|v| v.as_str()),
-            Some("/tmp/x")
-        );
-    }
-
-    #[test]
-    fn tool_use_block_handler_claude_native() {
-        // Claude 标准 tool_use + input
-        let r = reg();
-        let n = r
-            .normalize(&json!({
-                "type": "tool_use",
-                "id": "toolu_abc",
-                "name": "Bash",
-                "input": {"cmd": "ls"}
-            }))
-            .unwrap();
-        assert_eq!(n.kind, "tool_use");
-        assert_eq!(
-            n.data
-                .get("input")
-                .and_then(|v| v.get("cmd"))
-                .and_then(|v| v.as_str()),
-            Some("ls")
-        );
-    }
-
-    #[test]
-    fn tool_result_block_handler_string_content() {
-        let r = reg();
-        let n = r
-            .normalize(&json!({
-                "type": "tool_result",
-                "tool_use_id": "toolu_abc",
-                "content": "OK",
-                "is_error": false
-            }))
-            .unwrap();
-        assert_eq!(n.kind, "tool_result");
-        assert_eq!(n.data.get("content").and_then(|v| v.as_str()), Some("OK"));
-    }
-
-    #[test]
-    fn tool_result_block_handler_callid_alias() {
-        // pi-coding-agent 用 toolCallId
-        let r = reg();
-        let n = r
-            .normalize(&json!({
-                "type": "toolResult",
-                "toolCallId": "call_xyz",
-                "content": [{"type": "text", "text": "stdout"}]
-            }))
-            .unwrap();
-        assert_eq!(n.kind, "tool_result");
-        assert_eq!(
-            n.data.get("tool_use_id").and_then(|v| v.as_str()),
-            Some("call_xyz")
-        );
-    }
-
-    #[test]
-    fn image_block_handler_basic() {
-        let r = reg();
-        let n = r
-            .normalize(&json!({"type": "image", "mediaType": "image/jpeg", "data": "base64..."}))
-            .unwrap();
-        assert_eq!(n.kind, "image");
-        assert_eq!(
-            n.data.get("mediaType").and_then(|v| v.as_str()),
-            Some("image/jpeg")
-        );
-    }
-
-    #[test]
-    fn meta_block_handler_catches_unknown() {
-        let r = reg();
-        let n = r
-            .normalize(&json!({"type": "future-block-type", "foo": "bar"}))
-            .unwrap();
-        assert_eq!(n.kind, "meta");
-        assert_eq!(
-            n.data.get("label").and_then(|v| v.as_str()),
-            Some("future-block-type")
-        );
-        assert_eq!(
-            n.data
-                .get("payload")
-                .and_then(|v| v.get("foo"))
-                .and_then(|v| v.as_str()),
-            Some("bar")
-        );
-    }
-
-    #[test]
-    fn meta_block_handler_handles_missing_type() {
-        // 极端兜底:type 字段都没有
-        let r = reg();
-        let n = r.normalize(&json!({"foo": "bar"})).unwrap();
-        assert_eq!(n.kind, "meta");
-        assert_eq!(
-            n.data.get("label").and_then(|v| v.as_str()),
-            Some("unknown")
-        );
     }
 
     #[test]
