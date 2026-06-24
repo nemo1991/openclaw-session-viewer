@@ -117,6 +117,81 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
           </em>
         </div>
       );
+    case "agent_listing": {
+      const added = (block.addedTypes as string[]) ?? [];
+      const removed = (block.removedTypes as string[]) ?? [];
+      const isInitial = Boolean(block.isInitial);
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">🤖 agent</span>
+          {isInitial ? <span>初始化 {added.length} 个 agent</span> : null}
+          {!isInitial && added.length > 0 && <span>+{added.length} agent</span>}
+          {!isInitial && removed.length > 0 && <span>-{removed.length} agent</span>}
+          <details className="meta-details">
+            <summary>详情</summary>
+            {added.length > 0 && (
+              <div className="meta-list">
+                <strong>新增:</strong> {added.join(", ")}
+              </div>
+            )}
+            {removed.length > 0 && (
+              <div className="meta-list">
+                <strong>移除:</strong> {removed.join(", ")}
+              </div>
+            )}
+          </details>
+        </div>
+      );
+    }
+    case "skill_listing": {
+      const names = (block.names as string[]) ?? [];
+      const count = Number(block.skillCount ?? names.length);
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">🛠 skill</span>
+          <span>{count} 个 skill</span>
+          <details className="meta-details">
+            <summary>查看列表</summary>
+            <div className="meta-list">
+              {names.map((s: string) => (
+                <span key={s} className="meta-tag">
+                  {s}
+                </span>
+              ))}
+            </div>
+          </details>
+        </div>
+      );
+    }
+    case "plan_mode": {
+      const planFile = String(block.planFilePath ?? "");
+      const hasPlan = Boolean(block.planExists);
+      const reminder = String(block.reminderType ?? "");
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">📋 plan_mode</span>
+          <span>{hasPlan ? "有活动计划" : "无计划"}</span>
+          {reminder && <span>· {reminder}</span>}
+          {planFile && (
+            <details className="meta-details">
+              <summary>路径</summary>
+              <code className="meta-path">{planFile}</code>
+            </details>
+          )}
+        </div>
+      );
+    }
+    case "file_snapshot": {
+      const fileCount = Number(block.fileCount ?? 0);
+      const mid = String(block.messageId ?? "");
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">📁 file_snapshot</span>
+          <span>{fileCount} 个跟踪文件</span>
+          {mid && <span className="meta-sub">msg: {mid.slice(0, 8)}…</span>}
+        </div>
+      );
+    }
     default:
       // 未知 kind:使用 UnknownBlockCard
       return <UnknownBlockCard block={block} />;
