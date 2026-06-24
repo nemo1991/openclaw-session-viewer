@@ -1,10 +1,21 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Save, FolderOpen, Eye, EyeOff } from "lucide-react";
+import {
+  ArrowLeft,
+  Save,
+  FolderOpen,
+  Eye,
+  EyeOff,
+  Plus,
+  Trash2,
+  Database,
+  ExternalLink,
+} from "lucide-react";
 
 import { useSettingsStore } from "../state/settingsStore";
 import { apiPickExportDir, apiRevealInFinder } from "../lib/api";
+import type { CustomRootConfig, CustomRootKind } from "@ocsv/shared";
 import "./SettingsRoute.css";
 
 export default function SettingsRoute() {
@@ -25,6 +36,38 @@ export default function SettingsRoute() {
     if (dir) {
       update({ defaultExportDir: dir });
     }
+  };
+
+  const handleAddCustomRoot = async () => {
+    const dir = await apiPickExportDir();
+    if (!dir) return;
+    // 自动探测 kind:从路径最后一段看是不是 .openclaw/.claude
+    // (更精确的探测在后端 probe,这里只是 UI 初值)
+    const lastSeg = dir.split(/[/\\]/).filter(Boolean).pop() ?? dir;
+    const looksLikeOpenclaw = lastSeg.toLowerCase().includes("openclaw");
+    const looksLikeClaude = lastSeg.toLowerCase().includes("claude");
+    let kind: CustomRootKind;
+    if (looksLikeOpenclaw && looksLikeClaude) kind = "Both";
+    else if (looksLikeOpenclaw) kind = "OpenClaw";
+    else if (looksLikeClaude) kind = "Claude";
+    else kind = "OpenClaw"; // 默认猜 OpenClaw(用户最常见场景)
+
+    const newRoot: CustomRootConfig = {
+      label: lastSeg,
+      path: dir,
+      kind,
+    };
+    update({ customRoots: [...(settings.customRoots ?? []), newRoot] });
+  };
+
+  const handleRemoveCustomRoot = (idx: number) => {
+    const next = (settings.customRoots ?? []).filter((_, i) => i !== idx);
+    update({ customRoots: next });
+  };
+
+  const handleUpdateRootLabel = (idx: number, label: string) => {
+    const next = (settings.customRoots ?? []).map((r, i) => (i === idx ? { ...r, label } : r));
+    update({ customRoots: next });
   };
 
   return (
@@ -126,6 +169,56 @@ export default function SettingsRoute() {
           </div>
         </section>
 
+        {/* v0.2.5: 数据源管理 */}
+        <section>
+          <h2>
+            <Database size={14} /> {t("settings.dataSources.title")}
+          </h2>
+          <p className="hint">{t("settings.dataSources.hint")}</p>
+
+          <div className="data-source-row default">
+            <div>
+              <strong>{t("settings.dataSources.default")}</strong>
+              <div className="data-source-paths">
+                <code>~/.claude</code>
+                <code>~/.openclaw</code>
+              </div>
+            </div>
+          </div>
+
+          {(settings.customRoots ?? []).map((root, idx) => (
+            <div key={`${root.path}-${idx}`} className="data-source-row">
+              <input
+                className="data-source-label"
+                value={root.label}
+                onChange={(e) => handleUpdateRootLabel(idx, e.target.value)}
+                placeholder="标签"
+              />
+              <code className="data-source-path">{root.path}</code>
+              <span className={`kind-badge kind-${root.kind.toLowerCase()}`}>{root.kind}</span>
+              <button
+                type="button"
+                onClick={() => apiRevealInFinder(root.path)}
+                title="在文件管理器中打开"
+              >
+                <ExternalLink size={12} />
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => handleRemoveCustomRoot(idx)}
+                title="删除"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+
+          <button type="button" className="add-root" onClick={handleAddCustomRoot}>
+            <Plus size={14} /> {t("settings.dataSources.add")}
+          </button>
+        </section>
+
         <section>
           <h2>{t("settings.export")}</h2>
           <div className="field">
@@ -141,9 +234,7 @@ export default function SettingsRoute() {
                 <FolderOpen size={14} /> {t("settings.pickDir")}
               </button>
               {settings.defaultExportDir && (
-                <button onClick={() => apiRevealInFinder(settings.defaultExportDir!)}>
-                  打开
-                </button>
+                <button onClick={() => apiRevealInFinder(settings.defaultExportDir!)}>打开</button>
               )}
             </div>
           </div>

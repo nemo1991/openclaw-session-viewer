@@ -111,12 +111,18 @@ pub async fn search_all(
     let (tx, mut rx) = mpsc::channel::<GlobalSearchHitOut>(128);
     let app_clone = app.clone();
 
-    // 收集所有 jsonl 路径
+    // 收集所有 jsonl 路径(走所有 root:default + custom_roots)
     let mut all = Vec::new();
-    all.extend(walker::list_jsonl_files(&state.paths.claude.projects_dir)?);
-    if let Some(oc) = &state.paths.openclaw {
-        if oc.agents_dir.exists() {
-            for entry in std::fs::read_dir(&oc.agents_dir)?.filter_map(|e| e.ok()) {
+    let paths_snapshot = state.paths.read().clone();
+    for projects_dir in paths_snapshot.all_claude_projects_dirs() {
+        all.extend(walker::list_jsonl_files(projects_dir)?);
+    }
+    for agents_dir in paths_snapshot.all_openclaw_agents_dirs() {
+        if !agents_dir.exists() {
+            continue;
+        }
+        if let Ok(entries) = std::fs::read_dir(agents_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
                 let sessions = entry.path().join("sessions");
                 if sessions.exists() {
                     all.extend(walker::list_jsonl_files(&sessions)?);
