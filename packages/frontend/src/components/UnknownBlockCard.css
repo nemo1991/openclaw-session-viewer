@@ -1,0 +1,175 @@
+/* v0.3.0 PR5: UnknownBlockCard styles */
+
+.unknown-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.unknown-block-card {
+  margin: 4px 0;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-1);
+  overflow: hidden;
+}
+
+.unknown-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+}
+
+.unknown-summary:hover {
+  background: var(--color-surface-2);
+}
+
+.unknown-kind-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #f59e0b20;
+  color: #f59e0b;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.unknown-label {
+  color: var(--color-text);
+  font-weight: 500;
+  flex: 1;
+}
+
+.unknown-field-count {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.unknown-chevron {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+}
+
+.unknown-body {
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.unknown-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.hint-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--color-accent-bg, #3b82f620);
+  color: var(--color-accent, #3b82f6);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.unknown-fields {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.unknown-fields th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.unknown-fields td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  vertical-align: top;
+}
+
+.field-name {
+  width: 140px;
+  color: var(--color-text-secondary);
+  font-family: monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.field-value {
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.field-scalar {
+  font-family: monospace;
+  color: var(--color-accent, #3b82f6);
+}
+
+.field-null {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.field-pre {
+  margin: 0;
+  padding: 4px 8px;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-x: auto;
+  white-space: pre-wrap;
+}
+
+.field-truncated {
+  font-size: 12px;
+}
+
+.field-truncated summary {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.unknown-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.unknown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.unknown-btn:hover {
+  background: var(--color-surface-3);
+}

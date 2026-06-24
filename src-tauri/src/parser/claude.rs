@@ -1,6 +1,9 @@
 //! Claude 记录归一化
 //!
 //! 与前端 packages/shared/src/normalize.ts 的 normalizeClaudeRecord 保持同步
+//!
+//! v0.3.0: block-level normalize 改为走 `blocks::default_registry()`。
+//! 本文件保留顶层 type 归一化逻辑(`normalize()`)。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -247,7 +250,8 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
     Some(msg)
 }
 
-fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
+/// 归一化 content(字符串或数组)。公开给 openclaw.rs 直接调用。
+pub(crate) fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
     let mut out = Vec::new();
     match content {
         Value::String(s) => {
@@ -287,39 +291,14 @@ fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
     out
 }
 
+/// v0.3.0: block 归一化委托给 BlockRegistry
+///
+/// 行为应当与之前的 inline match 等价(53 个测试全过)。
+/// 真正的 handler 实现拆到 `parser/blocks/` 目录。
 fn normalize_content_block(item: &Value) -> Option<NormalizedBlock> {
-    let obj = item.as_object()?;
-    let r#type = obj.get("type")?.as_str()?;
-    let mut data = serde_json::Map::new();
-    for (k, v) in obj {
-        data.insert(k.clone(), v.clone());
-    }
-    let kind = match r#type {
-        "text" => "text".to_string(),
-        "thinking" | "redacted_thinking" => "thinking".to_string(),
-        // v0.2.6: 加 `toolCall` 别名 — pi-coding-agent 的工具调用格式
-        // ({ type: "toolCall", id, name, arguments })
-        // 跟 Claude 工具调用的差异:`input` 字段叫 `arguments`
-        "tool_use" | "toolUse" | "tool_call" | "function_call" | "toolCall" => {
-            // 兼容 pi-agent:把 arguments 重命名为 input,前端 ToolUseCard
-            // 不需要特殊处理
-            if let Some(args) = data.remove("arguments") {
-                data.insert("input".to_string(), args);
-            }
-            "tool_use".to_string()
-        }
-        "tool_result" | "toolResult" => "tool_result".to_string(),
-        "image" => "image".to_string(),
-        _ => {
-            log::warn!(
-                "normalize_content_block: 未知 block type={:?}, 完整对象: {:#?}",
-                r#type,
-                obj
-            );
-            "meta".to_string()
-        }
-    };
-    Some(NormalizedBlock { kind, data })
+    crate::parser::blocks::default_registry()
+        .normalize(item)
+        .ok()
 }
 
 #[cfg(test)]

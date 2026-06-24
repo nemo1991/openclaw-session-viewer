@@ -1,8 +1,14 @@
 //! OpenClaw 记录归一化
+//!
+//! v0.3.0 PR4: 不再伪装成 Claude 形态,直接解析 OpenClaw 记录:
+//! - `message` type 保留 role/id/timestamp/parentId,content 走 BlockRegistry
+//! - 非消息 type (model_change/compaction/label 等)直接生成 meta block
+//!
+//! 消除前后端不对称:前端 normalize.ts 也是独立处理 OpenClaw type。
 
 use serde_json::Value;
 
-use super::claude::{normalize, NormalizedBlock, NormalizedMessage};
+use super::claude::{self, NormalizedBlock, NormalizedMessage};
 
 /// 归一化 OpenClaw JSON 记录(header 返回 None)
 pub fn normalize_entry(record: &Value, index: usize) -> Option<NormalizedMessage> {
@@ -13,71 +19,53 @@ pub fn normalize_entry(record: &Value, index: usize) -> Option<NormalizedMessage
         return None; // header, 不渲染
     }
 
-    // 把 OpenClaw 记录转成 Claude 形态再复用 normalize()
-    let mut transformed = obj.clone();
-    transformed.insert("type".to_string(), Value::String("message".to_string()));
+    let id = obj
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("idx-{}", index));
+    let timestamp = obj
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let parent_id: Option<String> = obj
+        .get("parentId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
-    // OpenClaw message 格式:
-    // { type: "message", id, parentId, timestamp, message: { role, content } }
-    // Claude 格式需要:
-    // { type: "user"|"assistant", uuid, timestamp, message: { role, content, model, stop_reason, usage } }
     if r#type == "message" {
         let original_role = obj
             .get("message")
             .and_then(|m| m.get("role"))
             .and_then(|v| v.as_str())
-            .unwrap_or("user")
-            .to_string();
+            .unwrap_or("user");
 
-        if let Some(_message) = obj.get("message") {
-            // Claude 格式把 tool result 作为 user 消息
-            let claude_type = match original_role.as_str() {
-                "assistant" => "assistant",
-                _ => "user",
-            };
-            transformed.insert("type".to_string(), Value::String(claude_type.to_string()));
+        let blocks = obj
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .map(claude::normalize_content)
+            .unwrap_or_default();
 
-            if let Some(id) = obj.get("id") {
-                transformed.insert("uuid".to_string(), id.clone());
-            }
-            if let Some(parent) = obj.get("parentId") {
-                if !parent.is_null() {
-                    transformed.insert("parentUuid".to_string(), parent.clone());
-                } else {
-                    transformed.insert("parentUuid".to_string(), Value::Null);
-                }
-            }
-        }
-
-        // 调用 normalize 后,如果是 OpenClaw 工具结果,把 role 改回 "tool"
-        if let Some(mut msg) = normalize(&Value::Object(transformed), index) {
-            if original_role == "tool" {
-                msg.role = "tool".to_string();
-            }
-            return Some(msg);
-        }
-        return None;
+        Some(NormalizedMessage {
+            id,
+            role: original_role.to_string(),
+            timestamp,
+            blocks,
+            model: None,
+            stop_reason: None,
+            token_usage: None,
+            is_sidechain: None,
+            subagent_id: None,
+            parent_uuid: parent_id,
+            raw_type: "message".to_string(),
+        })
     } else {
         // 其他类型( model_change / compaction / label 等)转成 meta 块
-        let id = obj
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("idx-{}", index));
-        let timestamp = obj
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let parent_id: Option<String> = obj
-            .get("parentId")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-
         let mut data = serde_json::Map::new();
         data.insert("label".to_string(), Value::String(r#type.to_string()));
         data.insert("payload".to_string(), Value::Object(obj.clone()));
 
-        return Some(NormalizedMessage {
+        Some(NormalizedMessage {
             id,
             role: "meta".to_string(),
             timestamp,
@@ -92,11 +80,8 @@ pub fn normalize_entry(record: &Value, index: usize) -> Option<NormalizedMessage
             subagent_id: None,
             parent_uuid: parent_id,
             raw_type: r#type.to_string(),
-        });
+        })
     }
-    // unreachable: message 分支在上面已经 return,这里只是为了让编译器满意
-    #[allow(unreachable_code)]
-    normalize(&Value::Object(transformed), index)
 }
 
 #[cfg(test)]
@@ -129,6 +114,7 @@ mod tests {
         assert_eq!(n.role, "user");
         assert_eq!(n.blocks[0].kind, "text");
         assert_eq!(n.parent_uuid, None);
+        assert_eq!(n.raw_type, "message");
     }
 
     #[test]
@@ -184,6 +170,41 @@ mod tests {
     }
 
     #[test]
+    fn test_message_tool_call_pi_agent() {
+        // pi-coding-agent 的 toolCall type + arguments
+        let v = json!({
+            "type": "message",
+            "id": "m4",
+            "parentId": null,
+            "timestamp": "2026-06-20T00:00:03Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "toolCall",
+                        "id": "call_abc",
+                        "name": "read",
+                        "arguments": { "path": "/tmp/x.md" }
+                    }
+                ]
+            }
+        });
+        let n = normalize_entry(&v, 3).unwrap();
+        assert_eq!(n.role, "assistant");
+        assert_eq!(n.blocks.len(), 1);
+        let b = &n.blocks[0];
+        assert_eq!(b.kind, "tool_use");
+        assert_eq!(b.data.get("id").and_then(|v| v.as_str()), Some("call_abc"));
+        assert_eq!(
+            b.data
+                .get("input")
+                .and_then(|v| v.get("path"))
+                .and_then(|v| v.as_str()),
+            Some("/tmp/x.md")
+        );
+    }
+
+    #[test]
     fn test_model_change_meta() {
         let v = json!({
             "type": "model_change",
@@ -196,6 +217,10 @@ mod tests {
         let n = normalize_entry(&v, 0).unwrap();
         assert_eq!(n.role, "meta");
         assert_eq!(n.raw_type, "model_change");
+        assert_eq!(
+            n.blocks[0].data.get("label").and_then(|v| v.as_str()),
+            Some("model_change")
+        );
     }
 
     #[test]
