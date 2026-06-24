@@ -35,16 +35,8 @@ pub async fn stream_transcript(
         return Err(crate::error::AppError::NotFound(path.clone()));
     }
 
-    // 路径安全
-    if let Some(parent) = p.parent() {
-        if parent.starts_with(&state.paths.claude.projects_dir) {
-            crate::fs::paths::assert_within_lexical(&state.paths.claude.projects_dir, &p)?;
-        } else if let Some(oc) = &state.paths.openclaw {
-            if parent.starts_with(&oc.agents_dir) {
-                crate::fs::paths::assert_within_lexical(&oc.agents_dir, &p)?;
-            }
-        }
-    }
+    // 路径安全:遍历所有 root 验证(支持 custom_root)
+    crate::fs::paths::assert_within_any_root(&state.paths.read(), &p)?;
 
     let is_openclaw = path.contains(".openclaw");
     let path_for_log = path.clone();
