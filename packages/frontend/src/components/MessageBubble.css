@@ -144,3 +144,72 @@
   color: var(--color-text-muted);
   font-style: italic;
 }
+
+/* meta info blocks (agent_listing, skill_listing, plan_mode, file_snapshot) */
+.block-meta-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 4px 0;
+  background: var(--color-surface-1, #f5f5f5);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.meta-kind-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #6366f120;
+  color: #6366f1;
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.meta-details {
+  font-size: 12px;
+  flex-basis: 100%;
+}
+
+.meta-details summary {
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+}
+
+.meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
+  line-height: 1.5;
+}
+
+.meta-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-surface-2, #e5e5e5);
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.meta-path {
+  display: block;
+  padding: 4px 8px;
+  margin: 4px 0;
+  background: var(--color-surface-2, #e5e5e5);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.meta-sub {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}

@@ -26,26 +26,34 @@
 //!
 //! ## 已知 type 列表
 //!
-//! | type(s)                          | normalized kind | handler               |
-//! |----------------------------------|-----------------|-----------------------|
-//! | type(s)                          | normalized kind | file                 |
-//! |----------------------------------|-----------------|----------------------|
 //! | `text`                           | text            | `text.rs`            |
 //! | `thinking` / `redacted_thinking` | thinking        | `thinking.rs`         |
 //! | `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | tool_use | `tool_use.rs` |
 //! | `tool_result` / `toolResult`     | tool_result     | `tool_result.rs`     |
 //! | `image`                          | image           | `image.rs`           |
+//! | `agent_listing_delta`            | agent_listing   | `agent_listing.rs`   |
+//! | `skill_listing`                  | skill_listing   | `skill_listing.rs`   |
+//! | `plan_mode`                      | plan_mode       | `plan_mode.rs`       |
+//! | `file_history_snapshot`          | file_snapshot   | `file_snapshot.rs`   |
 //! | (其它)                           | meta            | `meta.rs`            |
 
+pub mod agent_listing;
+pub mod file_snapshot;
 pub mod image;
 pub mod meta;
+pub mod plan_mode;
+pub mod skill_listing;
 pub mod text;
 pub mod thinking;
 pub mod tool_result;
 pub mod tool_use;
 
+pub use agent_listing::AgentListingHandler;
+pub use file_snapshot::FileSnapshotHandler;
 pub use image::ImageBlockHandler;
 pub use meta::MetaBlockHandler;
+pub use plan_mode::PlanModeHandler;
+pub use skill_listing::SkillListingHandler;
 pub use text::TextBlockHandler;
 pub use thinking::ThinkingBlockHandler;
 pub use tool_result::ToolResultBlockHandler;
@@ -132,6 +140,10 @@ pub fn default_registry() -> BlockRegistry {
         .register(ToolUseBlockHandler)
         .register(ToolResultBlockHandler)
         .register(ImageBlockHandler)
+        .register(AgentListingHandler)
+        .register(SkillListingHandler)
+        .register(PlanModeHandler)
+        .register(FileSnapshotHandler)
         .register(MetaBlockHandler) // 必须最后
 }
 
