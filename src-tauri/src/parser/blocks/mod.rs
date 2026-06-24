@@ -35,6 +35,12 @@
 //! | `image`                          | image           | ImageBlockHandler     |
 //! | (其它)                           | meta            | MetaBlockHandler      |
 
+pub mod text;
+pub mod thinking;
+
+pub use text::TextBlockHandler;
+pub use thinking::ThinkingBlockHandler;
+
 use serde_json::Value;
 
 use crate::parser::claude::NormalizedBlock;
@@ -109,66 +115,6 @@ impl Default for BlockRegistry {
 // ============================================================================
 // 内嵌 handler 实现(PR 1 阶段;PR 2/3 会拆成独立文件)
 // ============================================================================
-
-/// text block: `{ type: "text", text: "..." }`
-pub struct TextBlockHandler;
-
-impl BlockHandler for TextBlockHandler {
-    fn matches(&self, item: &Value) -> bool {
-        item.get("type").and_then(|v| v.as_str()) == Some("text")
-    }
-
-    fn normalize(&self, item: &Value) -> BlockResult {
-        let text = item
-            .get("text")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| BlockError::Invalid("text block missing 'text' field".into()))?
-            .to_string();
-        let mut data = serde_json::Map::new();
-        data.insert("text".to_string(), Value::String(text));
-        Ok(NormalizedBlock {
-            kind: "text".to_string(),
-            data,
-        })
-    }
-
-    fn name(&self) -> &'static str {
-        "text"
-    }
-}
-
-/// thinking block: `{ type: "thinking" | "redacted_thinking", thinking: "...", signature?: "..." }`
-pub struct ThinkingBlockHandler;
-
-impl BlockHandler for ThinkingBlockHandler {
-    fn matches(&self, item: &Value) -> bool {
-        matches!(
-            item.get("type").and_then(|v| v.as_str()),
-            Some("thinking" | "redacted_thinking")
-        )
-    }
-
-    fn normalize(&self, item: &Value) -> BlockResult {
-        let text = item
-            .get("thinking")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| BlockError::Invalid("thinking block missing 'thinking' field".into()))?
-            .to_string();
-        let mut data = serde_json::Map::new();
-        data.insert("thinking".to_string(), Value::String(text));
-        if let Some(sig) = item.get("signature").and_then(|v| v.as_str()) {
-            data.insert("signature".to_string(), Value::String(sig.to_string()));
-        }
-        Ok(NormalizedBlock {
-            kind: "thinking".to_string(),
-            data,
-        })
-    }
-
-    fn name(&self) -> &'static str {
-        "thinking"
-    }
-}
 
 /// tool_use block: 5 个 alias (tool_use/toolUse/tool_call/function_call/toolCall)
 /// 注意 pi-coding-agent 的 toolCall 用 `arguments` 而不是 `input`,这里统一重命名。
@@ -342,29 +288,6 @@ mod tests {
 
     fn reg() -> BlockRegistry {
         default_registry()
-    }
-
-    #[test]
-    fn text_block_handler_basic() {
-        let r = reg();
-        let n = r
-            .normalize(&json!({"type": "text", "text": "hello"}))
-            .unwrap();
-        assert_eq!(n.kind, "text");
-        assert_eq!(n.data.get("text").and_then(|v| v.as_str()), Some("hello"));
-    }
-
-    #[test]
-    fn thinking_block_handler_redacted() {
-        let r = reg();
-        let n = r
-            .normalize(&json!({"type": "redacted_thinking", "thinking": "secret"}))
-            .unwrap();
-        assert_eq!(n.kind, "thinking");
-        assert_eq!(
-            n.data.get("thinking").and_then(|v| v.as_str()),
-            Some("secret")
-        );
     }
 
     #[test]
