@@ -4,6 +4,92 @@
 
 ## [Unreleased]
 
+### 计划
+
+- 会话对比 (diff)
+- 拖拽导入 JSONL
+- VS Code 路径跳转
+
+## [0.3.0] - 2026-06-24
+
+### 重构
+
+- ♻️ **BlockRegistry 模式重构 parser**：新增 `BlockHandler` trait + `BlockRegistry`
+  - `default_registry()`，加新 block type 只需实现一个 handler + register，
+    不再需要改 `match` 语句。
+  * `normalize_content_block` 委托给 registry (行为不变,53 测试全过)
+  * `MetaBlockHandler` 最后注册作为兜底 catchall
+- ♻️ **Handler 独立文件**：
+  - `text.rs` / `thinking.rs` (PR2)
+  - `tool_use.rs` (5 alias: `tool_use`/`toolUse`/`tool_call`/`function_call`/`toolCall`)
+  - `tool_result.rs` (2 alias: `tool_result`/`toolResult`)
+  - `image.rs` / `meta.rs` (PR3)
+- ♻️ **OpenClaw 去 wrapper** (PR4)：
+  - 不再伪造成 Claude 格式，直接解析 OpenClaw 记录
+  - `message` type content 走 `BlockRegistry::normalize`
+  - `tool` role 不再改写为 `user`
+  - 消除前后端 normalize 路径不对称
+
+### 新增
+
+- ✨ **UnknownBlockCard 前端组件** (PR5)：
+  - `<details>` 默认折叠，展开后显示字段表 + 启发式 hint pills
+  - 复制 JSON 按钮 + 报告 GitHub issue 链接
+  - 未知 block type 不再仅显示 `[kind]` 一行字
+- ✨ **8 个新 handler 独立测试文件**，每个 handler 覆盖 alias/边界/缺失字段
+
+### 移除
+
+- 🗑️ 移除 v0.2.6 调查残留日志（`window.addEventListener("error")` hooks、
+  `console.log` banner、`document.title` 注入、`BlockRenderer` 内 console 日志）
+- 🗑️ `transcriptStore.ts` 中 dev `console.error("[stream_transcript:error]")`
+
+### 测试
+
+- 🧪 Rust 单元测试 53 → 77 (+24，覆盖所有 handler alias + OpenClaw 独立路径)
+- 🧪 TypeScript 类型检查 + Vite build 干净
+- 🧪 Clippy + cargo fmt 干净
+
+## [0.2.6] - 2026-06-24
+
+### 修复
+
+- 🐛 **Windows [object Object] 错误**：`invoke` 抛 error 对象时 `String(e)` 产生
+  `"[object Object]"`。前端 `extractErrorMessage(e)` 优先提取 `message` / `kind` 字段，
+  UI 显示真实错误描述而非 `[object Object]`。
+- 🐛 **路径安全 Windows UNC 前缀**：`canonicalize()` 返回 `\\?\C:\Users\...` 而 target
+  是短路径 `C:\Users\...`，字符串前缀比较失败。新增 `path_starts_with()` 函数统一分隔符、
+  忽略大小写、去掉 `\\?\` 前缀，Windows 路径检测恢复正常。
+- 🐛 **pi-coding-agent toolCall 不识别**：`tool_call` / `toolCall` / `function_call` 5 个别名
+  现在统一识别为 `tool_use`，`arguments` 字段自动重命名为 `input`。
+- 🐛 重复 session 修复：`Path::extension()` 只取最后一段扩展名，导致 `*.trajectory.jsonl`
+  被误认为 `jsonl` 文件。walker 增加 `file_stem` 末缀过滤。
+
+### 调试改进
+
+- 🔍 首次复现阶段添加分层日志：Windows banner + document.title + console.error 结构化输出
+
+## [0.2.5] - 2026-06-24
+
+### 新增
+
+- ✨ **自定义数据源根目录**：Settings 页可添加多个自定义 Claude/OpenClaw 根目录。
+  自动探测 `projects/` / `agents/` 子目录判定类型，添加后立即生效。
+- ✨ **热重载**：保存 settings 后自动 invalidate 缓存 + 通知前端刷新列表，无需重启。
+- ✨ **跨平台路径安全**：`AppPaths` 支持多 root 路径检测，`assert_within_any_root` 遍历
+  所有注册根目录验证路径合法性。
+
+### 修复
+
+- 🐛 Clippy `needless_borrow`：`load_settings_on_startup(&app.handle())` → `app.handle()`。
+
+### 架构
+
+- 🏗️ `AppPaths` 重构为 `default_root + custom_roots` 模型，`RwLock<AppPaths>` 线程安全
+- 🏗️ `RootSource` 分离 Claude/OpenClaw 子路径，`all_claude_projects_dirs()` /
+  `all_openclaw_agents_dirs()` 统一扫描入口
+- 🏗️ `CustomRoot::probe()` 自动探测路径类型
+
 ## [0.2.4] - 2026-06-24
 
 ### 新增
@@ -101,3 +187,14 @@
 - 📝 docs/ARCHITECTURE.md — 架构总览
 - 📝 docs/CROSS_PLATFORM_BUILD.md — 跨平台构建指南
 - 📝 docs/TROUBLESHOOTING.md — 已知问题与解决方案
+
+[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.6...v0.3.0
+[0.2.6]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.5...v0.2.6
+[0.2.5]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nemo1991/openclaw-session-viewer/releases/tag/v0.1.0
