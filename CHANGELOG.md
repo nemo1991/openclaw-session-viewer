@@ -10,6 +10,19 @@
 - 拖拽导入 JSONL
 - VS Code 路径跳转
 
+## [0.4.0] - 2026-06-25
+
+### 新增
+
+- ✨ **会话详情时间段筛选** (PR1)：TranscriptView 顶部新增 4 个 preset (全部 / 1h / 24h / 7d) + 自定义 datetime-local 范围 picker；URL 持久化 `?from=ISO&to=ISO`；meta 消息 (无 timestamp) 保留；search 也在筛选后范围跑
+- ✨ **会话列表 UI 增强** (PR2)：卡片新增首条 user 提问预览 (1 行省略) + thinking/tool 统计 chips + top 3 工具名；时间显示智能相对化 (刚刚/X 分钟前/X 天前)；后端新增 `firstPrompt` / `lastMessageAt` / `thinkingCount` / `toolUseCount` / `topTools` 字段
+- ✨ **OpenClaw Trajectory 支持** (PR3)：详情页 header 新增 "运行轨迹" 按钮 (仅 OpenClaw + 有 trajectory 的 session 显示)；新路由 `/session/:id/trajectory` + 8 种事件专属卡片 (session.started / session.ended / trace.metadata / context.compiled / prompt.submitted / model.fallback_step / model.completed / trace.artifacts)；流式加载 + 50 MiB 上限；支持 `.trajectory-path.json` 指针文件 (OPENCLAW_TRAJECTORY_DIR 重定向)
+
+### 测试
+
+- 🧪 Rust 单元测试 91 → 94 (+3 trajectory 归一化测试)
+- 🧪 TypeScript 测试 41 个(不变)
+
 ## [0.3.2] - 2026-06-25
 
 ### 新增
@@ -226,7 +239,8 @@
 - 📝 docs/CROSS_PLATFORM_BUILD.md — 跨平台构建指南
 - 📝 docs/TROUBLESHOOTING.md — 已知问题与解决方案
 
-[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.6...v0.3.0

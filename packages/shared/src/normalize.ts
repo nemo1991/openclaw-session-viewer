@@ -51,6 +51,11 @@ export interface SessionMeta {
   toolUseCount?: number;
   /** top 3 工具名(按出现频次) */
   topTools?: string[];
+  // --- v0.4.0 trajectory 支持 ---
+  /** OpenClaw session 是否有 trajectory 文件(关联入口按钮显示) */
+  hasTrajectory?: boolean;
+  /** trajectory 文件大小(字节) */
+  trajectorySizeBytes?: number;
 }
 
 /** 归一化后的内容块 */

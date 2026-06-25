@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Download, Sparkles, Search } from "lucide-react";
+import { ArrowLeft, Download, Sparkles, Search, Activity } from "lucide-react";
 
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useLivePids } from "../hooks/useLivePids";
@@ -182,6 +182,18 @@ export default function SessionDetailRoute() {
           <button onClick={() => showSearchBar()} title={t("search.inSession")}>
             <Search size={14} />
           </button>
+          {meta.hasTrajectory && (
+            <button
+              onClick={() =>
+                navigate(`/session/${encodeURIComponent(meta.sessionId)}/trajectory`, {
+                  state: { session: meta },
+                })
+              }
+              title={t("detail.trajectory")}
+            >
+              <Activity size={14} /> {t("detail.trajectory")}
+            </button>
+          )}
           <button onClick={() => handleExport("md")} title={t("detail.exportMd")}>
             <Download size={14} /> MD
           </button>

@@ -93,7 +93,7 @@ chmod +x OpenClaw*.AppImage
 
 ### 工程化
 
-- ✅ **单元测试** — Rust 91 个 + TS 41 个 = **132 个测试**
+- ✅ **单元测试** — Rust 94 个 + TS 41 个 = **135 个测试**
 - 🔒 **路径安全** — 所有 Tauri 命令做词法检查,防止 `../../etc/passwd`
 - ♻️ **BlockRegistry 模式** — `BlockHandler` trait + 可扩展注册表,符合开闭原则
 - 🔮 **未知 block 兜底** — 新出现的 block type 不再崩溃,显示为 `UnknownBlockCard`(字段表 + 启发式 hint + 复制/报告)
@@ -268,7 +268,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 ### 测试
 
 ```bash
-# Rust 单元测试 (91 个)
+# Rust 单元测试 (94 个)
 cd src-tauri && cargo test --lib
 
 # TypeScript 单元测试 (41 个)
@@ -421,7 +421,10 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] BlockRegistry 模式重构 + UnknownBlockCard (v0.3.0)
 - [x] 会话详情排序切换 (v0.3.1)
 - [x] 3 个新 BlockHandler: `pr-link` / `agent-name` / `task_reminder` (v0.3.2)
-- [x] 单元测试 (132 个)
+- [x] 会话详情时间段筛选 (v0.4.0)
+- [x] 会话列表 UI 增强 (首条提问预览 + thinking/tool 统计 + 智能相对时间) (v0.4.0)
+- [x] OpenClaw Trajectory 支持 (8 种事件 + 流式查看) (v0.4.0)
+- [x] 单元测试 (135 个)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [x] docs-only 推送跳过 CI (paths-ignore)
 

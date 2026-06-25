@@ -125,6 +125,8 @@ pub fn run() {
             commands::transcript::stream_transcript,
             commands::subagents::list_subagents,
             commands::spillover::get_tool_result_file,
+            commands::trajectory::get_trajectory_info,
+            commands::trajectory::stream_trajectory,
             commands::live::list_live_pids,
             commands::search::search_session,
             commands::search::search_all,

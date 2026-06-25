@@ -61,6 +61,13 @@ pub struct SessionMeta {
     /// top 3 工具名(按出现频次)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_tools: Option<Vec<String>>,
+    // --- v0.4.0 trajectory 支持 ---
+    /// OpenClaw session 是否有关联 trajectory 文件
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_trajectory: Option<bool>,
+    /// trajectory 文件大小(字节)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trajectory_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

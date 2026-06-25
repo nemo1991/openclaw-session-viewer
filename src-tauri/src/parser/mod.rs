@@ -4,3 +4,4 @@ pub mod blocks;
 pub mod claude;
 pub mod jsonl;
 pub mod openclaw;
+pub mod trajectory;
