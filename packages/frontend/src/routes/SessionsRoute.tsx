@@ -179,15 +179,6 @@ export default function SessionsRoute() {
               <input
                 type="radio"
                 name="source"
-                checked={filter.source === "all"}
-                onChange={() => setFilter({ source: "all" })}
-              />
-              全部
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="source"
                 checked={filter.source === "claude"}
                 onChange={() => setFilter({ source: "claude" })}
               />

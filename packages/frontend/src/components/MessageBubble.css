@@ -152,7 +152,7 @@
   gap: 8px;
   padding: 6px 10px;
   margin: 4px 0;
-  background: var(--color-surface-1, #f5f5f5);
+  background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 12px;
@@ -193,7 +193,7 @@
   display: inline-block;
   padding: 1px 6px;
   border-radius: 3px;
-  background: var(--color-surface-2, #e5e5e5);
+  background: var(--color-surface-2);
   font-family: monospace;
   font-size: 11px;
 }
@@ -202,7 +202,7 @@
   display: block;
   padding: 4px 8px;
   margin: 4px 0;
-  background: var(--color-surface-2, #e5e5e5);
+  background: var(--color-surface-2);
   border-radius: 4px;
   font-family: monospace;
   font-size: 11px;
@@ -237,7 +237,7 @@
   gap: 8px;
   padding: 4px 8px;
   border-radius: 4px;
-  background: var(--color-surface-2, #e5e5e5);
+  background: var(--color-surface-2);
   font-size: 12px;
 }
 
@@ -249,7 +249,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  background: var(--color-bg-elevated, #fff);
+  background: var(--color-bg-elevated);
   color: var(--color-text-secondary);
   min-width: 64px;
   text-align: center;
@@ -278,4 +278,69 @@
 .meta-task-subject {
   flex: 1;
   color: var(--color-text);
+}
+
+/* v0.4.1: 子代理元数据块(mode / permission / title / last-prompt) */
+.subagent-meta-block {
+  cursor: pointer;
+}
+
+.subagent-meta-block[open] {
+  flex-wrap: wrap;
+}
+
+.subagent-meta-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  flex: 1;
+  min-width: 0;
+}
+
+.subagent-meta-summary::-webkit-details-marker {
+  display: none;
+}
+
+.subagent-meta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.subagent-meta-text {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-meta-chevron {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+
+.subagent-meta-block[open] .subagent-meta-chevron {
+  transform: rotate(90deg);
+}
+
+.subagent-meta-detail {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow-y: auto;
 }

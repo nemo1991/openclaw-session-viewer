@@ -11,7 +11,7 @@ interface SessionsFilter {
   liveOnly: boolean;
   hasSubagents: boolean;
   last7Days: boolean;
-  source: "all" | "claude" | "openclaw";
+  source: "claude" | "openclaw";
   /** 按 OpenClaw agentId 过滤;undefined / "all" 不过滤 */
   agentId?: string;
 }
@@ -38,7 +38,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     liveOnly: false,
     hasSubagents: false,
     last7Days: false,
-    source: "all",
+    source: "claude",
     agentId: undefined,
   },
   load: async () => {
@@ -64,7 +64,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     const q = filter.query.toLowerCase().trim();
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return sessions.filter((s) => {
-      if (filter.source !== "all" && s.source !== filter.source) return false;
+      if (s.source !== filter.source) return false;
       if (filter.agentId && s.source === "openclaw" && s.agentId !== filter.agentId) return false;
       if (filter.liveOnly && !s.livePid) return false;
       if (filter.hasSubagents && !s.subagentDir) return false;

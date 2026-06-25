@@ -5,6 +5,7 @@ import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolUseCard } from "./ToolUseCard";
 import { ToolResultCard } from "./ToolResultCard";
 import { UnknownBlockCard } from "./UnknownBlockCard";
+import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { Markdown } from "./Markdown";
 import type { TranscriptEntryOut, NormalizedBlockFE } from "../lib/api";
 import { formatTimeExact } from "../lib/format";
@@ -27,6 +28,18 @@ export function MessageBubble({ entry }: Props) {
       <div className="msg-meta-line">
         {msg.blocks.map((b, i) => {
           const labelValue = b.label ?? b.kind;
+          // v0.4.1: 子代理专属字段(mode / permission / title / last-prompt)
+          // 走可折叠 SubagentMetaBlock,默认折叠,不挤主流程
+          if (isSubagentMetaLabel(String(labelValue))) {
+            return <SubagentMetaBlock key={i} block={b} />;
+          }
+          // v0.4.1: 已知 meta label (file-history-snapshot / agent_listing_delta /
+          // skill_listing / plan_mode / task_reminder / pr-link / agent_name /
+          // file_snapshot / agent_listing) 走 MetaBlockRenderer 拿到专属好看样式
+          // 注意:这些 block 在 meta 分支里 kind="meta",label 才是具体类型
+          if (isKnownMetaLabel(String(labelValue))) {
+            return <MetaBlockRenderer key={i} block={b} label={String(labelValue)} />;
+          }
           // 有 payload 且字段丰富时使用完整 UnknownBlockCard
           if (
             b.payload &&
@@ -80,8 +93,22 @@ export function MessageBubble({ entry }: Props) {
   );
 }
 
-function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
+export function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
   const kind = block.kind as string;
+  // v0.4.1: meta 类的 7 个 kind(后端 kind="meta",label=具体类型)统一走 MetaBlockRenderer
+  // 避免落到默认 UnknownBlockCard 兜底
+  if (
+    kind === "meta" ||
+    kind === "agent_listing" ||
+    kind === "skill_listing" ||
+    kind === "plan_mode" ||
+    kind === "file_snapshot" ||
+    kind === "pr_link" ||
+    kind === "agent_name" ||
+    kind === "task_reminder"
+  ) {
+    return <MetaBlockRenderer block={block} label={String(block.label ?? kind)} />;
+  }
   switch (kind) {
     case "text":
       return (
@@ -117,10 +144,44 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
           </em>
         </div>
       );
-    case "agent_listing": {
-      const added = (block.addedTypes as string[]) ?? [];
-      const removed = (block.removedTypes as string[]) ?? [];
-      const isInitial = Boolean(block.isInitial);
+    default:
+      // 未知 kind:使用 UnknownBlockCard
+      return <UnknownBlockCard block={block} />;
+  }
+}
+
+/**
+ * v0.4.1: 共享的 meta 块渲染器
+ *
+ * 同一份样式服务两个入口:
+ * 1. BlockRenderer 里 `kind` 已经是 agent_listing / skill_listing 等具体类型
+ *    (后端把字段直接平铺到 NormalizedBlock.data)
+ * 2. meta 分支里 `kind="meta"`(来自 Claude parser 的 attachment 类型,
+ *    `label = attachment.type`,`payload = 整个 attachment 对象`)
+ *
+ * 关键:meta 分支里数据是包在 payload 里的(`block.payload.names`),所以
+ * 必须先从 payload 解包,再 fallback 到顶层平铺字段(给 BlockRenderer 入口用)。
+ *
+ * 支持的 label / kind:
+ * - agent_listing / agent_listing_delta
+ * - skill_listing
+ * - plan_mode
+ * - file_snapshot / file-history-snapshot
+ * - pr_link / pr-link
+ * - agent_name
+ * - task_reminder
+ */
+export function MetaBlockRenderer({ block, label }: { block: NormalizedBlockFE; label: string }) {
+  // 解包:meta 分支里字段都在 payload 里,顶层平铺的为 BlockRenderer 入口用
+  const payload = (block.payload ?? block) as Record<string, unknown>;
+  const get = (key: string): unknown => payload[key] ?? block[key];
+
+  switch (label) {
+    case "agent_listing":
+    case "agent_listing_delta": {
+      const added = (get("addedTypes") as string[]) ?? [];
+      const removed = (get("removedTypes") as string[]) ?? [];
+      const isInitial = Boolean(get("isInitial"));
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🤖 agent</span>
@@ -144,8 +205,8 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
       );
     }
     case "skill_listing": {
-      const names = (block.names as string[]) ?? [];
-      const count = Number(block.skillCount ?? names.length);
+      const names = (get("names") as string[]) ?? [];
+      const count = Number(get("skillCount") ?? names.length);
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🛠 skill</span>
@@ -164,9 +225,9 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
       );
     }
     case "plan_mode": {
-      const planFile = String(block.planFilePath ?? "");
-      const hasPlan = Boolean(block.planExists);
-      const reminder = String(block.reminderType ?? "");
+      const planFile = String(get("planFilePath") ?? "");
+      const hasPlan = Boolean(get("planExists"));
+      const reminder = String(get("reminderType") ?? "");
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">📋 plan_mode</span>
@@ -181,9 +242,12 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
         </div>
       );
     }
-    case "file_snapshot": {
-      const fileCount = Number(block.fileCount ?? 0);
-      const mid = String(block.messageId ?? "");
+    case "file_snapshot":
+    case "file-history-snapshot": {
+      // snapshot.trackedFileBackups 才是真正的文件数组
+      const backups = (get("trackedFileBackups") as Record<string, unknown>) ?? {};
+      const fileCount = Object.keys(backups).length;
+      const mid = String(get("messageId") ?? "");
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">📁 file_snapshot</span>
@@ -192,26 +256,27 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
         </div>
       );
     }
-    case "pr_link": {
-      const prNum = Number(block.prNumber ?? 0);
-      const repo = String(block.prRepository ?? "");
-      const url = String(block.prUrl ?? "");
-      const label = repo ? `${repo}#${prNum}` : `PR #${prNum}`;
+    case "pr_link":
+    case "pr-link": {
+      const prNum = Number(get("prNumber") ?? 0);
+      const repo = String(get("prRepository") ?? "");
+      const url = String(get("prUrl") ?? "");
+      const text = repo ? `${repo}#${prNum}` : `PR #${prNum}`;
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🔗 pr_link</span>
           {url ? (
             <a className="meta-link" href={url} target="_blank" rel="noreferrer">
-              {label}
+              {text}
             </a>
           ) : (
-            <span>{label}</span>
+            <span>{text}</span>
           )}
         </div>
       );
     }
     case "agent_name": {
-      const name = String(block.agentName ?? "");
+      const name = String(get("agentName") ?? "");
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🏷 agent_name</span>
@@ -220,11 +285,11 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
       );
     }
     case "task_reminder": {
-      const itemCount = Number(block.itemCount ?? 0);
-      const pending = Number(block.pendingCount ?? 0);
-      const inProgress = Number(block.inProgressCount ?? 0);
-      const completed = Number(block.completedCount ?? 0);
-      const content = (block.content as Array<Record<string, unknown>>) ?? [];
+      const itemCount = Number(get("itemCount") ?? 0);
+      const pending = Number(get("pendingCount") ?? 0);
+      const inProgress = Number(get("inProgressCount") ?? 0);
+      const completed = Number(get("completedCount") ?? 0);
+      const content = (get("content") as Array<Record<string, unknown>>) ?? [];
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">📝 task_reminder</span>
@@ -251,9 +316,33 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
       );
     }
     default:
-      // 未知 kind:使用 UnknownBlockCard
       return <UnknownBlockCard block={block} />;
   }
+}
+
+/** v0.4.1: 识别子代理专属元数据 label */
+function isSubagentMetaLabel(label: string): boolean {
+  return (
+    label.startsWith("mode:") ||
+    label.startsWith("permission:") ||
+    label === "title" ||
+    label === "last-prompt"
+  );
+}
+
+/** v0.4.1: meta 分支里已知有专属样式的 block label(复用 BlockRenderer) */
+function isKnownMetaLabel(label: string): boolean {
+  return (
+    label === "file-history-snapshot" ||
+    label === "agent_listing_delta" ||
+    label === "skill_listing" ||
+    label === "plan_mode" ||
+    label === "task_reminder" ||
+    label === "pr-link" ||
+    label === "agent_name" ||
+    label === "agent_listing" ||
+    label === "file_snapshot"
+  );
 }
 
 function fmtTokens(n: number): string {
