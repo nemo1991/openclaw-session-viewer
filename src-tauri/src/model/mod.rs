@@ -45,6 +45,22 @@ pub struct SessionMeta {
     /// 渠道 target,如 "telegram:6030344417"
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_target: Option<String>,
+    // --- v0.4.0 列表增强 ---
+    /// 首条 user 文本, ≤ 80 字符(独立于 title)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_prompt: Option<String>,
+    /// 末条消息 ISO timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message_at: Option<String>,
+    /// thinking 块数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_count: Option<u32>,
+    /// tool_use 块数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_use_count: Option<u32>,
+    /// top 3 工具名(按出现频次)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_tools: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

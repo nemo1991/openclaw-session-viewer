@@ -40,6 +40,17 @@ export interface SessionMeta {
   agentChannel?: string;
   /** 渠道 target,如 "telegram:6030344417" */
   agentTarget?: string;
+  // --- v0.4.0 列表增强 ---
+  /** 首条 user 文本, ≤ 80 字符(独立于 title,title 可来自 custom-title/ai-title) */
+  firstPrompt?: string;
+  /** 末条消息 ISO timestamp(可空,首末 timestamp 来自 entry 而非文件 mtime) */
+  lastMessageAt?: string;
+  /** thinking 块数 */
+  thinkingCount?: number;
+  /** tool_use 块数 */
+  toolUseCount?: number;
+  /** top 3 工具名(按出现频次) */
+  topTools?: string[];
 }
 
 /** 归一化后的内容块 */

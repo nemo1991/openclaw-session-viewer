@@ -250,6 +250,9 @@ fn build_claude_session_meta(
     let mut first_user_text: Option<String> = None;
     let mut token_total = TokenUsage::default();
     let mut model_count: HashMap<String, u32> = HashMap::new();
+    let mut thinking_count: u32 = 0;
+    let mut tool_use_count: u32 = 0;
+    let mut tool_name_count: HashMap<String, u32> = HashMap::new();
 
     for v in &head {
         let obj = match v.as_object() {
@@ -310,6 +313,20 @@ fn build_claude_session_meta(
                             .and_then(|x| x.as_u64())
                             .unwrap_or(0);
                     }
+                    // 统计 content 块中的 thinking / tool_use
+                    if let Some(arr) = msg.get("content").and_then(|x| x.as_array()) {
+                        for item in arr {
+                            let bt = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                            if bt == "thinking" {
+                                thinking_count += 1;
+                            } else if bt == "tool_use" {
+                                tool_use_count += 1;
+                                if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
+                                    *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             "custom-title" => {
@@ -326,6 +343,11 @@ fn build_claude_session_meta(
         }
     }
 
+    // top 3 工具名(按频次降序,同名并列按字典序)
+    let mut tool_pairs: Vec<(String, u32)> = tool_name_count.into_iter().collect();
+    tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let top_tools: Vec<String> = tool_pairs.into_iter().take(3).map(|(n, _)| n).collect();
+
     // 完整计数 (可能比 50 多)
     let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
     let message_count = if total > head.len() as u32 {
@@ -340,7 +362,9 @@ fn build_claude_session_meta(
         .max_by_key(|(_, c)| *c)
         .map(|(m, _)| m);
 
-    let title = custom_title.or(ai_title).or(first_user_text);
+    let title = custom_title
+        .or(ai_title)
+        .or_else(|| first_user_text.clone());
     let live_pid = live_pids.get(&session_id).copied();
 
     // 子代理目录
@@ -366,8 +390,8 @@ fn build_claude_session_meta(
         jsonl_path: jsonl_path.to_string_lossy().to_string(),
         size_bytes: meta.len(),
         mtime_ms,
-        first_timestamp: first_ts,
-        last_timestamp: last_ts,
+        first_timestamp: first_ts.clone(),
+        last_timestamp: last_ts.clone(),
         message_count,
         title,
         live_pid,
@@ -378,6 +402,15 @@ fn build_claude_session_meta(
         agent_label: None,
         agent_channel: None,
         agent_target: None,
+        first_prompt: first_user_text.clone(),
+        last_message_at: last_ts.clone(),
+        thinking_count: Some(thinking_count),
+        tool_use_count: Some(tool_use_count),
+        top_tools: if top_tools.is_empty() {
+            None
+        } else {
+            Some(top_tools)
+        },
     })
 }
 
@@ -408,6 +441,9 @@ fn build_openclaw_session_meta(
     let mut name: Option<String> = None;
     let mut message_count: u32 = 0;
     let mut first_user_text: Option<String> = None;
+    let mut thinking_count: u32 = 0;
+    let mut tool_use_count: u32 = 0;
+    let mut tool_name_count: HashMap<String, u32> = HashMap::new();
 
     for v in &head {
         let obj = match v.as_object() {
@@ -426,11 +462,32 @@ fn build_openclaw_session_meta(
         match r#type {
             "message" => {
                 message_count += 1;
-                if first_user_text.is_none() {
-                    if let Some(msg) = obj.get("message") {
-                        if let Some(content) = msg.get("content") {
+                if let Some(msg) = obj.get("message") {
+                    if let Some(content) = msg.get("content") {
+                        if first_user_text.is_none() {
                             if let Some(s) = content.as_str() {
                                 first_user_text = Some(truncate(s.trim(), 80));
+                            } else if let Some(arr) = content.as_array() {
+                                for item in arr {
+                                    if let Some(text) = item.get("text").and_then(|x| x.as_str()) {
+                                        first_user_text = Some(truncate(text.trim(), 80));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // 统计 thinking / tool_use 块
+                        if let Some(arr) = content.as_array() {
+                            for item in arr {
+                                let bt = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                                if bt == "thinking" {
+                                    thinking_count += 1;
+                                } else if bt == "tool_use" {
+                                    tool_use_count += 1;
+                                    if let Some(n) = item.get("name").and_then(|x| x.as_str()) {
+                                        *tool_name_count.entry(n.to_string()).or_insert(0) += 1;
+                                    }
+                                }
                             }
                         }
                     }
@@ -444,6 +501,11 @@ fn build_openclaw_session_meta(
             _ => {}
         }
     }
+
+    // top 3 工具名(按频次)
+    let mut tool_pairs: Vec<(String, u32)> = tool_name_count.into_iter().collect();
+    tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let top_tools: Vec<String> = tool_pairs.into_iter().take(3).map(|(n, _)| n).collect();
 
     let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
     let message_count = if total > head.len() as u32 {
@@ -464,10 +526,10 @@ fn build_openclaw_session_meta(
         jsonl_path: jsonl_path.to_string_lossy().to_string(),
         size_bytes: meta.len(),
         mtime_ms,
-        first_timestamp: first_ts,
-        last_timestamp: last_ts,
+        first_timestamp: first_ts.clone(),
+        last_timestamp: last_ts.clone(),
         message_count,
-        title: name.or(first_user_text),
+        title: name.or_else(|| first_user_text.clone()),
         live_pid: None,
         subagent_dir: None,
         total_tokens: None,
@@ -476,6 +538,15 @@ fn build_openclaw_session_meta(
         agent_label,
         agent_channel,
         agent_target,
+        first_prompt: first_user_text,
+        last_message_at: last_ts,
+        thinking_count: Some(thinking_count),
+        tool_use_count: Some(tool_use_count),
+        top_tools: if top_tools.is_empty() {
+            None
+        } else {
+            Some(top_tools)
+        },
     })
 }
 

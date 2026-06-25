@@ -294,7 +294,9 @@ export default function SessionsRoute() {
                     </span>
                   </div>
                   <div className="session-card-meta">
-                    <span>{formatTime(s.lastTimestamp)}</span>
+                    <span title={s.lastMessageAt ?? s.lastTimestamp ?? ""}>
+                      {formatTime(s.lastMessageAt ?? s.lastTimestamp)}
+                    </span>
                     <span>·</span>
                     <span>{formatBytes(s.sizeBytes)}</span>
                     <span>·</span>
@@ -312,6 +314,30 @@ export default function SessionsRoute() {
                       </>
                     )}
                   </div>
+                  {s.firstPrompt && (
+                    <div className="session-preview" title={s.firstPrompt}>
+                      {s.firstPrompt}
+                    </div>
+                  )}
+                  {(s.thinkingCount || s.toolUseCount || (s.topTools && s.topTools.length > 0)) && (
+                    <div className="session-stats">
+                      {s.thinkingCount && s.thinkingCount > 0 && (
+                        <span className="stat-chip stat-thinking" title="思考块">
+                          🧠 {s.thinkingCount}
+                        </span>
+                      )}
+                      {s.toolUseCount && s.toolUseCount > 0 && (
+                        <span className="stat-chip stat-tools" title="工具调用">
+                          🔧 {s.toolUseCount}
+                        </span>
+                      )}
+                      {s.topTools?.map((t) => (
+                        <span key={t} className="tool-chip" title={t}>
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </article>
               ))}
             </section>
