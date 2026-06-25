@@ -6,6 +6,7 @@ import { ArrowLeft, Download, Sparkles, Search } from "lucide-react";
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useLivePids } from "../hooks/useLivePids";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
+import { useTranscriptFilterStore } from "../state/transcriptFilterStore";
 import { TranscriptView } from "../views/TranscriptView";
 import { SearchInSessionBar } from "../views/SearchInSessionBar";
 import { useKey } from "../lib/keymap";
@@ -83,7 +84,7 @@ export default function SessionDetailRoute() {
     []
   );
 
-  // 处理 URL ?line=N (Phase 12 — URL 跳转)
+  // 处理 URL ?line=N (Phase 12 — URL 跳转) + ?from=ISO&to=ISO 时间筛选
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const line = params.get("line");
@@ -93,6 +94,11 @@ export default function SessionDetailRoute() {
         // 等下一个 microtask,确保 DOM 已渲染
         setTimeout(() => jumpToEntry(target), 100);
       }
+    }
+    const from = params.get("from");
+    const to = params.get("to");
+    if (from || to) {
+      useTranscriptFilterStore.getState().setRange(from ?? undefined, to ?? undefined);
     }
   }, [entries.length, location.search]);
 
@@ -162,8 +168,10 @@ export default function SessionDetailRoute() {
                 <span>
                   Tokens{" "}
                   {formatNumber(
-                    meta.totalTokens.input + meta.totalTokens.output +
-                      meta.totalTokens.cacheRead + meta.totalTokens.cacheWrite
+                    meta.totalTokens.input +
+                      meta.totalTokens.output +
+                      meta.totalTokens.cacheRead +
+                      meta.totalTokens.cacheWrite
                   )}
                 </span>
               </>
@@ -181,7 +189,11 @@ export default function SessionDetailRoute() {
             <Download size={14} /> HTML
           </button>
           <button
-            onClick={() => navigate(`/analyze/${encodeURIComponent(meta.sessionId)}`, { state: { session: meta } })}
+            onClick={() =>
+              navigate(`/analyze/${encodeURIComponent(meta.sessionId)}`, {
+                state: { session: meta },
+              })
+            }
             className="primary"
           >
             <Sparkles size={14} /> {t("detail.analyze")}
@@ -191,7 +203,11 @@ export default function SessionDetailRoute() {
 
       <SearchInSessionBar onJump={jumpToEntry} />
 
-      {error && <div className="error">{t("app.error")}: {error}</div>}
+      {error && (
+        <div className="error">
+          {t("app.error")}: {error}
+        </div>
+      )}
 
       <TranscriptView />
     </div>
