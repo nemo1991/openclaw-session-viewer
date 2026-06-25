@@ -26,9 +26,10 @@ pnpm tauri build
 ```
 
 产物:
-- `src-tauri/target/release/bundle/macos/OpenClaw 会话查看器.app` (5-6 MB)
-- `src-tauri/target/release/bundle/dmg/OpenClaw 会话查看器_<version>_aarch64.dmg`
-- `src-tauri/target/release/bundle/macos/OpenClaw 会话查看er.app` (Intel, 在 Intel Mac 上)
+
+- `src-tauri/target/release/bundle/macos/OpenClaw Session Viewer.app` (5-6 MB,实际文件名用 ASCII)
+- `src-tauri/target/release/bundle/dmg/OpenClaw Session Viewer_<version>_aarch64.dmg`
+- `src-tauri/target/release/bundle/macos/OpenClaw Session Viewer.app` (Intel,在 Intel Mac 上)
 
 ### 运行
 
@@ -111,24 +112,31 @@ pnpm tauri build
 ```
 
 产物:
-- `src-tauri/target/release/bundle/appimage/OpenClaw 会话查看器_<version>_amd64.AppImage`
-- `src-tauri/target/release/bundle/deb/OpenClaw 会话查看器_<version>_amd64.deb`
+
+- `src-tauri/target/release/bundle/appimage/OpenClaw Session Viewer_<version>_amd64.AppImage`
+- `src-tauri/target/release/bundle/deb/OpenClaw Session Viewer_<version>_amd64.deb`
 
 ### 运行
 
 ```bash
-# AppImage
-chmod +x "OpenClaw 会话查看器_<version>_amd64.AppImage"
-./"OpenClaw 会话查看器_<version>_amd64.AppImage"
+# AppImage (文件名有空格,必须 quote)
+chmod +x "OpenClaw Session Viewer_<version>_amd64.AppImage"
+./"OpenClaw Session Viewer_<version>_amd64.AppImage"
 
 # .deb
-sudo dpkg -i "OpenClaw 会话查看器_<version>_amd64.deb"
+sudo dpkg -i "OpenClaw Session Viewer_<version>_amd64.deb"
 ocsv # 启动命令(根据 Cargo 配置)
 ```
 
 ### headless 服务器注意
 
 GUI 应用在没有 DISPLAY 的服务器上无法运行。Linux 打包必须在有图形界面的环境(CI runner 一般用 `ubuntu-22.04` + `xvfb`)。
+
+GitHub Actions 的 `ubuntu-latest` runner 默认带 `xvfb`,无需额外配置。手动 headless 调试可用:
+
+```bash
+xvfb-run -a pnpm tauri build
+```
 
 ---
 
@@ -148,12 +156,13 @@ pnpm tauri build
 ```
 
 产物:
-- `src-tauri/target/release/bundle/msi/OpenClaw 会话查看器_<version>_x64_en-US.msi`
-- `src-tauri/target/release/bundle/nsis/OpenClaw 会话查看器_<version>_x64-setup.exe`
+
+- `src-tauri/target/release/bundle/msi/OpenClaw Session Viewer_<version>_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/OpenClaw Session Viewer_<version>_x64-setup.exe`
 
 ### 安装
 
-双击 .msi → 按向导安装 → 开始菜单找到 "OpenClaw 会话查看器"。
+双击 .msi → 按向导安装 → 开始菜单找到 "OpenClaw Session Viewer"。
 
 ### 代码签名 (强烈推荐)
 
@@ -174,16 +183,35 @@ signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
 
 ## 跨平台问题排查
 
-| 问题 | 解决方案 |
-|---|---|
-| macOS: 窗口空白 | 用 .app bundle 启动,不要裸二进制 |
-| Linux: 缺 webkit2gtk-4.1 | 见上面前置安装步骤 |
-| Windows: WebView2 缺失 | 安装 [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) |
-| 路径中文乱码 | Tauri 2 默认 UTF-8,确认终端 LANG=en_US.UTF-8 |
-| 跨平台构建结果大小差异 | macOS 自带 WebKit 系统库所以小(~5MB),Windows 内嵌 WebView2(~7MB),Linux 内嵌 WebKitGTK(~9MB) |
+| 问题                     | 解决方案                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| macOS: 窗口空白          | 用 .app bundle 启动,不要裸二进制                                                                 |
+| Linux: 缺 webkit2gtk-4.1 | 见上面前置安装步骤                                                                               |
+| Windows: WebView2 缺失   | 安装 [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)          |
+| 路径中文乱码             | Tauri 2 默认 UTF-8,确认终端 `LANG=en_US.UTF-8`                                                   |
+| 跨平台构建结果大小差异   | macOS 自带 WebKit 系统库所以小(~5MB),Windows 内嵌 WebView2(~7MB),Linux 内嵌 WebKitGTK(~9MB)      |
+| macOS: DMG 提示"已损坏"  | 见 [TROUBLESHOOTING.md §11.9](TROUBLESHOOTING.md#119-macos-gatekeeper-拦截未签名-dmgv031-文档化) |
+
+### 为什么 bundle 文件名是 ASCII 而非中文?
+
+Tauri bundler 在 Windows MSI 阶段调用 WiX 3.x 的 `light.exe`,对非 ASCII
+文件名支持差 ([tauri-apps/tauri#8363](https://github.com/tauri-apps/tauri/issues/8363))。
+解决方案:`productName` 用 ASCII,只在窗口标题(`app.windows[].title`)保留中文显示。
+
+运行时用户的视角:
+
+- macOS Dock / Launchpad 显示的中文 `OpenClaw 会话查看器`(来自窗口 title)
+- macOS Finder 显示的 `.app` 文件名是 `OpenClaw Session Viewer`(bundle 产物名)
+- Windows 开始菜单显示的也是 `OpenClaw Session Viewer`(MSI 限制)
 
 ---
 
 ## GitHub Actions 自动构建
 
 见 `.github/workflows/release.yml`。触发条件:`push tag v*` → 三平台并行构建 → 上传 artifacts → 创建 GitHub Release。
+
+CI workflow 配置要点:
+
+- **paths-ignore**:`*.md`、`docs/**` 改动不触发 CI(`on.push.paths-ignore` 与 `on.pull_request.paths-ignore` 同时设置),docs-only 推送跳过 lint/test/build
+- **release workflow** 由 `push tag v*` 触发,**独立**于普通 CI,所以 docs-only 推送不会发 release
+- **重要**:`[skip ci]` commit message 标记 **也会跳过 tag 触发的 release workflow**。release 相关 commit 切勿加此标记(详见 [RELEASING.md §故障恢复](RELEASING.md#故障恢复))

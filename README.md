@@ -11,7 +11,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)]()
 [![Release](https://img.shields.io/github/v/release/nemo1991/openclaw-session-viewer)](https://github.com/nemo1991/openclaw-session-viewer/releases/latest)
 
-[下载](#-下载) · [功能](#-功能) · [快速开始](#-快速开始) · [截图](#-截图) · [架构](#-架构) · [开发](#-开发) · [故障排除](#-故障排除) · [路线图](#-路线图)
+[下载](#-下载) · [功能](#-功能) · [快速开始](#-快速开始) · [架构](#-架构) · [开发](#-开发) · [故障排除](#-故障排除) · [路线图](#-路线图) · [文档索引](#-文档索引)
 
 </div>
 
@@ -67,11 +67,12 @@ chmod +x OpenClaw*.AppImage
 
 ### 核心
 
-- 📜 **完整会话转录** — 文本、思考、工具调用、工具结果、图片、附件、压缩事件，所有类型
+- 📜 **完整会话转录** — 文本、思考、工具调用、工具结果、图片、附件、压缩事件,所有类型
 - 🔍 **三种搜索**:
   - 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
   - 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
   - URL 跳转 (`?line=N`) — 直接定位到任意消息
+- ↕️ **排序切换** — 会话详情顶部 `↑ 正序 / ↓ 倒序` 自由切换
 - ⚡ **流式加载** — Rust `BufReader` 64KB 缓冲,500 条/批,8MB+ 大文件秒开
 - 🟢 **实时状态** — 5 秒轮询 `~/.claude/sessions/<pid>.json`,显示运行中的 CLI 进程
 - 📁 **工具溢出文件** — 自动加载 `tool-results/*.txt` 长输出
@@ -92,12 +93,13 @@ chmod +x OpenClaw*.AppImage
 
 ### 工程化
 
-- ✅ **单元测试** — Rust 77 个 + TS 41 个 = **118 个测试**
+- ✅ **单元测试** — Rust 85 个 + TS 41 个 = **126 个测试**
 - 🔒 **路径安全** — 所有 Tauri 命令做词法检查,防止 `../../etc/passwd`
 - ♻️ **BlockRegistry 模式** — `BlockHandler` trait + 可扩展注册表,符合开闭原则
+- 🔮 **未知 block 兜底** — 新出现的 block type 不再崩溃,显示为 `UnknownBlockCard`(字段表 + 启发式 hint + 复制/报告)
 - 🚀 **自动更新** — Tauri updater + GitHub Releases
 - 📦 **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
-- 🛠️ **CI/CD** — GitHub Actions 三平台并行构建
+- 🛠️ **CI/CD** — GitHub Actions 三平台并行构建,docs-only 推送跳过 CI
 
 ## 📸 截图
 
@@ -242,7 +244,9 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 ├── src-tauri/            # Rust 后端 (Tauri 2)
 │   ├── src/
 │   │   ├── parser/       # 流式 JSONL 解析 + 归一化
-│   │   │   ├── blocks/   # BlockRegistry + handler 独立文件
+│   │   │   ├── blocks/   # BlockRegistry + 独立 handler 文件 (text/thinking/tool_use/…)
+│   │   │   ├── claude.rs
+│   │   │   └── openclaw.rs
 │   │   ├── commands/     # 12 个 Tauri 命令
 │   │   ├── llm/          # Anthropic 兼容 API 客户端
 │   │   ├── fs/           # 路径解析 + 安全检查
@@ -250,7 +254,10 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 │   └── icons/            # PNG/ICNS/ICO 图标
 ├── docs/                 # 项目文档
 │   ├── ARCHITECTURE.md
+│   ├── PARSER_ARCHITECTURE.md   # BlockRegistry 详解
 │   ├── CROSS_PLATFORM_BUILD.md
+│   ├── OPENCLAW_SESSION_FORMAT.md
+│   ├── RELEASING.md
 │   └── TROUBLESHOOTING.md
 ├── scripts/
 │   └── seed-fixture.ts   # 生成测试 JSONL
@@ -261,7 +268,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 ### 测试
 
 ```bash
-# Rust 单元测试 (77 个)
+# Rust 单元测试 (85 个)
 cd src-tauri && cargo test --lib
 
 # TypeScript 单元测试 (41 个)
@@ -269,6 +276,9 @@ cd packages/shared && pnpm test
 
 # 类型检查
 cd packages/frontend && pnpm exec tsc --noEmit
+
+# Clippy (lint)
+cd src-tauri && cargo clippy --all-targets -- -D warnings
 
 # 全部
 pnpm -r test
@@ -397,24 +407,31 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 🗺 路线图
 
+### 已完成 (v0.1.0 → v0.3.1)
+
 - [x] 基础会话列表 + 转录查看
 - [x] 全局/会话内搜索
 - [x] 大模型分析 (4 模板 + 自定义)
 - [x] Markdown/HTML 导出
-- [x] OpenClaw 存储支持
+- [x] OpenClaw 存储支持 (含 trajectory 过滤)
 - [x] 实时 PID 状态
-- [x] 多 Agent UI 二级分组
-- [x] 自定义数据源根目录 + 热重载
-- [x] Windows [object Object] 修复
-- [x] BlockRegistry 模式重构 + UnknownBlockCard
-- [x] 单元测试 (118 个)
+- [x] 多 Agent UI 二级分组 (v0.2.4)
+- [x] 自定义数据源根目录 + 热重载 (v0.2.5)
+- [x] Windows [object Object] 修复 (v0.2.6)
+- [x] BlockRegistry 模式重构 + UnknownBlockCard (v0.3.0)
+- [x] 会话详情排序切换 (v0.3.1)
+- [x] 单元测试 (126 个)
 - [x] 跨平台 CI (macOS/Windows/Linux)
+- [x] docs-only 推送跳过 CI (paths-ignore)
+
+### 计划中 (v0.4.0+)
+
 - [ ] **会话对比** — diff 两个会话的工具调用差异
-- [ ] **插件系统** — 第三方分析器
-- [ ] **i18n 完善** — 英文/日文界面
 - [ ] **拖拽导入** — 拖入 JSONL 文件直接打开
 - [ ] **VS Code 集成** — 点击路径跳转到编辑器
-- [ ] **更多 LLM 兼容** — OpenAI ChatCompletion API
+- [ ] **OpenClaw trajectory 查看** — 复用现有 pointer 文件
+- [ ] **OpenAI ChatCompletion 兼容** — 大模型后端多支持
+- [ ] **i18n 完善** — 英文/日文界面
 
 ## 🤝 贡献
 
@@ -424,6 +441,19 @@ API Key 错误或 Base URL 不对。在设置页检查:
 2. 保持单元测试覆盖
 3. 遵循现有代码风格(rustfmt + prettier)
 4. 提交前跑 `pnpm -r test && pnpm typecheck`
+5. **docs-only 提交**会自动跳过 CI;如果同时改代码 + docs,CI 正常跑(看路径规则)
+
+## 📚 文档索引
+
+| 文档                                                          | 用途                                        |
+| ------------------------------------------------------------- | ------------------------------------------- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                       | 总体架构、数据流、性能基准、安全模型        |
+| [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)         | BlockRegistry + BlockHandler 设计、扩展指南 |
+| [CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)       | macOS / Windows / Linux 构建、签名、公证    |
+| [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md) | OpenClaw JSONL schema,trajectory 文件机制   |
+| [RELEASING.md](docs/RELEASING.md)                             | 维护者发版流程,故障恢复                     |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                 | 已修过的 bug 与开发经验                     |
+| [CHANGELOG.md](CHANGELOG.md)                                  | 各版本变更记录                              |
 
 ## 📄 许可证
 

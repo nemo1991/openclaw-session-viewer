@@ -13,6 +13,7 @@
 **根因**: Tauri 2 在 macOS 上通过 WKWebView 渲染 webview。WKWebView 子进程 (`com.apple.WebKit.WebContent.xpc`) 只能由 **LaunchServices** 通过 `.app` bundle 派生。直接执行二进制绕过 LaunchServices,主进程启动但 webview 无法 attach。
 
 **复现**:
+
 ```bash
 # ❌ 不工作 — 窗口出现但内容空白
 ./src-tauri/target/release/openclaw-session-viewer
@@ -22,6 +23,7 @@ open src-tauri/target/release/bundle/macos/OpenClaw*.app
 ```
 
 **诊断方法**:
+
 ```bash
 # 启动后看进程树
 ps -ef | awk '/openclaw-session-viewer/ && !/awk/ {print $2, $3}'
@@ -37,30 +39,33 @@ ps -ef | awk '/openclaw-session-viewer/ && !/awk/ {print $2, $3}'
 
 **症状**: 点击搜索按钮后 1-2 秒崩溃,控制台报 `Maximum update depth exceeded`。
 
-**根因**: 
+**根因**:
+
 ```tsx
 // ❌ 错的写法
-const search = useSearchInSessionStore();  // 返回整个 state 对象
+const search = useSearchInSessionStore(); // 返回整个 state 对象
 useEffect(() => {
-    search.search(entries);  // 调用 action,触发 setState
-}, [entries, search]);  // search 引用每次 setState 后都变
+  search.search(entries); // 调用 action,触发 setState
+}, [entries, search]); // search 引用每次 setState 后都变
 ```
 
 死循环:
+
 ```
 state 变化 → search 引用变化 → useEffect 重跑 → search.search() 又 setState
 → search 引用再变 → useEffect 再跑 → ... → React 抛错
 ```
 
 **解决**: Zustand 的 selector 模式
+
 ```tsx
 // ✅ 正确
 const search = useSearchInSessionStore((s) => s.search);
 const open = useSearchInSessionStore((s) => s.open);
 useEffect(() => {
-    if (!open) return;
-    search(entries);
-}, [open, entries]);  // 不放整个 store 对象
+  if (!open) return;
+  search(entries);
+}, [open, entries]); // 不放整个 store 对象
 ```
 
 **经验**: **永远不要把 `useStore()` 返回的对象放进 `useEffect`/`useKey` 的 deps**。要么用 selector,要么只订阅 action(action 引用稳定)。
@@ -72,6 +77,7 @@ useEffect(() => {
 **症状**: 前端显示 `-Users-alice-projects-test`,但解码出来不是 `/Users/alice/projects/test`。
 
 **根因**: 用 `key.replace(/-/g, "/")` 反推,但中文/数字混淆:
+
 - `/Users/alice/test` → `-Users-alice-test` ✓
 - `/Users/alice-projects/test` → `-Users-alice-projects-test` (看起来一样)
 - 但反推: `-Users-alice-projects-test` 可能是 `/Users/alice/projects/test` 或 `/Users/alice-projects/test`
@@ -86,30 +92,19 @@ useEffect(() => {
 
 **现象**: OpenClaw 工具调用在 UI 中显示为 `meta` 而不是 `tool_use`。
 
-**根因**: Claude Code 用 `tool_use`,OpenClaw 用 `toolUse`(camelCase)。`normalize_content_block` 只识别 snake_case。
+**根因**: Claude Code 用 `tool_use`,OpenClaw 用 `toolUse`(camelCase)。早期 `normalize_content_block` 只识别 snake_case。
 
-**修复** (`src-tauri/src/parser/claude.rs`):
-```rust
-"tool_use" | "toolUse" | "tool_call" | "function_call" => "tool_use".to_string(),
-"tool_result" | "toolResult" => "tool_result".to_string(),
-```
+**修复**: 在 `ToolUseBlockHandler::matches()` 同时识别 5 个 alias (`tool_use`/`toolUse`/`tool_call`/`function_call`/`toolCall`),`ToolResultBlockHandler` 同理覆盖 `tool_result`/`toolResult`。
 
-**测试**: 添加 `test_normalize_user_with_camelcase_tool_use` 覆盖。
+**测试**: `parser/blocks/tool_use.rs` 每个 alias 各一个测试 + `arguments → input` 重命名测试。
 
 ### 5. OpenClaw tool 结果 role 错误
 
 **现象**: OpenClaw 工具结果显示成"用户"消息气泡,样式不对。
 
-**根因**: `normalize_entry` 把 OpenClaw `role: "tool"` 直接映射为 Claude 的 `user`(因为 Claude 格式中 tool 结果是 user 消息),但丢失了原始 `tool` role 信息。
+**根因**: 早期 `normalize_entry` 把 OpenClaw `role: "tool"` 直接映射为 Claude 的 `user`(Claude 格式中 tool 结果是 user 消息),丢失了原始 `tool` role 信息。
 
-**修复**:
-```rust
-let original_role = obj.get("message").and_then(|m| m.get("role"))...to_string();
-// ... 调用 normalize() 后:
-if original_role == "tool" {
-    msg.role = "tool".to_string();  // 还原
-}
-```
+**修复**: 自 v0.3.0 起 `openclaw.rs` 不再 wrapper 转 Claude,`role` 直接保留为 `tool`,不再需要后续 patch。
 
 ### 6. `joinPath` 丢失绝对路径前缀
 
@@ -118,6 +113,7 @@ if original_role == "tool" {
 **根因**: 实现把首段尾部斜杠去掉,但没意识到首段以 `/` 开头表示绝对路径。
 
 **修复**:
+
 ```ts
 const isAbsolute = first.startsWith("/");
 const trimmed = filtered.map((p) => p.replace(/^\/+|\/+$/g, ""));
@@ -130,6 +126,7 @@ return isAbsolute ? `/${joined}` : joined;
 **现象**: 传 `null` 给 `normalizeClaudeRecord` 会 throw `Cannot read property 'uuid' of null`。
 
 **修复**: 加 null guard
+
 ```ts
 export function normalizeClaudeRecord(
   record: ClaudeRecord | null | undefined,
@@ -149,6 +146,7 @@ export function normalizeClaudeRecord(
 **原因**: 默认镜像源 `http://mirrors.cloud.tencent.com/npm/` 经常返回 503。
 
 **解决**:
+
 ```bash
 pnpm config set registry https://registry.npmjs.org/
 ```
@@ -160,6 +158,7 @@ pnpm config set registry https://registry.npmjs.org/
 **根因**: Ubuntu 22.04 默认装 webkit2gtk **4.0**,Tauri 2 需要 **4.1**。
 
 **解决**:
+
 ```bash
 sudo add-apt-repository ppa:webkitgtk/4.1
 sudo apt update
@@ -179,8 +178,66 @@ sudo apt install libwebkit2gtk-4.1-dev
 **现象**: 在 Claude Code 的 CLI 环境中(非 GUI),webview 子进程永远不派生。
 
 **诊断**: 这不是 bug,是 sandbox 限制。CLI 工具没有 GUI 显示权限。
+
 - 可以用 Playwright headless 验证 webview 内容
 - 实际用户体验不受影响(用户的 macOS 有 GUI)
+
+### 11.5. Windows [object Object] 错误(v0.2.6 修复)
+
+**现象**: Windows 用户打开 liushuyou/91d1796e 详情页,`[object Object]` 字面量出现。
+
+**根因**: 多个相互作用 — Tauri `serde(flatten)` 在 WebView2 上序列化行为与 WKWebView 不一致,导致
+`block.text` 偶尔从 string 变成 object 形态。前端 `String(block.text)` 直接输出 `[object Object]`。
+
+**修复**:
+
+- Rust 端 `TextBlockHandler` 内部用 `Value::as_str` 强制断言,失败时用 `Value::to_string()` 兜底
+- 前端 `BlockRenderer` 加类型守卫: `typeof block.text === "string"` 才用,否则尝试 `block.text.text` / `JSON.stringify`
+- 前端 `extractErrorMessage(e)` 优先提取 `message`/`kind` 字段
+
+### 11.6. 路径安全 Windows UNC 前缀(v0.2.6 修复)
+
+**现象**: Windows 上 `canonicalize()` 返回 `\\?\C:\Users\...`,而 target 是短路径 `C:\Users\...`,前缀比较失败,误报路径越界。
+
+**修复**: `path_starts_with()` 统一分隔符、忽略大小写、去掉 `\\?\` 前缀。
+
+### 11.7. `*.trajectory.jsonl` 误认为 session(v0.2.3 修复)
+
+**现象**: 会话列表出现重复 session,一次 36KB(主),一次 624KB(trajectory)。
+
+**根因**: `Path::extension()` 只取最后一段扩展名,`.trajectory.jsonl` 被认成 `jsonl`。
+
+**修复**: walker 用 `file_stem` 末缀过滤 `*.trajectory`。
+
+### 11.8. `[skip ci]` 同时跳过 tag 触发的 release workflow(v0.3.1 踩坑)
+
+**现象**: 打 tag `v0.3.1` 后,GitHub Actions 没有触发 Release workflow。
+
+**根因**: tag 指向的 commit message 含 `[skip ci]`,GitHub Actions 把这个标记当作"任何 workflow 都跳过",**包括 `on: push: tags` 触发的 release job**。
+
+**解决**:
+
+- 选项 A:把版本号改到单独的 release commit(不带 `[skip ci]`)
+- 选项 B:已在 README/CHANGELOG 改完 → commit 不带 `[skip ci]` → 重新打 tag
+- 选项 C:`gh workflow run Release --ref v0.3.1` 手动触发(本次采用)
+
+**教训**:**任何触发发布/部署的关键 commit 都不要带 `[skip ci]`**。docs-only 改用 paths-ignore 即可,不要靠 commit message 标记。
+
+### 11.9. macOS Gatekeeper 拦截未签名 DMG(v0.3.1 文档化)
+
+**现象**: 首次打开 GitHub 下载的 `.dmg`,弹出"`OpenClaw Session Viewer` 已损坏,无法打开"。
+
+**根因**: CI 产出的 DMG 没 Apple 开发者签名,Gatekeeper quarantine 拒绝执行。
+
+**临时解决**: 拖入 Applications 后执行
+
+```bash
+sudo xattr -rd com.apple.quarantine "/Applications/OpenClaw Session Viewer.app"
+```
+
+或右键 App → 打开 → 对话框点「打开」。
+
+**长期解决**: 接入 Apple Developer ID + notarization(未在路线图优先级内)。
 
 ---
 
@@ -189,6 +246,7 @@ sudo apt install libwebkit2gtk-4.1-dev
 ### 12. 测试覆盖度低时漏掉实际 bug
 
 **现象**: 在 Phase 1-7 编写时没有足够测试,Phase 9 才补测。结果发现 3 个实际 bug:
+
 - 上面 #4 (camelCase)
 - 上面 #5 (tool role)
 - 上面 #7 (null guard)
@@ -203,8 +261,10 @@ sudo apt install libwebkit2gtk-4.1-dev
 await page.addInitScript(() => {
   window.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: "main" } },
-    invoke: async (cmd, args) => { /* mock */ },
-    transformCallback: (cb) => cb,  // ← 必须 mock,否则 listen() 报错
+    invoke: async (cmd, args) => {
+      /* mock */
+    },
+    transformCallback: (cb) => cb, // ← 必须 mock,否则 listen() 报错
   };
 });
 ```
@@ -217,11 +277,18 @@ await page.addInitScript(() => {
 
 按修复成本排序的高频错误类型:
 
-| 错误类型 | 出现次数 | 解决模式 |
-|---|---|---|
-| React 状态/zustand 使用 | 2 | 用 selector 而不是整个 store |
-| 多 schema/camelCase 兼容 | 3 | 总是接受多种命名变体 |
-| macOS/平台特定行为 | 2 | 用 `.app` bundle,验证签名/权限 |
-| 测试覆盖不足 | 1 | TDD 同 PR 提交 |
+| 错误类型                 | 出现次数 | 解决模式                                                                |
+| ------------------------ | -------- | ----------------------------------------------------------------------- |
+| React 状态/zustand 使用  | 2        | 用 selector 而不是整个 store                                            |
+| 多 schema/camelCase 兼容 | 3        | 总是接受多种命名变体(handler `matches()` 接受多个 alias)                |
+| 平台特定行为             | 3        | macOS 用 `.app` bundle + DMG 公证;Linux webkit2gtk 4.1;Windows UNC 路径 |
+| 测试覆盖不足             | 1        | TDD 同 PR 提交                                                          |
+| 路径遍历 / 输入校验      | 3        | `assert_within_lexical` + 前端类型守卫                                  |
+| 平台特定 bug             | 1        | CI 测三平台,Windows 错误显式提取 `message`/`kind` 字段                  |
 
-**核心教训**: 测试覆盖率 = 调试时间。在 Phase 1-7 跳过测试导致 Phase 9 才发现 3 个 bug,Phase 9-10 严格 TDD 后基本零回归。
+**核心教训**:
+
+1. **测试覆盖率 = 调试时间**。早期跳过测试导致 Phase 9 才发现 3 个 bug;严格 TDD 后基本零回归。
+2. **多源兼容永远不要假设字段名固定**。OpenClaw 用 camelCase、pi-coding-agent 又用 snake_case、`toolCall` 还混进来。`BlockHandler::matches` 接受所有已知 alias 是最便宜的兼容方式。
+3. **`[skip ci]` 是把双刃剑**。改文档方便,但**关键 release commit 不应带**。
+4. **前端不要 `String(anything)`**。永远先 `typeof === "string"` 守卫,或者 `extractErrorMessage()` 抽象。

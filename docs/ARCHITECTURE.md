@@ -15,7 +15,7 @@
 │  │              Rust Backend (src-tauri/src/)             │   │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐        │   │
 │  │  │  Commands  │  │   Parser   │  │    LLM     │        │   │
-│  │  │  (12 个)   │  │  (JSONL)   │  │  Client    │        │   │
+│  │  │  (12 个)   │  │ + blocks/  │  │  Client    │        │   │
 │  │  └────────────┘  └────────────┘  └────────────┘        │   │
 │  │  ┌────────────┐  ┌────────────┐                       │   │
 │  │  │    FS      │  │   Cache    │                       │   │
@@ -134,9 +134,11 @@ Frontend listenAnalyze → 流式更新 result
 
 - **职责**: 把原始 JSON Value 转成统一 `NormalizedMessage`
 - **独立**: 不依赖 Tauri,可独立测试
-- **两个 parser**:
-  - `claude.rs::normalize` — Claude Code JSONL → NormalizedMessage
-  - `openclaw.rs::normalize_entry` — OpenClaw JSONL → 转换为 Claude 格式再调 normalize
+- **三部分**:
+  - `claude.rs::normalize_record` — Claude Code JSONL → `NormalizedMessage`
+  - `openclaw.rs::normalize_entry` — OpenClaw JSONL → `NormalizedMessage`(**不再 wrapper 转 Claude**,自 v0.3.0 起直接走同一套 BlockRegistry)
+  - `blocks/` — `BlockRegistry` + `BlockHandler` trait,统一处理所有 content block 类型
+- **BlockRegistry 详解**: 见 [PARSER_ARCHITECTURE.md](PARSER_ARCHITECTURE.md)
 
 ### `src-tauri/src/commands/` — Tauri 边界
 
@@ -154,35 +156,35 @@ Frontend listenAnalyze → 流式更新 result
 
 ### 启动时间线(M1 Pro 实测)
 
-| 步骤 | 时间 |
-|---|---|
-| Tauri 启动到 webview ready | 200ms |
-| webview 加载 index.html (静态) | 50ms |
-| main.tsx 执行 + React mount | 50ms |
-| get_settings invoke | 5ms |
-| list_sessions invoke (含 11 个会话解析) | 50ms |
-| 第一次 render | 50ms |
-| **总冷启动** | **~400ms** |
+| 步骤                                    | 时间       |
+| --------------------------------------- | ---------- |
+| Tauri 启动到 webview ready              | 200ms      |
+| webview 加载 index.html (静态)          | 50ms       |
+| main.tsx 执行 + React mount             | 50ms       |
+| get_settings invoke                     | 5ms        |
+| list_sessions invoke (含 11 个会话解析) | 50ms       |
+| 第一次 render                           | 50ms       |
+| **总冷启动**                            | **~400ms** |
 
 ### 8MB JSONL 打开
 
-| 步骤 | 时间 |
-|---|---|
-| stream_transcript 启动 | 5ms |
-| 第一批 500 条 emit | 50ms |
-| 第一批 React render | 30ms |
-| **首屏可见** | **~85ms** |
-| 后续每批 (500 条/批) | 30ms |
-| 全 20000 条解析完 | ~600ms |
+| 步骤                   | 时间      |
+| ---------------------- | --------- |
+| stream_transcript 启动 | 5ms       |
+| 第一批 500 条 emit     | 50ms      |
+| 第一批 React render    | 30ms      |
+| **首屏可见**           | **~85ms** |
+| 后续每批 (500 条/批)   | 30ms      |
+| 全 20000 条解析完      | ~600ms    |
 
 ### 搜索 (Cmd+K)
 
-| 步骤 | 时间 |
-|---|---|
-| spawn_blocking 启动 | 5ms |
-| for_each_line 第一条匹配 | 1ms |
-| emit 第一个 hit | 1ms |
-| **首个结果可见** | **~10ms** |
+| 步骤                     | 时间      |
+| ------------------------ | --------- |
+| spawn_blocking 启动      | 5ms       |
+| for_each_line 第一条匹配 | 1ms       |
+| emit 第一个 hit          | 1ms       |
+| **首个结果可见**         | **~10ms** |
 
 ## 安全模型
 
@@ -222,10 +224,23 @@ if p.starts_with(&state.paths.claude.projects_dir) {
 
 ### 添加新的内容块类型
 
-1. `claude-types.ts` 加新 union 成员
-2. `parser/claude.rs::normalize_content_block` 加映射
-3. `components/MessageBubble.tsx::BlockRenderer` 加 case
-4. 添加测试覆盖
+走 `BlockRegistry` 模式,加新 block type 只需实现一个 handler + register。
+
+**后端 (Rust)**:
+
+1. 在 `src-tauri/src/parser/blocks/` 新建 `<type>.rs`,实现 `BlockHandler` trait
+   - `matches()` — 判断是否匹配该 type(可同时识别多个 alias,如 `tool_use`/`toolUse`/`tool_call`)
+   - `normalize()` — 提取需要的字段,返回 `NormalizedBlock { kind, data }`
+2. `blocks/mod.rs` 的 `default_registry()` 里 `register(MyHandler)`,放在 `MetaBlockHandler` **之前**
+3. `mod.rs` `pub mod <type>;` + `pub use <type>::MyHandler;`
+4. 在 `<type>.rs` 加 `#[cfg(test)] mod tests`,覆盖 alias/边界/缺失字段
+
+**前端 (TypeScript)**:
+
+- 已知 type:`components/MessageBubble.tsx::BlockRenderer` 加 `case "<kind>"`,渲染专属 UI
+- 未知 type:不用改任何代码,`MetaBlockHandler` 自动 fallback → `UnknownBlockCard` 显示字段表
+
+**示例**: `skill_listing` 类型从未知 → 已知的过程,看 git history `feat(parser): add 4 new BlockHandlers` (v0.3.1)。
 
 ### 替换 LLM 后端
 

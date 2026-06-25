@@ -18,6 +18,8 @@
   ```
 
 - [ ] CI 在 `main` 上全绿
+- [ ] release commit **不带** `[skip ci]` 标记(否则 tag 触发的 Release workflow 也会被跳过)
+- [ ] docs-only 改动用 paths-ignore(`.github/workflows/ci.yml` 已配置 `*.md` 和 `docs/**`),**不要**用 `[skip ci]` commit message
 
 ## 发版步骤
 
@@ -95,13 +97,31 @@ Release body 自动从 `CHANGELOG.md` 的 `## [X.Y.Z]` 段抓取。
 
 ## 故障恢复
 
-| 状况                       | 恢复                                                                |
-| -------------------------- | ------------------------------------------------------------------- |
-| CI 失败但 tag 已推         | `git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z`,修复后重打 |
-| Draft 已创建但不想要       | Releases 页面 → 该 release → **Delete**                             |
-| Draft 没附上正确 body      | Releases 页面 → **Edit** → 手动粘 CHANGELOG 段                      |
-| 想重跑同 tag release       | Actions 页面 → Release workflow → **Run workflow**(填同样的 tag)    |
-| Windows runner 缺 Python 3 | 理论上预装,缺失时改 PowerShell `ConvertFrom-Json` 注入              |
+| 状况                                            | 恢复                                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
+| CI 失败但 tag 已推                              | `git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z`,修复后重打                  |
+| Draft 已创建但不想要                            | Releases 页面 → 该 release → **Delete**                                              |
+| Draft 没附上正确 body                           | Releases 页面 → **Edit** → 手动粘 CHANGELOG 段                                       |
+| 想重跑同 tag release                            | Actions 页面 → Release workflow → **Run workflow**(填同样的 tag)                     |
+| Windows runner 缺 Python 3                      | 理论上预装,缺失时改 PowerShell `ConvertFrom-Json` 注入                               |
+| **release commit 带 `[skip ci]` 跳过 workflow** | 改用 `gh workflow run Release --ref vX.Y.Z` 手动触发;或 `--amend` 改 commit message  |
+| **hotfix 流程**                                 | 从 `vX.Y.Z` tag 拉 `hotfix/vX.Y.Z+1` 分支 → 修复 → PR → 合并后打 `vX.Y.Z+1` tag → CI |
+| **CI workflow 文件改动导致 release 失败**       | 本地 lint: `brew install actionlint && actionlint .github/workflows/`                |
+
+### Hotfix 示例
+
+```bash
+# 当前 v0.3.1 有个严重 bug,需要立即发 v0.3.2
+git fetch --tags
+git checkout -b hotfix/v0.3.2 v0.3.1
+# 改代码
+git commit -am "fix(parser): ..."
+git push origin hotfix/v0.3.2
+# 提 PR → 合 main → 打 tag
+git checkout main
+git tag v0.3.2
+git push origin main --tags
+```
 
 ## 版本号约定
 
