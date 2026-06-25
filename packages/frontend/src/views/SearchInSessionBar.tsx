@@ -4,6 +4,7 @@ import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
 
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
 import { useTranscriptStore } from "../state/transcriptStore";
+import { useTranscriptFilterStore, isFilterActive } from "../state/transcriptFilterStore";
 import { useKey } from "../lib/keymap";
 import "./SearchInSessionBar.css";
 
@@ -26,6 +27,21 @@ export function SearchInSessionBar({ onJump }: Props) {
   const hide = useSearchInSessionStore((s) => s.hide);
 
   const entries = useTranscriptStore((s) => s.entries);
+  const filter = useTranscriptFilterStore();
+  const filterActive = isFilterActive(filter);
+
+  // 搜索只在筛选后的范围跑,这样 search hit 不会指向被过滤掉的 entry
+  const searchableEntries = filterActive
+    ? entries.filter((e) => {
+        const ts = e.normalized.timestamp;
+        if (!ts) return true;
+        const ms = new Date(ts).getTime();
+        const fromMs = filter.from ? new Date(filter.from).getTime() : -Infinity;
+        const toMs = filter.to ? new Date(filter.to).getTime() : Infinity;
+        return isNaN(ms) || (ms >= fromMs && ms <= toMs);
+      })
+    : entries;
+
   const inputRef = useRef<HTMLInputElement>(null);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
 
@@ -44,16 +60,14 @@ export function SearchInSessionBar({ onJump }: Props) {
   // 仅在 query 或 entries 变化时搜索,open 关闭时不搜索
   useEffect(() => {
     if (!open) return;
-    search(entries);
+    search(searchableEntries);
     // search 函数本身引用稳定(zustand action),不放入 deps
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, debouncedQuery, entries]);
+  }, [open, debouncedQuery, searchableEntries]);
 
   // 当前命中变化时跳转
   const currentHit =
-    currentHitIndex >= 0 && currentHitIndex < hits.length
-      ? hits[currentHitIndex]
-      : null;
+    currentHitIndex >= 0 && currentHitIndex < hits.length ? hits[currentHitIndex] : null;
   useEffect(() => {
     if (currentHit && onJump) {
       onJump(currentHit.entryIndex);
@@ -78,11 +92,7 @@ export function SearchInSessionBar({ onJump }: Props) {
         placeholder={t("search.inSession")}
       />
       <span className="search-counter">
-        {hits.length > 0
-          ? `${currentHitIndex + 1} / ${hits.length}`
-          : query
-          ? "0 / 0"
-          : ""}
+        {hits.length > 0 ? `${currentHitIndex + 1} / ${hits.length}` : query ? "0 / 0" : ""}
       </span>
       <button onClick={prev} disabled={hits.length === 0} title={t("search.prev")}>
         <ChevronUp size={14} />

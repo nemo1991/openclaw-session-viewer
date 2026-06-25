@@ -4,6 +4,11 @@ import { useTranslation } from "react-i18next";
 
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
+import {
+  useTranscriptFilterStore,
+  isFilterActive,
+  type FilterPreset,
+} from "../state/transcriptFilterStore";
 import { MessageBubble } from "../components/MessageBubble";
 import "./TranscriptView.css";
 
@@ -13,14 +18,29 @@ export function TranscriptView() {
   const currentHit = useSearchInSessionStore((s) =>
     s.currentHitIndex >= 0 ? s.hits[s.currentHitIndex] : null
   );
+  const filter = useTranscriptFilterStore();
+  const filterActive = isFilterActive(filter);
   const parentRef = useRef<HTMLDivElement>(null);
   const [sortAsc, setSortAsc] = useState(true); // true=正序(旧→新), false=倒序(新→旧)
 
-  // 根据 sortAsc 排序 entries
+  // 时间筛选 + 排序
+  const filteredEntries = useMemo(() => {
+    if (!filterActive) return entries;
+    const fromMs = filter.from ? new Date(filter.from).getTime() : -Infinity;
+    const toMs = filter.to ? new Date(filter.to).getTime() : Infinity;
+    return entries.filter((e) => {
+      const t = e.normalized.timestamp;
+      if (!t) return true; // meta 条目保留
+      const ms = new Date(t).getTime();
+      if (isNaN(ms)) return true; // 解析失败保留
+      return ms >= fromMs && ms <= toMs;
+    });
+  }, [entries, filter.from, filter.to, filterActive]);
+
   const sortedEntries = useMemo(() => {
-    if (sortAsc) return entries;
-    return [...entries].reverse();
-  }, [entries, sortAsc]);
+    if (sortAsc) return filteredEntries;
+    return [...filteredEntries].reverse();
+  }, [filteredEntries, sortAsc]);
 
   const virtualizer = useVirtualizer({
     count: sortedEntries.length,
@@ -30,9 +50,10 @@ export function TranscriptView() {
   });
 
   useEffect(() => {
-    // 自动滚到底部 (新增时,且当前不在搜索结果中)
+    // 自动滚到底部:仅在正序、无搜索、加载完成、无筛选时
     if (currentHit) return;
-    if (!sortAsc) return; // 倒序时不上滚
+    if (!sortAsc) return;
+    if (filterActive) return;
     const last = virtualizer.getVirtualItems().at(-1);
     if (last && parentRef.current) {
       const items = virtualizer.getVirtualItems();
@@ -41,31 +62,38 @@ export function TranscriptView() {
         parentRef.current.scrollTop = parentRef.current.scrollHeight;
       }
     }
-  }, [entries.length, virtualizer, currentHit, sortAsc, sortedEntries.length]);
+  }, [entries.length, virtualizer, currentHit, sortAsc, filterActive, sortedEntries.length]);
 
   return (
     <div className="transcript-view">
-      <div className="transcript-sort-bar">
-        <button
-          className={`sort-btn ${sortAsc ? "sort-btn-active" : ""}`}
-          onClick={() => setSortAsc(true)}
-          title="从旧到新"
-        >
-          ↑ 正序
-        </button>
-        <button
-          className={`sort-btn ${!sortAsc ? "sort-btn-active" : ""}`}
-          onClick={() => setSortAsc(false)}
-          title="从新到旧"
-        >
-          ↓ 倒序
-        </button>
+      <div className="transcript-toolbar">
+        <div className="transcript-sort-bar">
+          <button
+            className={`sort-btn ${sortAsc ? "sort-btn-active" : ""}`}
+            onClick={() => setSortAsc(true)}
+            title="从旧到新"
+          >
+            ↑ 正序
+          </button>
+          <button
+            className={`sort-btn ${!sortAsc ? "sort-btn-active" : ""}`}
+            onClick={() => setSortAsc(false)}
+            title="从新到旧"
+          >
+            ↓ 倒序
+          </button>
+        </div>
+        <FilterBar />
       </div>
       <div className="transcript-scroll" ref={parentRef}>
         {sortedEntries.length === 0 && loading && (
           <div className="transcript-loading">{t("detail.loading")}</div>
         )}
-        {sortedEntries.length === 0 && !loading && <div className="transcript-empty">无消息</div>}
+        {sortedEntries.length === 0 && !loading && (
+          <div className="transcript-empty">
+            {filterActive ? t("detail.filter.noMatch") : t("detail.empty")}
+          </div>
+        )}
 
         <div
           style={{
@@ -103,8 +131,99 @@ export function TranscriptView() {
       <footer className="transcript-footer">
         {loading
           ? `流式加载中… ${loadedCount}/${totalCount}`
-          : `已加载 ${entries.length} 条 · ${sortAsc ? "正序" : "倒序"}`}
+          : filterActive
+            ? t("detail.filter.showingFiltered", {
+                shown: sortedEntries.length,
+                total: entries.length,
+              }) + ` · ${sortAsc ? "正序" : "倒序"}`
+            : `已加载 ${entries.length} 条 · ${sortAsc ? "正序" : "倒序"}`}
       </footer>
+    </div>
+  );
+}
+
+/**
+ * 时间筛选 bar — 4 个 preset + 自定义范围
+ */
+function FilterBar() {
+  const { t } = useTranslation();
+  const preset = useTranscriptFilterStore((s) => s.preset);
+  const from = useTranscriptFilterStore((s) => s.from);
+  const to = useTranscriptFilterStore((s) => s.to);
+  const setPreset = useTranscriptFilterStore((s) => s.setPreset);
+  const setRange = useTranscriptFilterStore((s) => s.setRange);
+  const clear = useTranscriptFilterStore((s) => s.clear);
+
+  const presets: Array<{ value: FilterPreset; label: string }> = [
+    { value: "all", label: t("detail.filter.all") },
+    { value: "1h", label: t("detail.filter.last1h") },
+    { value: "24h", label: t("detail.filter.last24h") },
+    { value: "7d", label: t("detail.filter.last7d") },
+  ];
+
+  // ISO 8601 → datetime-local (YYYY-MM-DDTHH:mm)
+  const isoToLocal = (iso?: string): string => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const localToIso = (local: string): string | undefined => {
+    if (!local) return undefined;
+    const d = new Date(local);
+    if (isNaN(d.getTime())) return undefined;
+    return d.toISOString();
+  };
+
+  const handleApply = () => {
+    setRange(
+      localToIso((document.getElementById("filter-from") as HTMLInputElement)?.value),
+      localToIso((document.getElementById("filter-to") as HTMLInputElement)?.value)
+    );
+  };
+
+  return (
+    <div className="transcript-filter-bar">
+      {presets.map((p) => (
+        <button
+          key={p.value}
+          className={`filter-btn ${preset === p.value ? "filter-btn-active" : ""}`}
+          onClick={() => setPreset(p.value)}
+        >
+          {p.label}
+        </button>
+      ))}
+      <button
+        className={`filter-btn ${preset === "custom" ? "filter-btn-active" : ""}`}
+        onClick={() => setPreset("custom")}
+      >
+        {t("detail.filter.custom")}
+      </button>
+      {preset === "custom" && (
+        <div className="filter-custom">
+          <input
+            id="filter-from"
+            type="datetime-local"
+            defaultValue={isoToLocal(from)}
+            placeholder={t("detail.filter.from")}
+          />
+          <span>~</span>
+          <input
+            id="filter-to"
+            type="datetime-local"
+            defaultValue={isoToLocal(to)}
+            placeholder={t("detail.filter.to")}
+          />
+          <button className="filter-apply-btn" onClick={handleApply}>
+            {t("detail.filter.apply")}
+          </button>
+          <button className="filter-clear-btn" onClick={clear}>
+            {t("detail.filter.clear")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
