@@ -407,7 +407,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 🗺 路线图
 
-### 已完成 (v0.1.0 → v0.3.1)
+### 已完成 (v0.1.0 → v0.4.1)
 
 - [x] 基础会话列表 + 转录查看
 - [x] 全局/会话内搜索
@@ -424,16 +424,17 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] 会话详情时间段筛选 (v0.4.0)
 - [x] 会话列表 UI 增强 (首条提问预览 + thinking/tool 统计 + 智能相对时间) (v0.4.0)
 - [x] OpenClaw Trajectory 支持 (8 种事件 + 流式查看) (v0.4.0)
+- [x] 详情页深色主题 meta 块修复 + 子代理字段折叠 (v0.4.1)
+- [x] 列表默认进 Claude (移除"全部" radio) (v0.4.1)
 - [x] 单元测试 (135 个)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [x] docs-only 推送跳过 CI (paths-ignore)
 
-### 计划中 (v0.4.0+)
+### 计划中 (v0.4.1+)
 
 - [ ] **会话对比** — diff 两个会话的工具调用差异
 - [ ] **拖拽导入** — 拖入 JSONL 文件直接打开
 - [ ] **VS Code 集成** — 点击路径跳转到编辑器
-- [ ] **OpenClaw trajectory 查看** — 复用现有 pointer 文件
 - [ ] **OpenAI ChatCompletion 兼容** — 大模型后端多支持
 - [ ] **i18n 完善** — 英文/日文界面
 

@@ -218,10 +218,11 @@
   display: inline-block;
   padding: 1px 6px;
   border-radius: 3px;
-  background: var(--color-surface-2, #e5e5e5);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
   font-family: monospace;
   font-size: 10px;
-  color: var(--color-text-secondary);
+  color: var(--color-text);
 }
 
 .live-badge {

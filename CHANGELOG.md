@@ -4,11 +4,23 @@
 
 ## [Unreleased]
 
-### 计划
+## [0.4.1] - 2026-06-25
 
-- 会话对比 (diff)
-- 拖拽导入 JSONL
-- VS Code 路径跳转
+### 修复
+
+- 🐛 **详情页深色主题 meta 块**：`theme/tokens.css` 缺少 `--color-surface-1` / `--color-surface-2` 两个 token，深色主题下 `.block-meta-info` 系列 fallback 到 `#f5f5f5` 浅灰背景，深色面板上变成"浅紫底深紫字"突兀。补 token 并清理 MessageBubble.css / TrajectoryView.css 里的硬编码 fallback。
+- 🐛 **子代理会话字段没专属样式**：Claude sub-agent 会话 content 数组里的 `mode` / `permission-mode` / `ai-title` / `custom-title` / `last-prompt` 被后端归一化成 `kind: "meta"`，前端走简化 pill 渲染（一行 `📄 mode: normal`），挤主流程。新增 `SubagentMetaBlock` 组件，按 label 识别并渲染成可折叠 details，默认折叠。
+- 🐛 **meta 分支的 7 种已知 block 没识别**：`file-history-snapshot` / `agent_listing_delta` / `skill_listing` / `plan_mode` / `pr-link` / `agent_name` / `task_reminder` 在 meta 消息里走 UnknownBlockCard 兜底样式（`? meta xxx N 字段`）。抽出共享 `MetaBlockRenderer` 组件，从 `block.payload` 解包字段（attachment 类型的数据全在 payload 里），按 label 路由到对应专属样式（🤖 agent / 🛠 skill / 📋 plan_mode / 📁 file_snapshot 等）。
+
+### 变更
+
+- 🔧 **列表侧边栏 source 默认改 Claude**：移除"全部"单选，只剩 Claude / OpenClaw 二选一；首次打开默认进 Claude，避免误把 OpenClaw 会话当成普通会话看。
+- 🔧 **tool-chip 深色主题对比度**：`tool-chip` 背景从 `var(--color-surface-2, #e5e5e5)` 改成 `var(--color-bg-hover)` + 边框 + `var(--color-text)`，深色下清晰。
+
+### 测试
+
+- 🧪 Rust 单元测试 94 个（不变）
+- 🧪 TypeScript 测试 41 个（不变）
 
 ## [0.4.0] - 2026-06-25
 

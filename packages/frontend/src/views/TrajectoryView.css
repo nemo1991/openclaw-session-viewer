@@ -110,7 +110,7 @@
 }
 
 .badge-neutral {
-  background: var(--color-surface-2, #e5e5e5);
+  background: var(--color-surface-2);
   color: var(--color-text-secondary);
 }
 
