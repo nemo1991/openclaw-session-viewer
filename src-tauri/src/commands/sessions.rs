@@ -411,6 +411,9 @@ fn build_claude_session_meta(
         } else {
             Some(top_tools)
         },
+        // Claude session 无 trajectory
+        has_trajectory: None,
+        trajectory_size_bytes: None,
     })
 }
 
@@ -547,7 +550,44 @@ fn build_openclaw_session_meta(
         } else {
             Some(top_tools)
         },
+        // --- v0.4.0 trajectory 探测 ---
+        has_trajectory: detect_trajectory(jsonl_path),
+        trajectory_size_bytes: trajectory_size(jsonl_path),
     })
+}
+
+/// 检测 session 是否有关联 trajectory 文件
+/// 优先查 .trajectory-path.json, fallback 同目录 .trajectory.jsonl
+fn detect_trajectory(session_path: &Path) -> Option<bool> {
+    let stem = session_path.file_stem().and_then(|s| s.to_str())?;
+    let dir = session_path.parent()?;
+    let pointer = dir.join(format!("{}.trajectory-path.json", stem));
+    if pointer.exists() {
+        return Some(true);
+    }
+    let default = dir.join(format!("{}.trajectory.jsonl", stem));
+    Some(default.exists())
+}
+
+/// trajectory 文件大小(字节),不存在返回 None
+fn trajectory_size(session_path: &Path) -> Option<u64> {
+    let stem = session_path.file_stem().and_then(|s| s.to_str())?;
+    let dir = session_path.parent()?;
+    // 优先 pointer 指向的路径
+    let pointer = dir.join(format!("{}.trajectory-path.json", stem));
+    if pointer.exists() {
+        if let Ok(text) = std::fs::read_to_string(&pointer) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(runtime) = v.get("runtimeFile").and_then(|x| x.as_str()) {
+                    if let Ok(meta) = std::fs::metadata(runtime) {
+                        return Some(meta.len());
+                    }
+                }
+            }
+        }
+    }
+    let default = dir.join(format!("{}.trajectory.jsonl", stem));
+    std::fs::metadata(default).ok().map(|m| m.len())
 }
 
 fn scan_live_pids(dir: &Path) -> AppResult<HashMap<String, u32>> {

@@ -71,7 +71,9 @@ export const apiListLivePids = (): Promise<
 > => invoke("list_live_pids");
 
 // ===== 子代理 =====
-export const apiListSubagents = (sessionDir: string): Promise<
+export const apiListSubagents = (
+  sessionDir: string
+): Promise<
   Array<{
     agentId: string;
     jsonlPath: string;
@@ -81,7 +83,9 @@ export const apiListSubagents = (sessionDir: string): Promise<
 > => invoke("list_subagents", { sessionDir });
 
 // ===== 工具溢出 =====
-export const apiGetToolResultFile = (path: string): Promise<{
+export const apiGetToolResultFile = (
+  path: string
+): Promise<{
   path: string;
   sizeBytes: number;
   content: string;
@@ -158,7 +162,48 @@ export const apiSaveSettings = (settings: AppSettings): Promise<void> =>
 
 // ===== 文件系统 =====
 export const apiPickExportDir = (): Promise<string | null> => invoke("pick_export_dir");
-export const apiRevealInFinder = (path: string): Promise<void> => invoke("reveal_in_finder", { path });
+export const apiRevealInFinder = (path: string): Promise<void> =>
+  invoke("reveal_in_finder", { path });
+
+// ===== Trajectory (OpenClaw) =====
+
+export interface TrajectoryInfoOut {
+  exists: boolean;
+  path?: string;
+  sizeBytes?: number;
+  lineCount?: number;
+}
+
+export interface TrajectoryEventFE {
+  /** 原始 seq (1-based) */
+  seq: number;
+  /** 事件类型,如 "session.started" */
+  eventType: string;
+  /** ISO 8601 时间戳 */
+  ts: string;
+  /** 事件特定 payload */
+  data: unknown;
+  /** envelope 透传字段(provider / modelId / entryId / parentEntryId 等) */
+  [key: string]: unknown;
+}
+
+export const apiGetTrajectoryInfo = (path: string): Promise<TrajectoryInfoOut> =>
+  invoke("get_trajectory_info", { path });
+
+export const apiStreamTrajectory = (path: string): Promise<void> =>
+  invoke("stream_trajectory", { path });
+
+export function listenTrajectoryBatches(
+  onBatch: (batch: { startIndex: number; events: TrajectoryEventFE[] }) => void,
+  onDone: () => void
+): Promise<UnlistenFn[]> {
+  return Promise.all([
+    listen<{ startIndex: number; events: TrajectoryEventFE[] }>("trajectory-batch", (e) =>
+      onBatch(e.payload)
+    ),
+    listen("trajectory-done", () => onDone()),
+  ]).then((arr) => arr);
+}
 
 // re-export for convenience
 export type { AppSettings, SearchHit, SessionMeta };

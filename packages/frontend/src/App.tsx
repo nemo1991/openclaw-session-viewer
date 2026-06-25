@@ -6,6 +6,7 @@ import SessionsRoute from "./routes/SessionsRoute";
 import SessionDetailRoute from "./routes/SessionDetailRoute";
 import AnalyzeRoute from "./routes/AnalyzeRoute";
 import SettingsRoute from "./routes/SettingsRoute";
+import TrajectoryRoute from "./routes/TrajectoryRoute";
 
 export default function App() {
   const settings = useSettingsStore((s) => s.settings);
@@ -23,6 +24,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<SessionsRoute />} />
       <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+      <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
       <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
       <Route path="/settings" element={<SettingsRoute />} />
       <Route path="*" element={<Navigate to="/" replace />} />
