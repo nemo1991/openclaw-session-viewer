@@ -35,25 +35,34 @@
 //! | `skill_listing`                  | skill_listing   | `skill_listing.rs`   |
 //! | `plan_mode`                      | plan_mode       | `plan_mode.rs`       |
 //! | `file_history_snapshot`          | file_snapshot   | `file_snapshot.rs`   |
+//! | `pr-link`                        | pr_link         | `pr_link.rs`          |
+//! | `agent-name`                     | agent_name      | `agent_name.rs`       |
+//! | `task_reminder`                  | task_reminder   | `task_reminder.rs`    |
 //! | (其它)                           | meta            | `meta.rs`            |
 
 pub mod agent_listing;
+pub mod agent_name;
 pub mod file_snapshot;
 pub mod image;
 pub mod meta;
 pub mod plan_mode;
+pub mod pr_link;
 pub mod skill_listing;
+pub mod task_reminder;
 pub mod text;
 pub mod thinking;
 pub mod tool_result;
 pub mod tool_use;
 
 pub use agent_listing::AgentListingHandler;
+pub use agent_name::AgentNameHandler;
 pub use file_snapshot::FileSnapshotHandler;
 pub use image::ImageBlockHandler;
 pub use meta::MetaBlockHandler;
 pub use plan_mode::PlanModeHandler;
+pub use pr_link::PrLinkHandler;
 pub use skill_listing::SkillListingHandler;
+pub use task_reminder::TaskReminderHandler;
 pub use text::TextBlockHandler;
 pub use thinking::ThinkingBlockHandler;
 pub use tool_result::ToolResultBlockHandler;
@@ -144,6 +153,9 @@ pub fn default_registry() -> BlockRegistry {
         .register(SkillListingHandler)
         .register(PlanModeHandler)
         .register(FileSnapshotHandler)
+        .register(PrLinkHandler)
+        .register(AgentNameHandler)
+        .register(TaskReminderHandler)
         .register(MetaBlockHandler) // 必须最后
 }
 

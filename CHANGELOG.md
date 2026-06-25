@@ -10,6 +10,23 @@
 - 拖拽导入 JSONL
 - VS Code 路径跳转
 
+## [0.3.2] - 2026-06-25
+
+### 新增
+
+- ✨ **3 个新 BlockHandler**（响应 issue #11/#12/#13）：
+  - `pr-link` → `pr_link`:显示 PR 链接卡片,可点击跳转
+  - `agent-name` → `agent_name`:显示当前 agent 标识
+  - `task_reminder` → `task_reminder`:显示任务列表快照（pending/inProgress/completed 计数 + 详情展开）
+
+### 修复
+
+- 🐛 关 issue #6/#7/#9/#10:这 4 种 block type 已在 v0.3.1 加专属 handler,UI 不再显示 `[kind]`
+
+### 测试
+
+- 🧪 Rust 单元测试 85 → 91 (+6)
+
 ## [0.3.1] - 2026-06-24
 
 ### 新增
@@ -209,7 +226,8 @@
 - 📝 docs/CROSS_PLATFORM_BUILD.md — 跨平台构建指南
 - 📝 docs/TROUBLESHOOTING.md — 已知问题与解决方案
 
-[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.6...v0.3.0
 [0.2.6]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.2.5...v0.2.6
