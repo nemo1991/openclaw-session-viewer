@@ -192,6 +192,64 @@ function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
         </div>
       );
     }
+    case "pr_link": {
+      const prNum = Number(block.prNumber ?? 0);
+      const repo = String(block.prRepository ?? "");
+      const url = String(block.prUrl ?? "");
+      const label = repo ? `${repo}#${prNum}` : `PR #${prNum}`;
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">🔗 pr_link</span>
+          {url ? (
+            <a className="meta-link" href={url} target="_blank" rel="noreferrer">
+              {label}
+            </a>
+          ) : (
+            <span>{label}</span>
+          )}
+        </div>
+      );
+    }
+    case "agent_name": {
+      const name = String(block.agentName ?? "");
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">🏷 agent_name</span>
+          <span>{name || "(未命名)"}</span>
+        </div>
+      );
+    }
+    case "task_reminder": {
+      const itemCount = Number(block.itemCount ?? 0);
+      const pending = Number(block.pendingCount ?? 0);
+      const inProgress = Number(block.inProgressCount ?? 0);
+      const completed = Number(block.completedCount ?? 0);
+      const content = (block.content as Array<Record<string, unknown>>) ?? [];
+      return (
+        <div className="block-meta-info">
+          <span className="meta-kind-badge">📝 task_reminder</span>
+          <span>
+            {pending} 待办 · {inProgress} 进行 · {completed} 完成
+          </span>
+          <details className="meta-details">
+            <summary>{itemCount} 个 task</summary>
+            <div className="meta-task-list">
+              {content.map((t, i) => {
+                const status = String(t.status ?? "pending");
+                const subj = String(t.subject ?? `Task ${i + 1}`);
+                const id = String(t.id ?? "");
+                return (
+                  <div key={id || i} className={`meta-task-row meta-task-${status}`}>
+                    <span className="meta-task-status">{status}</span>
+                    <span className="meta-task-subject">{subj}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        </div>
+      );
+    }
     default:
       // 未知 kind:使用 UnknownBlockCard
       return <UnknownBlockCard block={block} />;
