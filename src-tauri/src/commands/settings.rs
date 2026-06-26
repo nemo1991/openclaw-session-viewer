@@ -42,6 +42,9 @@ pub struct AppSettings {
     /// v0.2.5: 用户自定义的额外数据根目录
     #[serde(default)]
     pub custom_roots: Vec<CustomRootConfig>,
+    /// v0.4.2: 时区。"auto" 或 IANA 名(Asia/Shanghai 等)。None = auto
+    #[serde(default)]
+    pub timezone: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -57,6 +60,7 @@ impl Default for AppSettings {
             ui_language: "zh-CN".to_string(),
             default_export_dir: None,
             custom_roots: vec![],
+            timezone: None,
         }
     }
 }

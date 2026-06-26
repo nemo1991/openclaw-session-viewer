@@ -8,6 +8,7 @@ import { useSessionsStore } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
 import { useKey } from "../lib/keymap";
 import { formatBytes, formatTime } from "../lib/format";
+import { useFormatOpts } from "../hooks/useFormatOpts";
 import { SearchPalette } from "../views/SearchPalette";
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionsRoute.css";
@@ -28,6 +29,7 @@ interface Group {
 export default function SessionsRoute() {
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const fmtOpts = useFormatOpts();
   const {
     sessions,
     loading,
@@ -286,7 +288,7 @@ export default function SessionsRoute() {
                   </div>
                   <div className="session-card-meta">
                     <span title={s.lastMessageAt ?? s.lastTimestamp ?? ""}>
-                      {formatTime(s.lastMessageAt ?? s.lastTimestamp)}
+                      {formatTime(s.lastMessageAt ?? s.lastTimestamp, fmtOpts)}
                     </span>
                     <span>·</span>
                     <span>{formatBytes(s.sizeBytes)}</span>

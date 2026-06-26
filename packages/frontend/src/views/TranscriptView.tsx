@@ -10,6 +10,8 @@ import {
   type FilterPreset,
 } from "../state/transcriptFilterStore";
 import { MessageBubble } from "../components/MessageBubble";
+import { isoToLocalInputInTz, formatLocalInputToIsoInTz } from "../lib/format";
+import { useFormatOpts } from "../hooks/useFormatOpts";
 import "./TranscriptView.css";
 
 export function TranscriptView() {
@@ -147,6 +149,7 @@ export function TranscriptView() {
  */
 function FilterBar() {
   const { t } = useTranslation();
+  const { tz } = useFormatOpts();
   const preset = useTranscriptFilterStore((s) => s.preset);
   const from = useTranscriptFilterStore((s) => s.from);
   const to = useTranscriptFilterStore((s) => s.to);
@@ -161,26 +164,13 @@ function FilterBar() {
     { value: "7d", label: t("detail.filter.last7d") },
   ];
 
-  // ISO 8601 → datetime-local (YYYY-MM-DDTHH:mm)
-  const isoToLocal = (iso?: string): string => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return "";
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-
-  const localToIso = (local: string): string | undefined => {
-    if (!local) return undefined;
-    const d = new Date(local);
-    if (isNaN(d.getTime())) return undefined;
-    return d.toISOString();
-  };
-
+  // v0.4.2: naive datetime-local 字符串按选定 TZ 解析,不再依赖浏览器 OS TZ
   const handleApply = () => {
+    const fromVal = (document.getElementById("filter-from") as HTMLInputElement)?.value;
+    const toVal = (document.getElementById("filter-to") as HTMLInputElement)?.value;
     setRange(
-      localToIso((document.getElementById("filter-from") as HTMLInputElement)?.value),
-      localToIso((document.getElementById("filter-to") as HTMLInputElement)?.value)
+      fromVal ? formatLocalInputToIsoInTz(fromVal, tz) : undefined,
+      toVal ? formatLocalInputToIsoInTz(toVal, tz) : undefined
     );
   };
 
@@ -206,16 +196,21 @@ function FilterBar() {
           <input
             id="filter-from"
             type="datetime-local"
-            defaultValue={isoToLocal(from)}
+            defaultValue={from ? isoToLocalInputInTz(from, tz) : ""}
             placeholder={t("detail.filter.from")}
+            key={`from-${tz}-${from ?? ""}`}
           />
           <span>~</span>
           <input
             id="filter-to"
             type="datetime-local"
-            defaultValue={isoToLocal(to)}
+            defaultValue={to ? isoToLocalInputInTz(to, tz) : ""}
             placeholder={t("detail.filter.to")}
+            key={`to-${tz}-${to ?? ""}`}
           />
+          <span className="filter-tz-label">
+            ({tz === "auto" ? Intl.DateTimeFormat().resolvedOptions().timeZone : tz})
+          </span>
           <button className="filter-apply-btn" onClick={handleApply}>
             {t("detail.filter.apply")}
           </button>

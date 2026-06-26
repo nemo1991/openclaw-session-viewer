@@ -104,6 +104,15 @@
   font-family: var(--font-mono);
 }
 
+/* v0.4.2: TZ 标签 */
+.filter-tz-label {
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  padding: 0 4px;
+  align-self: center;
+}
+
 .filter-apply-btn,
 .filter-clear-btn {
   padding: 2px 8px;

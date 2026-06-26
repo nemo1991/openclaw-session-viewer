@@ -9,6 +9,7 @@ import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { Markdown } from "./Markdown";
 import type { TranscriptEntryOut, NormalizedBlockFE } from "../lib/api";
 import { formatTimeExact } from "../lib/format";
+import { useFormatOpts } from "../hooks/useFormatOpts";
 import "./MessageBubble.css";
 
 interface Props {
@@ -17,6 +18,7 @@ interface Props {
 
 export function MessageBubble({ entry }: Props) {
   const { t } = useTranslation();
+  const fmtOpts = useFormatOpts();
   const msg = entry.normalized;
   const role = msg.role;
   const roleLabel = getRoleLabel(role, t);
@@ -69,8 +71,8 @@ export function MessageBubble({ entry }: Props) {
           <span className="msg-role">{roleLabel}</span>
           {msg.model && <span className="msg-model">{msg.model}</span>}
           {msg.timestamp && (
-            <span className="msg-time" title={formatTimeExact(msg.timestamp)}>
-              {formatTimeExact(msg.timestamp)}
+            <span className="msg-time" title={formatTimeExact(msg.timestamp, fmtOpts)}>
+              {formatTimeExact(msg.timestamp, fmtOpts)}
             </span>
           )}
         </div>

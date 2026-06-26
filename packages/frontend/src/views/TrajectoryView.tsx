@@ -16,6 +16,7 @@ import {
 import { useTrajectoryStore } from "../state/trajectoryStore";
 import type { TrajectoryEventFE } from "../lib/api";
 import { formatTimeExact } from "../lib/format";
+import { useFormatOpts } from "../hooks/useFormatOpts";
 import "./TrajectoryView.css";
 
 interface Props {
@@ -24,6 +25,7 @@ interface Props {
 
 export function TrajectoryView({ sessionPath }: Props) {
   const { t } = useTranslation();
+  const fmtOpts = useFormatOpts();
   const { events, loading, totalCount, loadedCount, error, start, reset } = useTrajectoryStore();
 
   useEffect(() => {
@@ -51,7 +53,8 @@ export function TrajectoryView({ sessionPath }: Props) {
         <span className="trajectory-title">{t("trajectory.title")}</span>
         {summary.startedAt && summary.endedAt && (
           <span className="trajectory-duration">
-            {formatTimeExact(summary.startedAt)} → {formatTimeExact(summary.endedAt)}
+            {formatTimeExact(summary.startedAt, fmtOpts)} →{" "}
+            {formatTimeExact(summary.endedAt, fmtOpts)}
           </span>
         )}
         <span className="trajectory-counter">
@@ -113,6 +116,7 @@ function buildSummary(events: TrajectoryEventFE[]): Summary {
 
 function TrajectoryEventCard({ event }: { event: TrajectoryEventFE }) {
   const { t } = useTranslation();
+  const fmtOpts = useFormatOpts();
   const meta = cardMeta(event.eventType);
   const data = (event.data ?? {}) as Record<string, unknown>;
   const Icon = meta.icon;
@@ -124,7 +128,7 @@ function TrajectoryEventCard({ event }: { event: TrajectoryEventFE }) {
         <span className={`trajectory-event-badge badge-${meta.tone}`}>
           <Icon size={12} /> {t(`trajectory.events.${meta.i18nKey}`)}
         </span>
-        <span className="trajectory-event-time">{formatTimeExact(event.ts)}</span>
+        <span className="trajectory-event-time">{formatTimeExact(event.ts, fmtOpts)}</span>
         <span className="trajectory-event-seq">#{event.seq}</span>
       </div>
       {meta.summary(data) && <div className="trajectory-event-summary">{meta.summary(data)}</div>}
