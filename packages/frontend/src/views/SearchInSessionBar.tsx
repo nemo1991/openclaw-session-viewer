@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
 
@@ -38,16 +38,23 @@ export function SearchInSessionBar({ onJump }: Props) {
   const filterActive = isFilterActive(filter);
 
   // 搜索只在筛选后的范围跑,这样 search hit 不会指向被过滤掉的 entry
-  const searchableEntries = filterActive
-    ? entries.filter((e) => {
-        const ts = e.normalized.timestamp;
-        if (!ts) return true;
-        const ms = new Date(ts).getTime();
-        const fromMs = filter.from ? new Date(filter.from).getTime() : -Infinity;
-        const toMs = filter.to ? new Date(filter.to).getTime() : Infinity;
-        return isNaN(ms) || (ms >= fromMs && ms <= toMs);
-      })
-    : entries;
+  // v0.4.3 fix: 必须 useMemo, 否则 filter 返回新数组引用,
+  // 下面 useEffect([..., searchableEntries]) 每次 render 都触发 search(),
+  // 而 search() 会 reset currentHitIndex = 0, 导致点 row 后跳到 hits[0] 而非点中的 i
+  const searchableEntries = useMemo(
+    () =>
+      filterActive
+        ? entries.filter((e) => {
+            const ts = e.normalized.timestamp;
+            if (!ts) return true;
+            const ms = new Date(ts).getTime();
+            const fromMs = filter.from ? new Date(filter.from).getTime() : -Infinity;
+            const toMs = filter.to ? new Date(filter.to).getTime() : Infinity;
+            return isNaN(ms) || (ms >= fromMs && ms <= toMs);
+          })
+        : entries,
+    [entries, filterActive, filter.from, filter.to]
+  );
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
