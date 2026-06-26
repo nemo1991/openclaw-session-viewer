@@ -167,7 +167,7 @@ pnpm tauri build
 
 ### 首次使用
 
-1. 启动应用,会话列表自动加载 `~/.claude/projects/` 下的所有会话
+1. 启动应用,会话列表默认加载 `~/.openclaw/agents/` 下的所有会话 (项目起点);可在左侧栏切到 `Claude Code` 查看 `~/.claude/projects/` 会话
 2. 点击任意会话卡片查看完整转录
 3. 按 `Cmd+K` (macOS) 或 `Ctrl+K` (Windows/Linux) 全局搜索
 4. 按 `Cmd+F` 在当前会话内搜索
@@ -407,7 +407,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 🗺 路线图
 
-### 已完成 (v0.1.0 → v0.4.1)
+### 已完成 (v0.1.0 → v0.4.2)
 
 - [x] 基础会话列表 + 转录查看
 - [x] 全局/会话内搜索
@@ -426,12 +426,19 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] OpenClaw Trajectory 支持 (8 种事件 + 流式查看) (v0.4.0)
 - [x] 详情页深色主题 meta 块修复 + 子代理字段折叠 (v0.4.1)
 - [x] 列表默认进 Claude (移除"全部" radio) (v0.4.1)
-- [x] 单元测试 (135 个)
+- [x] Edit 工具 line-level diff 视图 (v0.4.2)
+- [x] Bash/Read/Task/result 默认展开 + 优化展示 (v0.4.2)
+- [x] 时区设置 (Settings 下拉,7 个常用 IANA + auto) (v0.4.2)
+- [x] 会话列表默认改回 OpenClaw (v0.4.2)
+- [x] 单元测试 (135+ 个)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [x] docs-only 推送跳过 CI (paths-ignore)
 
-### 计划中 (v0.4.1+)
+### 计划中 (v0.4.3+)
 
+- [ ] **MultiEdit 工具的专属 diff** — 多文件编辑 diff
+- [ ] **ToolResultCard spillover** — 真正拉全内容
+- [ ] **时区下拉加 Custom IANA name 输入**
 - [ ] **会话对比** — diff 两个会话的工具调用差异
 - [ ] **拖拽导入** — 拖入 JSONL 文件直接打开
 - [ ] **VS Code 集成** — 点击路径跳转到编辑器
