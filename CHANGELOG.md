@@ -4,6 +4,26 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-06-25
+
+### 修复
+
+- 🐛 **会话内搜索 Next 按钮不滚动 + 加结果下拉列表** (`f5d54cf`)：原 useEffect 调 `jumpToEntry` 走 `scrollIntoView` 改 window viewport，但目标 entry 多半在虚拟列表的未渲染区(overscan 10)，`querySelector` 返回 null 静默失败。`TranscriptView` 加 `useEffect` 调 `virtualizer.scrollToIndex(localIdx, { align: "center" })` 把目标 entry 滚到可视区中央，让 DOM 就绪。
+- 🐛 **高亮 CSS selector 错配** (`f5d54cf`)：`SearchInSessionBar.css` 写的是 `.transcript-view .msg.search-hit-current`，但 `TranscriptView` 把 className 加在**外层 wrapper div** 而不是内层 `.msg`，永远匹配不上。改成 `.transcript-view [data-entry-index].search-hit-current`。
+- 🐛 **n/p 键缺失** (`f5d54cf`)：i18n 字符串和按钮 tooltip 都写 `(n)`/`(p)`，但只绑了 `enter` / `shift+enter`。补 `useKey("n")` / `useKey("p")`，跟其它键统一。
+- ✨ **结果下拉列表** (`f5d54cf`)：搜索框下加 `position: absolute` dropdown，前 100 条 + "…还有 N 条"；每行 `#entryIndex · role · 时间 + snippet`，当前命中行加 `.is-active`；row click 调新 store action `setCurrentHitIndex(i)` 跳到该 entry；row mouseEnter 也 setCurrentHitIndex(悬停预览)；键盘 `↑/↓` 在 query 非空时 intercept 切 hit(空 query 让出原生光标行为)。
+- 🐛 **下拉 dropdown 飘到屏幕外** (`b2dba36`)：`.search-in-session-bar-wrapper` CSS 类漏写 → 没有 `position: relative`，`.search-results-dropdown` 的 `position: absolute; top: 100%` 锚定到错误祖先，飘屏。
+- 🐛 **时间筛选下点 row 跳到 hits[0] 而非点击的 i** (`b2dba36` / `379a135`)：`SearchInSessionBar` 里 row 渲染用了 `entries.find((e) => e.index === hit.entryIndex)`(全量)，跟 TranscriptView 渲染的 `filteredEntries` 不一致；filter 模式下 row 显示的 entry 可能不在 filter 范围，filter 范围变化时 ref 不稳定 → 真正根因是 `searchableEntries` 没用 `useMemo` 包装，`entries.filter()` 每次 render 返回新数组，触发 `useEffect([open, debouncedQuery, searchableEntries])` 每帧跑 `search()`，而 `search()` 内部会重置 `currentHitIndex = 0`。修：`searchableEntries` 用 `useMemo` 包，row 查找改用 `searchableEntries`。
+- 🐛 **点 row 后 dropdown 不关** (`2dc04ed`)：onClick 调 `setQuery("")` → `showDropdown = query.length > 0` 自动折叠，bar 仍在可继续搜。
+- 🐛 **倒序 + filter 无限下拉** (`2dc04ed`)：原 auto-scroll useEffect 有 `!sortAsc` 和 `filterActive` 早 return，倒序 + filter 时新 entry 加载到顶部(倒序时新内容在顶)但用户 scroll 位置指向"旧底部"，virtualizer 总尺寸持续增长，体感"无限下拉"。改成"用户在底部(50px 容差)时跟随滚到底"统一逻辑，倒序 + filter 也能正常停止。
+- 🐛 **点 row 没正确定位** (`8f1c6f1`)：双跳转冲突 — `SearchInSessionBar` useEffect 调 `onJump → scrollIntoView` 改 window viewport，同时 `TranscriptView` useEffect 调 `virtualizer.scrollToIndex` 改 transcript-scroll 内部 scrollTop，两个改不同容器，`scrollIntoView` 覆盖 `scrollToIndex` 结果。修：`SearchInSessionBar` 不再调 `onJump`，只靠 `TranscriptView` 的 `scrollToIndex` 唯一负责滚动。`?line=N` URL 跳转仍走 `jumpToEntry` 不受影响。
+- 🐛 **agent-name meta block 不识别** (`8f1c6f1`)：`MetaBlockRenderer` case 是 `"agent_name"`(下划线)但 Claude JSONL `type` 是 `"agent-name"`(连字符)，switch 不匹配走 `UnknownBlockCard` 兜底；`isKnownMetaLabel` 也没列 `"agent-name"`。两个地方都加 `"agent-name"` 双匹配。
+
+### 测试
+
+- 🧪 Rust 单元测试 94 个（不变）
+- 🧪 TypeScript 测试 41 → 51（不变，v0.4.3 全是 UI 修复,无新增单测）
+
 ## [0.4.2] - 2026-06-25
 
 ### 新增
