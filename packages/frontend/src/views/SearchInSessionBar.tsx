@@ -74,6 +74,15 @@ export function SearchInSessionBar({ onJump: _onJump }: Props) {
   const currentHit =
     currentHitIndex >= 0 && currentHitIndex < hits.length ? hits[currentHitIndex] : null;
 
+  // ⚠️ 所有 hooks 必须在 early return 之前 — Rules of Hooks
+  // v0.4.5 bug fix:useMemo 之前在 if (!open) return null 之后,导致
+  // open:false → true 切换时 React 检测到 hook 数量变化,抛
+  // "Rendered more hooks than during the previous render",
+  // 整个 Route 子树被卸载 → 详情页"界面变空"。
+  const showDropdown = query.length > 0;
+  const visibleHits = useMemo(() => hits.slice(0, MAX_VISIBLE_HITS), [hits]);
+  const moreCount = hits.length - visibleHits.length;
+
   // v0.4.3: 键位 — n/p/Enter/Shift+Enter/↑/↓
   useKey("escape", () => hide(), [open]);
   useKey("enter", () => next(), [open]);
@@ -96,10 +105,6 @@ export function SearchInSessionBar({ onJump: _onJump }: Props) {
   );
 
   if (!open) return null;
-
-  const showDropdown = query.length > 0;
-  const visibleHits = useMemo(() => hits.slice(0, MAX_VISIBLE_HITS), [hits]);
-  const moreCount = hits.length - visibleHits.length;
 
   return (
     <div className="search-in-session-bar-wrapper">
