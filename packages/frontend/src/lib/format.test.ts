@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  formatBytes,
+  formatNumber,
+  formatTime,
   formatTimeExact,
   formatTimeShort,
   resolveTimezone,
@@ -96,5 +99,109 @@ describe("isoToLocalInputInTz(反向)", () => {
 
   it("America/New_York EDT 显示 10:00", () => {
     expect(isoToLocalInputInTz(iso, "America/New_York")).toBe("2026-06-25T10:00");
+  });
+
+  it("undefined / 空字符串 → ''", () => {
+    expect(isoToLocalInputInTz(undefined, "UTC")).toBe("");
+    expect(isoToLocalInputInTz("", "UTC")).toBe("");
+  });
+
+  it("无效 ISO → ''", () => {
+    expect(isoToLocalInputInTz("not-a-date", "UTC")).toBe("");
+  });
+});
+
+describe("formatBytes", () => {
+  it("0 → '0 B'", () => {
+    expect(formatBytes(0)).toBe("0 B");
+  });
+
+  it("< 1024 → B 单位", () => {
+    expect(formatBytes(100)).toBe("100 B");
+    expect(formatBytes(1023)).toBe("1023 B");
+  });
+
+  it("< 1MB → KB (1 位小数)", () => {
+    expect(formatBytes(1024)).toBe("1.0 KB");
+    expect(formatBytes(1536)).toBe("1.5 KB");
+  });
+
+  it("< 1GB → MB", () => {
+    expect(formatBytes(1024 * 1024)).toBe("1.0 MB");
+    expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
+  });
+
+  it(">= 1GB → GB", () => {
+    expect(formatBytes(1024 * 1024 * 1024)).toBe("1.0 GB");
+    expect(formatBytes(2.5 * 1024 * 1024 * 1024)).toBe("2.5 GB");
+  });
+
+  it("边界:1023 vs 1024", () => {
+    expect(formatBytes(1023)).toBe("1023 B");
+    expect(formatBytes(1024)).toBe("1.0 KB");
+  });
+});
+
+describe("formatNumber", () => {
+  it("< 1000 → 原样", () => {
+    expect(formatNumber(0)).toBe("0");
+    expect(formatNumber(42)).toBe("42");
+    expect(formatNumber(999)).toBe("999");
+  });
+
+  it("< 1M → k (1 位小数)", () => {
+    expect(formatNumber(1000)).toBe("1.0k");
+    expect(formatNumber(1500)).toBe("1.5k");
+    expect(formatNumber(999999)).toBe("1000.0k");
+  });
+
+  it(">= 1M → M", () => {
+    expect(formatNumber(1_000_000)).toBe("1.0M");
+    expect(formatNumber(2_500_000)).toBe("2.5M");
+  });
+});
+
+describe("formatTime (相对时间)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T14:00:00Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("undefined → ''", () => {
+    expect(formatTime(undefined)).toBe("");
+  });
+
+  it("空字符串 → ''", () => {
+    expect(formatTime("")).toBe("");
+  });
+
+  it("无效 ISO → ''", () => {
+    expect(formatTime("not-a-date")).toBe("");
+  });
+
+  it("< 60s → '刚刚'", () => {
+    expect(formatTime("2026-06-25T13:59:30Z")).toBe("刚刚");
+  });
+
+  it("< 1h → 'X 分钟前'", () => {
+    expect(formatTime("2026-06-25T13:55:00Z")).toBe("5 分钟前");
+  });
+
+  it("< 24h → 'X 小时前'", () => {
+    expect(formatTime("2026-06-25T10:00:00Z")).toBe("4 小时前");
+  });
+
+  it("< 7d → 'X 天前'", () => {
+    expect(formatTime("2026-06-23T14:00:00Z")).toBe("2 天前");
+  });
+
+  it(">= 7d → 走 fallback 绝对日期", () => {
+    const out = formatTime("2026-06-01T14:00:00Z", { tz: "UTC" });
+    // 期望:不是 "X 天前" 形式,而是带年份的 zh-CN 格式
+    expect(out).not.toMatch(/天前/);
+    expect(out.length).toBeGreaterThan(0);
   });
 });

@@ -30,3 +30,5 @@ function matchKey(e: KeyboardEvent, pattern: string): boolean {
   if (main && e.key.toLowerCase() !== main) return false;
   return true;
 }
+
+export { matchKey };
