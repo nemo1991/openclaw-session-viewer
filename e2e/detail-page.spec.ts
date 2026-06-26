@@ -28,12 +28,13 @@ test.describe("会话详情页", () => {
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(500);
 
-    // 过滤已知 Tauri 警告
+    // 过滤已知 Tauri 警告(测试环境没 Tauri runtime)
     const realErrors = errors.filter(
       (e) =>
         !e.includes("__TAURI__") &&
         !e.includes("tauri") &&
-        !e.includes("window.__TAURI_INTERNALS__")
+        !e.includes("window.__TAURI_INTERNALS__") &&
+        !e.includes("transformCallback")
     );
     expect(realErrors).toEqual([]);
   });
