@@ -38,7 +38,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     liveOnly: false,
     hasSubagents: false,
     last7Days: false,
-    source: "claude",
+    source: "openclaw",
     agentId: undefined,
   },
   load: async () => {
