@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-06-25
+
+### 变更
+
+- 🎨 **重新设计 app icon** — 1024×1024 SVG 源 (`icons/icon-source.svg`):
+  - 圆角矩形背景 (macOS 标准 22%) + 蓝紫→青色对角渐变 (#5B6BFF → #3F8FFF → #00D4FF)
+  - 几何化 C 字母: 270° 圆弧 + 90° 开口朝右, 130px 粗笔画, 圆头端点
+  - 内圈一抹淡青色高光, 暗示 "session 流动"
+  - 左上柔光椭圆高光 + 细阴影 (feDropShadow dy=8, 22% alpha)
+- 🔧 **补 Linux 64×64 尺寸** — Tauri 2 推荐 launcher 64px, 加进 `tauri.conf.json` bundle.icon 数组
+- 🛠 **icon 流水线脚本** — `scripts/build-icon.mjs` (SVG → 1024×1024 PNG, sharp + density 300) + `pnpm build:icons` 一行跑全套 (`build:icon` + `tauri icon`)
+- 📦 **devDep `sharp` ^0.35.2** — 跨平台 SVG→PNG 转换, 只 build icon 时用, production bundle 不影响
+
+### 平台覆盖
+
+- **macOS**: `icon.icns` 318KB (含 16/32/64/128/256/512/1024 多尺寸) — 自动 squircle mask
+- **Windows**: `icon.ico` 6 icons (16/32/48/64/128/256) — 方形 tile
+- **Linux**: 32/64/128/128@2x(256)/512 PNG — 透明背景, 跟系统 icon theme 配合
+- **iOS / Android / Windows Store**: 完整 store icons 也重新生成
+
+### 测试
+
+- 🧪 Rust 单元测试 94 个（不变）
+- 🧪 TypeScript 测试 24 个（不变）
+
 ## [0.4.3] - 2026-06-25
 
 ### 修复

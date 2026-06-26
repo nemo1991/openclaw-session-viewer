@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 蓝紫 → 青色对角渐变 (右上 → 左下) -->
+    <linearGradient id="bg" x1="128" y1="128" x2="896" y2="896" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5B6BFF"/>
+      <stop offset="0.55" stop-color="#3F8FFF"/>
+      <stop offset="1" stop-color="#00D4FF"/>
+    </linearGradient>
+
+    <!-- C 字母的细阴影 -->
+    <filter id="cshadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#0a1a3a" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <!-- 圆角矩形背景 (macOS 标准 22% 圆角) -->
+  <rect width="1024" height="1024" rx="225" ry="225" fill="url(#bg)"/>
+
+  <!-- 左上高光 -->
+  <ellipse cx="280" cy="180" rx="320" ry="120" fill="#ffffff" opacity="0.10"/>
+
+  <!--
+    C 字母: 270° 圆弧, 90° 开口朝右
+    - 圆心 (512, 512), 半径 320, 笔画 130
+    - 用 circle + stroke-dasharray 控制缺口(避免 arc 命令歧义)
+    - 圆周 2πr = 2011, 270° = 1508, 90° 缺口 = 503
+    - 圆默认起点 (右, 3 点钟方向), 沿逆时针画 → 缺口在底部
+    - rotate(90) 让缺口旋转到右边
+  -->
+  <g transform="rotate(90 512 512)">
+    <circle cx="512" cy="512" r="320"
+            fill="none"
+            stroke="#ffffff"
+            stroke-width="130"
+            stroke-linecap="round"
+            stroke-dasharray="1508 503"
+            filter="url(#cshadow)"/>
+    <!-- 字母内侧一抹更亮青色, 暗示 "session 流动" -->
+    <circle cx="512" cy="512" r="320"
+            fill="none"
+            stroke="#a8eaff"
+            stroke-width="40"
+            stroke-linecap="round"
+            stroke-dasharray="1508 503"
+            opacity="0.20"/>
+  </g>
+</svg>
