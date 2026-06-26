@@ -158,6 +158,9 @@ export function SearchInSessionBar({ onJump }: Props) {
                 className={`search-result-row ${i === currentHitIndex ? "is-active" : ""}`}
                 onClick={() => {
                   setCurrentHitIndex(i);
+                  // v0.4.3 fix: 点击后清空 query, dropdown 自动折叠, 不挡 transcript
+                  // bar 仍在, 用户可继续搜或重新打开
+                  setQuery("");
                   inputRef.current?.focus();
                 }}
                 onMouseEnter={() => setCurrentHitIndex(i)}
