@@ -11,6 +11,7 @@ import { TranscriptView } from "../views/TranscriptView";
 import { SearchInSessionBar } from "../views/SearchInSessionBar";
 import { useKey } from "../lib/keymap";
 import { formatBytes, formatNumber, formatTimeExact } from "../lib/format";
+import { useFormatOpts } from "../hooks/useFormatOpts";
 import { apiRevealInFinder } from "../lib/api";
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionDetailRoute.css";
@@ -20,6 +21,7 @@ export default function SessionDetailRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
+  const fmtOpts = useFormatOpts();
   const { start, entries, loading, totalCount, error, path } = useTranscriptStore();
   const { livePids } = useLivePids();
   const showSearchBar = useSearchInSessionStore((s) => s.show);
@@ -157,8 +159,8 @@ export default function SessionDetailRoute() {
             {meta.firstTimestamp && (
               <>
                 <span>·</span>
-                <span title={formatTimeExact(meta.firstTimestamp)}>
-                  {formatTimeExact(meta.firstTimestamp)}
+                <span title={formatTimeExact(meta.firstTimestamp, fmtOpts)}>
+                  {formatTimeExact(meta.firstTimestamp, fmtOpts)}
                 </span>
               </>
             )}

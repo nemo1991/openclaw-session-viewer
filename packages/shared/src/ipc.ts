@@ -79,6 +79,11 @@ export interface AppSettings {
   defaultExportDir?: string;
   /** v0.2.5: 用户自定义的额外数据根目录 */
   customRoots?: CustomRootConfig[];
+  /**
+   * v0.4.2: 时区设置。"auto" = 跟随浏览器(Intl 自动检测);
+   * 具体 IANA 名(如 "Asia/Shanghai" / "America/New_York")则用该 TZ 显示。
+   */
+  timezone?: string;
 }
 
 /** 分析范围 */
@@ -154,4 +159,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "dark",
   uiLanguage: "zh-CN",
   customRoots: [],
+  timezone: "auto",
 };

@@ -140,6 +140,8 @@ const zhCN = {
     themeLight: "浅色",
     themeSystem: "跟随系统",
     language: "界面语言",
+    timezone: "时区",
+    timezoneAuto: "自动 ({{tz}})",
     dataSources: {
       title: "数据源",
       hint: "默认读取 ~/.claude 和 ~/.openclaw。添加自定义根目录扫描其它位置(如 ~/Downloads/.openclaw)。保存后立即生效,无需重启。",

@@ -167,6 +167,26 @@ export default function SettingsRoute() {
               <option value="en-US">English</option>
             </select>
           </div>
+          {/* v0.4.2: 时区设置 */}
+          <div className="field">
+            <label>{t("settings.timezone")}</label>
+            <select
+              value={settings.timezone ?? "auto"}
+              onChange={(e) => update({ timezone: e.target.value })}
+            >
+              <option value="auto">
+                {t("settings.timezoneAuto", {
+                  tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                })}
+              </option>
+              <option value="UTC">UTC</option>
+              <option value="Asia/Shanghai">Asia/Shanghai (UTC+8)</option>
+              <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
+              <option value="Europe/London">Europe/London</option>
+              <option value="America/New_York">America/New_York</option>
+              <option value="America/Los_Angeles">America/Los_Angeles</option>
+            </select>
+          </div>
         </section>
 
         {/* v0.2.5: 数据源管理 */}
