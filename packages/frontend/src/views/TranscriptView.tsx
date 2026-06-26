@@ -52,19 +52,22 @@ export function TranscriptView() {
   });
 
   useEffect(() => {
-    // 自动滚到底部:仅在正序、无搜索、加载完成、无筛选时
+    // v0.4.3 fix: 倒序 + filter + 流式加载时新 entry 加到顶部, 用户原 scroll 位置
+    // 持续指向"不存在的底部", virtualizer 总尺寸不断增长, 体感"无限下拉"。
+    // 改为: 不管 sortAsc / filterActive, 只要用户已经在底部, 新 entry 加载就跟到底。
     if (currentHit) return;
-    if (!sortAsc) return;
-    if (filterActive) return;
-    const last = virtualizer.getVirtualItems().at(-1);
-    if (last && parentRef.current) {
-      const items = virtualizer.getVirtualItems();
-      const lastIdx = items[items.length - 1]?.index ?? 0;
-      if (lastIdx >= sortedEntries.length - 5) {
+    if (!parentRef.current) return;
+    const el = parentRef.current;
+    // 用户在底部 50px 范围内才跟随
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    if (!atBottom) return;
+    // rAF 等 React 把新 entry 渲染到 DOM 高度更新后再滚
+    requestAnimationFrame(() => {
+      if (parentRef.current) {
         parentRef.current.scrollTop = parentRef.current.scrollHeight;
       }
-    }
-  }, [entries.length, virtualizer, currentHit, sortAsc, filterActive, sortedEntries.length]);
+    });
+  }, [entries.length, currentHit]);
 
   // v0.4.3: 当前搜索命中变化时,把目标 entry 滚到虚拟列表可视区中央
   // (否则 jumpToEntry 的 querySelector 找不到 DOM,定位失败)
