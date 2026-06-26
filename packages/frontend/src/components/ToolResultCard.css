@@ -67,6 +67,38 @@
   word-break: break-word;
 }
 
+/* v0.4.2: shiki 高亮容器 */
+.tool-result-shiki {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  padding: 4px 0;
+  overflow-x: auto;
+}
+.tool-result-shiki pre {
+  margin: 0;
+  padding: 0 8px;
+  background: transparent !important;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-result-content {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-bg);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
 .tool-result-more {
   margin-top: 8px;
   font-size: 11px;

@@ -61,3 +61,209 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* v0.4.2: badge 通用样式 */
+.tool-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+.tool-badge-warn {
+  color: var(--color-warning);
+  border-color: var(--color-warning);
+}
+.tool-badge-info {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* v0.4.2: Bash body */
+.tool-body-bash {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-bash-description {
+  font-style: italic;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.tool-bash-command {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+/* v0.4.2: Read body */
+.tool-body-read {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tool-read-file-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  word-break: break-all;
+}
+.tool-read-range {
+  font-family: var(--font-mono);
+}
+
+/* v0.4.2: Task body */
+.tool-body-task {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-task-headline {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.tool-task-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.tool-task-label {
+  color: var(--color-text-muted);
+}
+.tool-task-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--color-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.tool-task-status {
+  display: inline-block;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 10px;
+  align-self: flex-start;
+}
+.tool-task-status-pending {
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
+}
+.tool-task-status-in_progress {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+.tool-task-status-completed {
+  background: var(--color-success);
+  color: #fff;
+}
+.tool-task-prompt,
+.tool-task-content {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 11px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* v0.4.2: Edit diff 视图 */
+.tool-body-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tool-edit-file-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+.tool-diff-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+.tool-diff-stat-add {
+  color: var(--color-success);
+  font-weight: 600;
+}
+.tool-diff-stat-del {
+  color: var(--color-error);
+  font-weight: 600;
+}
+.tool-diff-stat-eq {
+  color: var(--color-text-subtle);
+}
+.tool-diff-table {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.tool-diff-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 1px 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tool-diff-marker {
+  flex-shrink: 0;
+  width: 12px;
+  text-align: center;
+  user-select: none;
+  color: var(--color-text-subtle);
+}
+.tool-diff-text {
+  flex: 1;
+}
+.tool-diff-row-add {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-text);
+}
+.tool-diff-row-add .tool-diff-marker {
+  color: var(--color-success);
+  font-weight: 600;
+}
+.tool-diff-row-del {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--color-text);
+  text-decoration: line-through;
+  text-decoration-color: rgba(248, 81, 73, 0.5);
+}
+.tool-diff-row-del .tool-diff-marker {
+  color: var(--color-error);
+  font-weight: 600;
+}
+.tool-diff-row-eq {
+  color: var(--color-text-muted);
+}
+.tool-body-warning {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--color-warning);
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-warning);
+}
