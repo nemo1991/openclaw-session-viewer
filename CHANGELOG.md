@@ -2,6 +2,29 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## 版本总览
+
+| 版本    | 日期       | 主题                                                       | Rust 测试 | TS 测试 | 合计 |
+| ------- | ---------- | ---------------------------------------------------------- | --------: | ------: | ---: |
+| [0.4.4] | 2026-06-25 | 重新设计 app icon (渐变 + 几何 C + 平台 mask)              |        94 |      65 |  159 |
+| [0.4.3] | 2026-06-25 | 会话内搜索下拉 + 6 个 bug 修复                             |        94 |      65 |  159 |
+| [0.4.2] | 2026-06-25 | Edit diff / 工具默认展开 / 时区设置 / 默认 OpenClaw        |        94 |      65 |  159 |
+| [0.4.1] | 2026-06-25 | 深色主题 meta 块 / 子代理字段折叠 / meta 7 种 block        |        94 |      41 |  135 |
+| [0.4.0] | 2026-06-25 | 时间段筛选 / 列表 UI 增强 / OpenClaw Trajectory            |        94 |      41 |  135 |
+| [0.3.2] | 2026-06-25 | 3 个新 BlockHandler (pr-link / agent-name / task_reminder) |        91 |      41 |  132 |
+| [0.3.1] | 2026-06-24 | 排序切换 + 4 个新 BlockHandler                             |        85 |      41 |  126 |
+| [0.3.0] | 2026-06-24 | BlockRegistry 重构 + UnknownBlockCard                      |        77 |      41 |  118 |
+| [0.2.6] | 2026-06-24 | Windows [object Object] / UNC 路径 / tool_call alias       |        53 |      41 |   94 |
+| [0.2.5] | 2026-06-24 | 自定义数据源根目录 + 热重载                                |        53 |      41 |   94 |
+| [0.2.4] | 2026-06-24 | 多 Agent UI 二级分组                                       |        41 |      41 |   82 |
+| [0.2.3] | 2026-06-23 | macOS 搜索崩溃 / trajectory 误列 / 双箭头                  |        35 |      41 |   76 |
+| [0.2.2] | 2026-06-23 | Windows MSI 改 ASCII productName                           |        35 |      41 |   76 |
+| [0.2.1] | 2026-06-23 | Windows / Linux release 修复                               |        35 |      41 |   76 |
+| [0.2.0] | 2026-06-23 | GitHub Actions 自动 release                                |        35 |      41 |   76 |
+| [0.1.0] | 2026-06-22 | 初次发布                                                   |        28 |      41 |   69 |
+
+> 测试数累计只增不减;Rust 单测在 [src-tauri/src/parser/blocks/](../src-tauri/src/parser/blocks/) 各 handler 文件里,TS 单测在 [packages/frontend/src/lib/](../packages/frontend/src/lib/) 跟 [packages/shared/src/](../packages/shared/src/)。
+
 ## [Unreleased]
 
 ## [0.4.4] - 2026-06-25
@@ -64,7 +87,7 @@
 ### 测试
 
 - 🧪 Rust 单元测试 94 个（不变）
-- 🧪 TypeScript 测试 41 → 51 (+10: diff 5 + format 5)
+- 🧪 TypeScript 测试 41 → 65 (+24: packages/frontend 新增 lib/diff 9 case + lib/format 15 case)
 
 ## [0.4.1] - 2026-06-25
 
@@ -313,7 +336,11 @@
 - 📝 docs/CROSS_PLATFORM_BUILD.md — 跨平台构建指南
 - 📝 docs/TROUBLESHOOTING.md — 已知问题与解决方案
 
-[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nemo1991/openclaw-session-viewer/compare/v0.3.0...v0.3.1
