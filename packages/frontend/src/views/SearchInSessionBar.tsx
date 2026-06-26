@@ -79,15 +79,13 @@ export function SearchInSessionBar({ onJump }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, debouncedQuery, searchableEntries]);
 
-  // 当前命中变化时跳转
+  // 当前命中 — 仅派生, 不在这里调 onJump
+  // v0.4.3 fix: 之前 useEffect 调 onJump 触发 jumpToEntry (scrollIntoView 影响 window viewport)
+  // 跟 TranscriptView 的 virtualizer.scrollToIndex (影响 transcript-scroll 内部 scrollTop) 冲突,
+  // scrollIntoView 覆盖 scrollToIndex 结果, 目标 entry 滚到错位置。
+  // 现在只靠 TranscriptView 的 scrollToIndex 负责滚动, 这里不重复。
   const currentHit =
     currentHitIndex >= 0 && currentHitIndex < hits.length ? hits[currentHitIndex] : null;
-  useEffect(() => {
-    if (currentHit && onJump) {
-      onJump(currentHit.entryIndex);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentHitIndex]);
 
   // v0.4.3: 键位 — n/p/Enter/Shift+Enter/↑/↓
   // 已有 n/p 缺失补上;↑/↓ 在有 query 时 intercept(空 query 让出原生光标行为)

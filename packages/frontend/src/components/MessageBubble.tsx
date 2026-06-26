@@ -277,7 +277,8 @@ export function MetaBlockRenderer({ block, label }: { block: NormalizedBlockFE; 
         </div>
       );
     }
-    case "agent_name": {
+    case "agent_name":
+    case "agent-name": {
       const name = String(get("agentName") ?? "");
       return (
         <div className="block-meta-info">
@@ -342,6 +343,7 @@ function isKnownMetaLabel(label: string): boolean {
     label === "task_reminder" ||
     label === "pr-link" ||
     label === "agent_name" ||
+    label === "agent-name" ||
     label === "agent_listing" ||
     label === "file_snapshot"
   );
