@@ -8,11 +8,19 @@
  *
  * 注意:这是 smoke 测试。Tauri 完整 E2E 需要起 tauri dev + WebDriver,
  * 见 docs/CROSS_PLATFORM_BUILD.md。
+ *
+ * 踩坑(2026-06-27):
+ * - 不要加 --proxy-server=direct:// / proxy: { server: "direct://" } —
+ *   chromium 启起来后会强制 IPv4 路径,vite preview 在 macOS 默认只 listen ::1
+ * - 不要改 proxy 配置绕过 env — 直接用默认参数即可
+ * - baseURL 必须用 localhost(macOS 解析到 ::1),不要 127.0.0.1
+ * - 如果 dev env 设了 http_proxy=127.0.0.1:8001,Chromium 会读 env
+ *   → ERR_PROXY_CONNECTION_FAILED,需要 unset http_proxy 后再跑
  */
 
 import { defineConfig, devices } from "@playwright/test";
 
-const PORT = 4173; // vite preview 默认端口
+const PORT = 4173;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -25,28 +33,15 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
-    // 强制直连,绕开某些 dev 环境的 http_proxy
-    proxy: { server: "direct://" },
   },
   projects: [
     {
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        launchOptions: {
-          // chromium 走 system proxy 检测 = 走 system http_proxy env,
-          // 强制设 direct:// 走直连 (注意:不能是 --no-proxy-server,
-          // 那个 flag 会被 system env 覆盖;proxy-server 设成 "direct://"
-          // 才是 chromium 协议意义上的 "不走任何代理")
-          proxy: {
-            server: "direct://",
-          },
-        },
       },
     },
   ],
-  // globalSetup 起 preview server (见 e2e/global-setup.ts),
-  // 不用 webServer: 它走系统代理 check URL,在某些 dev 环境下不可用
   globalSetup: "./e2e/global-setup.ts",
   globalTeardown: "./e2e/global-setup.ts",
 });

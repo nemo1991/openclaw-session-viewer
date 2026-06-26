@@ -35,11 +35,15 @@ test.describe("Smoke", () => {
     await page.waitForTimeout(500);
 
     // 过滤已知的 Tauri 缺失警告(测试环境没 Tauri runtime)
+    // - 直接提及 tauri / __TAURI__
+    // - transformCallback / invoke 调用失败(没有 Tauri runtime)
     const realErrors = errors.filter(
       (e) =>
         !e.includes("__TAURI__") &&
         !e.includes("tauri") &&
-        !e.includes("window.__TAURI_INTERNALS__")
+        !e.includes("window.__TAURI_INTERNALS__") &&
+        !e.includes("transformCallback") &&
+        !e.includes("__TAURI_INTERNALS__")
     );
     expect(realErrors).toEqual([]);
   });
