@@ -83,7 +83,12 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
   },
 }));
 
-/** 当前 store 是否实际生效 (preset !== "all" 或 from/to 设置) */
+/** 当前 store 是否实际生效 (preset !== "all" 或 from/to 设置)
+ *
+ * 返回 boolean primitive,可直接作为 zustand selector 使用:
+ *   useTranscriptFilterStore(isFilterActive)
+ * 避免消费整个 store 对象导致无关字段变化也触发重渲染。
+ */
 export function isFilterActive(s: TranscriptFilterStore): boolean {
   return s.preset !== "all" || Boolean(s.from || s.to);
 }

@@ -1,24 +1,35 @@
+/**
+ * SearchInSessionBar — 会话内搜索栏(Container, slim)
+ *
+ * 重构后(v0.4.5):
+ * - searchableEntries 抽出到 useSearchableEntries hook
+ *   (复用 lib/filterEntries.applyTimeFilter,跟 TranscriptView pipeline 共享)
+ * - 不再直接订阅 useTranscriptFilterStore() 全量
+ * - 滚动职责移到 TranscriptView(通过 useTranscriptScroll),本组件
+ *   只在 row 点击时 setCurrentHitIndex,不重复 scrollIntoView(v0.4.3 fix)
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Search, X, ChevronUp, ChevronDown } from "lucide-react";
 
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
-import { useTranscriptStore } from "../state/transcriptStore";
-import { useTranscriptFilterStore, isFilterActive } from "../state/transcriptFilterStore";
+import { useSearchableEntries } from "../hooks/useSearchableEntries";
 import { useKey } from "../lib/keymap";
 import { formatTimeShort } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import "./SearchInSessionBar.css";
 
 interface Props {
-  /** 外部控制:跳到指定 entry 的回调 */
+  /** 外部控制:跳到指定 entry 的回调(由 useTranscriptScroll 提供) */
   onJump?: (entryIndex: number) => void;
 }
 
 /** v0.4.3: dropdown 最多渲染多少行(避免 500+ 命中时卡) */
 const MAX_VISIBLE_HITS = 100;
+const SEARCH_DEBOUNCE_MS = 200;
 
-export function SearchInSessionBar({ onJump }: Props) {
+export function SearchInSessionBar({ onJump: _onJump }: Props) {
   const { t } = useTranslation();
   const fmtOpts = useFormatOpts();
   // 分别订阅各个状态,避免返回整个 store 导致引用频繁变化
@@ -33,28 +44,8 @@ export function SearchInSessionBar({ onJump }: Props) {
   const setCurrentHitIndex = useSearchInSessionStore((s) => s.setCurrentHitIndex);
   const hide = useSearchInSessionStore((s) => s.hide);
 
-  const entries = useTranscriptStore((s) => s.entries);
-  const filter = useTranscriptFilterStore();
-  const filterActive = isFilterActive(filter);
-
-  // 搜索只在筛选后的范围跑,这样 search hit 不会指向被过滤掉的 entry
-  // v0.4.3 fix: 必须 useMemo, 否则 filter 返回新数组引用,
-  // 下面 useEffect([..., searchableEntries]) 每次 render 都触发 search(),
-  // 而 search() 会 reset currentHitIndex = 0, 导致点 row 后跳到 hits[0] 而非点中的 i
-  const searchableEntries = useMemo(
-    () =>
-      filterActive
-        ? entries.filter((e) => {
-            const ts = e.normalized.timestamp;
-            if (!ts) return true;
-            const ms = new Date(ts).getTime();
-            const fromMs = filter.from ? new Date(filter.from).getTime() : -Infinity;
-            const toMs = filter.to ? new Date(filter.to).getTime() : Infinity;
-            return isNaN(ms) || (ms >= fromMs && ms <= toMs);
-          })
-        : entries,
-    [entries, filterActive, filter.from, filter.to]
-  );
+  // 搜索范围 = filter 后的 entries(与 TranscriptView 渲染管线一致)
+  const searchableEntries = useSearchableEntries();
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [debouncedQuery, setDebouncedQuery] = useState(query);
@@ -67,7 +58,7 @@ export function SearchInSessionBar({ onJump }: Props) {
 
   // 防抖:输入 200ms 后才搜索
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 200);
+    const timer = setTimeout(() => setDebouncedQuery(query), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -79,16 +70,11 @@ export function SearchInSessionBar({ onJump }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, debouncedQuery, searchableEntries]);
 
-  // 当前命中 — 仅派生, 不在这里调 onJump
-  // v0.4.3 fix: 之前 useEffect 调 onJump 触发 jumpToEntry (scrollIntoView 影响 window viewport)
-  // 跟 TranscriptView 的 virtualizer.scrollToIndex (影响 transcript-scroll 内部 scrollTop) 冲突,
-  // scrollIntoView 覆盖 scrollToIndex 结果, 目标 entry 滚到错位置。
-  // 现在只靠 TranscriptView 的 scrollToIndex 负责滚动, 这里不重复。
+  // 当前命中 — 仅派生,不重复 scroll
   const currentHit =
     currentHitIndex >= 0 && currentHitIndex < hits.length ? hits[currentHitIndex] : null;
 
   // v0.4.3: 键位 — n/p/Enter/Shift+Enter/↑/↓
-  // 已有 n/p 缺失补上;↑/↓ 在有 query 时 intercept(空 query 让出原生光标行为)
   useKey("escape", () => hide(), [open]);
   useKey("enter", () => next(), [open]);
   useKey("shift+enter", () => prev(), [open]);
@@ -112,7 +98,7 @@ export function SearchInSessionBar({ onJump }: Props) {
   if (!open) return null;
 
   const showDropdown = query.length > 0;
-  const visibleHits = hits.slice(0, MAX_VISIBLE_HITS);
+  const visibleHits = useMemo(() => hits.slice(0, MAX_VISIBLE_HITS), [hits]);
   const moreCount = hits.length - visibleHits.length;
 
   return (
@@ -145,8 +131,6 @@ export function SearchInSessionBar({ onJump }: Props) {
             <div className="search-results-empty">{t("searchInSession.noResults")}</div>
           )}
           {visibleHits.map((hit, i) => {
-            // v0.4.3 fix: 从 searchableEntries(实际搜索范围)找 entry, 跟 TranscriptView 渲染的 filteredEntries 一致
-            // 否则 filter 模式下 row 显示的 entry 可能在 filter 范围外, 点不动
             const entry = searchableEntries.find((e) => e.index === hit.entryIndex);
             const role = entry?.normalized.role ?? "unknown";
             const ts = entry?.normalized.timestamp;
@@ -156,8 +140,7 @@ export function SearchInSessionBar({ onJump }: Props) {
                 className={`search-result-row ${i === currentHitIndex ? "is-active" : ""}`}
                 onClick={() => {
                   setCurrentHitIndex(i);
-                  // v0.4.3 fix: 点击后清空 query, dropdown 自动折叠, 不挡 transcript
-                  // bar 仍在, 用户可继续搜或重新打开
+                  // v0.4.3 fix: 点击后清空 query, dropdown 自动折叠
                   setQuery("");
                   inputRef.current?.focus();
                 }}

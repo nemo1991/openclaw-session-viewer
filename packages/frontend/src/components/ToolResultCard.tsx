@@ -37,8 +37,6 @@ const PREVIEW_CHARS = 500;
 export function ToolResultCard({ toolUseId, content, isError, filePath }: Props) {
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
-  const [spillover, setSpillover] = useState<string | null>(null);
-  const [spilloverLoading, setSpilloverLoading] = useState(false);
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
 
   // v0.4.2: 异步 shiki 高亮
@@ -73,18 +71,6 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
     };
   }, [open, filePath, content]);
 
-  const handleSpillover = async () => {
-    if (!filePath) return;
-    setSpilloverLoading(true);
-    try {
-      // TODO: 真正从后端拉全内容(需要 session 路径)
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSpilloverLoading(false);
-    }
-  };
-
   const text = stringifyContent(content);
   const truncated = text.length > PREVIEW_CHARS ? text.slice(0, PREVIEW_CHARS) + "…" : text;
 
@@ -117,7 +103,6 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
           )}
         </div>
       )}
-      {spillover && <pre className="tool-result-spillover">{spillover}</pre>}
     </div>
   );
 }

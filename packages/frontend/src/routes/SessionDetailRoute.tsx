@@ -1,4 +1,16 @@
-import { useEffect, useMemo } from "react";
+/**
+ * SessionDetailRoute — Container 角色(slim)
+ *
+ * 重构后(v0.4.5):
+ * - 删除 2 个空 useEffect(只剩注释,曾用于解析 path)
+ * - 4 个 store 字段用 selector 分别订阅
+ * - jumpToEntry 从 useTranscriptScroll 取(取代 DOM querySelector + scrollIntoView)
+ * - URL sync 委托 useSessionUrlSync hook
+ *   (修真实 bug: ?line=N 之前依赖 entries.length 永远首次为 0 时不触发)
+ * - data-testid 给 E2E 用
+ */
+
+import { useMemo } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, Download, Sparkles, Search, Activity } from "lucide-react";
@@ -6,7 +18,9 @@ import { ArrowLeft, Download, Sparkles, Search, Activity } from "lucide-react";
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useLivePids } from "../hooks/useLivePids";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
-import { useTranscriptFilterStore } from "../state/transcriptFilterStore";
+import { useTranscriptPipeline } from "../hooks/useTranscriptPipeline";
+import { useTranscriptScroll } from "../hooks/useTranscriptScroll";
+import { useSessionUrlSync } from "../hooks/useSessionUrlSync";
 import { TranscriptView } from "../views/TranscriptView";
 import { SearchInSessionBar } from "../views/SearchInSessionBar";
 import { useKey } from "../lib/keymap";
@@ -22,53 +36,47 @@ export default function SessionDetailRoute() {
   const location = useLocation();
   const { t } = useTranslation();
   const fmtOpts = useFormatOpts();
-  const { start, entries, loading, totalCount, error, path } = useTranscriptStore();
+
+  // 4 个独立 selector(避免任一字段变化触发整页重渲染)
+  const start = useTranscriptStore((s) => s.start);
+  const entries = useTranscriptStore((s) => s.entries);
+  const loading = useTranscriptStore((s) => s.loading);
+  const totalCount = useTranscriptStore((s) => s.totalCount);
+  const error = useTranscriptStore((s) => s.error);
+  const path = useTranscriptStore((s) => s.path);
+
   const { livePids } = useLivePids();
   const showSearchBar = useSearchInSessionStore((s) => s.show);
 
   const meta = (location.state as { session?: SessionMeta } | null)?.session;
-
-  useEffect(() => {
-    if (path && sessionId) {
-      // 已经加载了,无需重启
-    } else if (sessionId) {
-      // 重新打开:从 meta 拿 jsonlPath
-    }
-  }, [sessionId, path]);
-
-  // 通过 sessionId 找到 jsonlPath
-  useEffect(() => {
-    if (sessionId && !path) {
-      // 我们需要从 session 列表里找
-      // 但页面进入时通常 location.state 已有 session meta
-      // 如果没有,从列表里找
-    }
-  }, [sessionId, path]);
-
-  // 优先用 state 里的 meta
   const targetPath = meta?.jsonlPath;
 
-  useEffect(() => {
-    if (targetPath) {
-      void start(targetPath);
-    }
+  // 流式加载 transcript
+  useMemo(() => {
+    if (targetPath) void start(targetPath);
   }, [targetPath, start]);
 
-  // 实时 PID
+  // 实时 PID(从 livePids 找本会话)
   const liveInfo = useMemo(
     () => (meta?.sessionId ? livePids.find((p) => p.sessionId === meta.sessionId) : undefined),
     [meta, livePids]
   );
 
-  // 跳转到指定 entry (用于搜索结果/URL ?line=N)
-  const jumpToEntry = (entryIndex: number) => {
-    const el = document.querySelector(`[data-entry-index="${entryIndex}"]`);
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  };
+  // 当前搜索命中(传给 useTranscriptScroll)
+  const currentHit = useSearchInSessionStore(
+    (s) => (s.currentHitIndex >= 0 ? s.hits[s.currentHitIndex] : null) ?? null
+  );
+  const { sortedEntries } = useTranscriptPipeline();
+  const { jumpToEntry } = useTranscriptScroll({ sortedEntries, currentHit });
 
-  // Cmd+F:会话内搜索 (handler 引用稳定,deps 用 [])
+  // URL → store / scroll 同步(修 ?line=N 首次 entries 为 0 不触发的 bug)
+  useSessionUrlSync({
+    search: location.search,
+    entriesLoaded: entries.length > 0,
+    jumpToEntry,
+  });
+
+  // Cmd+F:会话内搜索(handler 引用稳定,deps 用 [])
   useKey(
     "cmd+f",
     (e) => {
@@ -85,24 +93,6 @@ export default function SessionDetailRoute() {
     },
     []
   );
-
-  // 处理 URL ?line=N (Phase 12 — URL 跳转) + ?from=ISO&to=ISO 时间筛选
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const line = params.get("line");
-    if (line && entries.length > 0) {
-      const target = parseInt(line, 10);
-      if (!isNaN(target)) {
-        // 等下一个 microtask,确保 DOM 已渲染
-        setTimeout(() => jumpToEntry(target), 100);
-      }
-    }
-    const from = params.get("from");
-    const to = params.get("to");
-    if (from || to) {
-      useTranscriptFilterStore.getState().setRange(from ?? undefined, to ?? undefined);
-    }
-  }, [entries.length, location.search]);
 
   const handleExport = async (format: "md" | "html") => {
     if (!targetPath) return;
@@ -133,7 +123,7 @@ export default function SessionDetailRoute() {
 
   return (
     <div className="session-detail">
-      <header className="session-header">
+      <header className="session-header" data-testid="session-header">
         <button onClick={() => navigate("/")} className="back-btn">
           <ArrowLeft size={16} /> {t("detail.back")}
         </button>
@@ -196,10 +186,18 @@ export default function SessionDetailRoute() {
               <Activity size={14} /> {t("detail.trajectory")}
             </button>
           )}
-          <button onClick={() => handleExport("md")} title={t("detail.exportMd")}>
+          <button
+            onClick={() => handleExport("md")}
+            data-testid="export-md"
+            title={t("detail.exportMd")}
+          >
             <Download size={14} /> MD
           </button>
-          <button onClick={() => handleExport("html")} title={t("detail.exportHtml")}>
+          <button
+            onClick={() => handleExport("html")}
+            data-testid="export-html"
+            title={t("detail.exportHtml")}
+          >
             <Download size={14} /> HTML
           </button>
           <button
@@ -215,7 +213,7 @@ export default function SessionDetailRoute() {
         </div>
       </header>
 
-      <SearchInSessionBar onJump={jumpToEntry} />
+      <SearchInSessionBar />
 
       {error && (
         <div className="error">
