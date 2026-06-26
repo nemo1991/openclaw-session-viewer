@@ -407,7 +407,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 🗺 路线图
 
-### 已完成 (v0.1.0 → v0.4.3)
+### 已完成 (v0.1.0 → v0.4.4)
 
 - [x] 基础会话列表 + 转录查看
 - [x] 全局/会话内搜索
@@ -431,6 +431,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] 时区设置 (Settings 下拉,7 个常用 IANA + auto) (v0.4.2)
 - [x] 会话列表默认改回 OpenClaw (v0.4.2)
 - [x] 会话内搜索结果下拉列表 + 修 Next 按钮不滚动 / 倒序+filter 无限下拉 / agent-name(连字符) 识别 (v0.4.3)
+- [x] 重新设计 app icon (蓝紫→青渐变 + 几何 C 字母 + 平台 mask) (v0.4.4)
 - [x] 单元测试 (135+ 个)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [x] docs-only 推送跳过 CI (paths-ignore)
