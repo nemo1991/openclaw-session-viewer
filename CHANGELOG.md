@@ -23,9 +23,44 @@
 | [0.2.0] | 2026-06-23 | GitHub Actions 自动 release                                |        35 |      41 |   76 |
 | [0.1.0] | 2026-06-22 | 初次发布                                                   |        28 |      41 |   69 |
 
-> 测试数累计只增不减;Rust 单测在 [src-tauri/src/parser/blocks/](../src-tauri/src/parser/blocks/) 各 handler 文件里,TS 单测在 [packages/frontend/src/lib/](../packages/frontend/src/lib/) 跟 [packages/shared/src/](../packages/shared/src/)。
+> 测试数累计只增不减;Rust 单测在 [src-tauri/src/parser/blocks/](../src-tauri/src/parser/blocks/) 各 handler 文件里,TS 单测在 [packages/frontend/src/lib/](../packages/frontend/src/lib/) 跟 [packages/frontend/src/state/](../packages/frontend/src/state/) 跟 [packages/shared/src/](../packages/shared/src/),可视化组件测试在 [packages/frontend/src/components/\*.test.tsx](../packages/frontend/src/components/)。
 
 ## [Unreleased]
+
+### 新增
+
+- 🧪 **测试体系大幅增强**:
+  - 单元测试 24 → **108** (+84) — 新增 6 个测试文件覆盖 v0.4.x 主要新功能
+    - `searchInSessionStore` (19 case): search 索引 / 大小写 / 跨 entry / snippet padding / next/prev 循环 / setCurrentHitIndex clamping
+    - `transcriptFilterStore` (13 case): preset 数学 (1h/24h/7d 用 vi.useFakeTimers 锁住 Date.now) / setRange / isFilterActive
+    - `settingsStore` (8 case): load() 失败 fallback / save() / update() 嵌套 anthropic 合并 / timezone (v0.4.2)
+    - `keymap` (12 case): 单键 / cmd+shift+f 多 modifier / 大小写不敏感
+    - `api.extractErrorMessage` (13 case): 修 [object Object] 错误 / 字符串 / 对象 / null / 嵌套
+    - `format` (+19 case): formatBytes (B/KB/MB/GB 边界) / formatNumber (k/M 阈值) / formatTime (刚刚/分钟前/小时前/天前/fallback)
+  - **可视化组件测试** (vitest + @testing-library/react + jsdom) — **77 case**
+    - `MessageBubble` (21): 4 角色头部 / 5 种 block 渲染 / meta 分支 7 种已知 + 未知 + 子代理 / BlockRenderer 入口
+    - `ToolUseCard` (27): Edit 走 line diff (stats / fallback / replace_all badge) / Bash (description + 后台 + 空命令) / Read (offset+limit 行号指示) / Task (Create/Update 区分) / 其它 JSON dump
+    - `ToolResultCard` (12): 默认展开 / 成功 vs 失败文案 / stdout 提取 / 数组拼接 / 500 字符截断 / shiki 高亮 (mock) / 未知扩展名 fallback
+    - `UnknownBlockCard` (17): 有/无 payload 退化 / 字段表 / 启发式 hint (tool_use/thinking/image/tool_result) / 复制 / 报告 / 字段值类型 (null/undefined/数字/布尔/长字符串/大对象)
+  - **Playwright E2E 配置** (e2e/smoke.spec.ts + playwright.config.ts)
+    - smoke 测试:首屏挂载 + 无 JS 错误
+    - 用 globalSetup 手动起 vite preview (绕开 Playwright webServer 的 http_proxy check)
+    - chromium 启动加 `--proxy-bypass-list=*` 兜底直连
+    - 注意:在系统代理指向不存在代理的 dev 环境下 e2e 仍可能失败;`pnpm -r test` (185 case) 跑通即可
+
+### 变更
+
+- 🔧 **`matchKey` 改 export** — 纯函数移到 export,方便单测
+- 🔧 **`extractErrorMessage` 移到 `lib/api.ts`** — 从 `transcriptStore.ts` 私有函数改为共享工具,transcriptStore re-export
+- 🔧 **vitest 配置增强** — vite.config.ts 加 `test.setupFiles` (Tauri api mock + i18n init + @testing-library/jest-dom) + `css: false`
+- 🔧 **devDeps 新增**: `@testing-library/react` ^16.3.2 / `@testing-library/jest-dom` ^6.9.1 / `@testing-library/user-event` ^14.6.1 / `jsdom` ^29.1.1 / `@playwright/test` ^1.61.1
+- 📝 **package.json scripts**: 加 `test:e2e` (playwright test) + `test:all` (unit + e2e)
+
+### 测试
+
+- 🧪 Rust 单元测试 94 个(不变)
+- 🧪 TypeScript 测试 24 → **108** (+84 单元) + 77 组件 = **185 frontend tests**
+- 🧪 合计: 94 + 41 (shared) + 108 (frontend unit) + 77 (frontend component) = **320 tests**
 
 ## [0.4.4] - 2026-06-25
 

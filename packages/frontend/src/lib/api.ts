@@ -207,3 +207,25 @@ export function listenTrajectoryBatches(
 
 // re-export for convenience
 export type { AppSettings, SearchHit, SessionMeta };
+
+/**
+ * 从 invoke error 对象提取可读消息。
+ * Tauri 抛的错误通常有结构:`{ kind: "PathSecurity", message: "..." }`
+ * 优先用 `message` 字段,避免 `String(obj)` 出 "[object Object]"。
+ */
+export function extractErrorMessage(e: unknown): string {
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object") {
+    const obj = e as Record<string, unknown>;
+    if (typeof obj.message === "string") return obj.message;
+    if (typeof obj.kind === "string") {
+      return typeof obj.message === "string" ? `${obj.kind}: ${obj.message}` : String(obj.kind);
+    }
+    try {
+      return JSON.stringify(e);
+    } catch {
+      return String(e);
+    }
+  }
+  return String(e);
+}

@@ -93,7 +93,7 @@ chmod +x OpenClaw*.AppImage
 
 ### 工程化
 
-- ✅ **单元测试** — Rust 94 个 + TS 65 个 = **159 个测试**
+- ✅ **单元测试** — Rust 94 + TS shared 41 + TS frontend 108 + 组件可视化 77 = **320 个测试**
 - 🔒 **路径安全** — 所有 Tauri 命令做词法检查,防止 `../../etc/passwd`
 - ♻️ **BlockRegistry 模式** — `BlockHandler` trait + 可扩展注册表,符合开闭原则
 - 🚀 **自动更新** — Tauri updater + GitHub Releases
@@ -311,7 +311,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 # Rust 单元测试 (94 个)
 cd src-tauri && cargo test --lib
 
-# TypeScript 单元测试 (65 个)
+# TypeScript 单元测试 (shared 41 + frontend 108 = 149)
 cd packages/shared && pnpm test
 
 # 类型检查
@@ -472,7 +472,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] 会话列表默认改回 OpenClaw (v0.4.2)
 - [x] 会话内搜索结果下拉列表 + 修 Next 按钮不滚动 / 倒序+filter 无限下拉 / agent-name(连字符) 识别 (v0.4.3)
 - [x] 重新设计 app icon (蓝紫→青渐变 + 几何 C 字母 + 平台 mask) (v0.4.4)
-- [x] 单元测试 (135+ 个)
+- [x] 单元测试 + 组件可视化测试 (320 个: Rust 94 + TS shared 41 + TS frontend 108 + 组件 77)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [x] docs-only 推送跳过 CI (paths-ignore)
 

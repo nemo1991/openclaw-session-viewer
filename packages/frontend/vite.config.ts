@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
@@ -32,5 +33,13 @@ export default defineConfig({
     target: "esnext",
     minify: "esbuild",
     sourcemap: false,
+  },
+  test: {
+    // 默认 node 环境 (.test.ts);需要 DOM 的 test (.test.tsx) 显式:
+    // `// @vitest-environment jsdom`
+    environment: "node",
+    include: ["src/**/*.test.{ts,tsx}"],
+    setupFiles: ["./src/test/setup.ts"],
+    css: false,
   },
 });
