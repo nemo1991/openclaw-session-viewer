@@ -115,13 +115,9 @@ function EditToolBody({ input }: { input: Record<string, unknown> }) {
   }
 
   let diff: DiffLine[];
-  let tooLarge = false;
   try {
     diff = computeLineDiff(oldStr, newStr);
   } catch (e) {
-    if (e instanceof DiffTooLargeError) {
-      tooLarge = true;
-    }
     return (
       <div className="tool-body-edit">
         <div className="tool-body-warning">
@@ -135,7 +131,6 @@ function EditToolBody({ input }: { input: Record<string, unknown> }) {
 
   const stats = diffStats(diff);
   const filePath = String(input.file_path ?? "");
-  void tooLarge; // unused fallback marker, kept for future use
 
   return (
     <div className="tool-body-edit">

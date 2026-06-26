@@ -77,6 +77,8 @@ const zhCN = {
       noMatch: "无匹配消息",
     },
     trajectory: "运行轨迹",
+    sortAsc: "从旧到新",
+    sortDesc: "从新到旧",
   },
   trajectory: {
     title: "运行轨迹",

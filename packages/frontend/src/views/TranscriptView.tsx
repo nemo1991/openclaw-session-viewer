@@ -1,106 +1,61 @@
-import { useEffect, useRef, useState, useMemo } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+/**
+ * TranscriptView — Container 角色(slim)
+ *
+ * 重构后(v0.4.5):
+ * - filter + sort 委托 useTranscriptPipeline hook
+ * - virtualizer + 自动跟随 + 跳到命中 委托 useTranscriptScroll hook
+ * - FilterPanel / SortPanel 用受控组件,不再用 document.getElementById
+ * - URL 同步委托 useSessionUrlSync(由 SessionDetailRoute 调用)
+ *
+ * View 本体只负责:
+ * - 拿 hook 输出渲染 toolbar + 虚拟列表 + footer
+ * - 渲染空 / loading 文案
+ */
+
 import { useTranslation } from "react-i18next";
 
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
-import {
-  useTranscriptFilterStore,
-  isFilterActive,
-  type FilterPreset,
-} from "../state/transcriptFilterStore";
-import { MessageBubble } from "../components/MessageBubble";
-import { isoToLocalInputInTz, formatLocalInputToIsoInTz } from "../lib/format";
+import { useTranscriptFilterStore, isFilterActive } from "../state/transcriptFilterStore";
+import { useTranscriptPipeline } from "../hooks/useTranscriptPipeline";
+import { useTranscriptScroll } from "../hooks/useTranscriptScroll";
 import { useFormatOpts } from "../hooks/useFormatOpts";
+import { isoToLocalInputInTz, formatLocalInputToIsoInTz } from "../lib/format";
+import { MessageBubble } from "../components/MessageBubble";
+import { TranscriptToolbar } from "./panels/TranscriptToolbar";
 import "./TranscriptView.css";
 
 export function TranscriptView() {
   const { t } = useTranslation();
-  const { entries, loading, totalCount, loadedCount } = useTranscriptStore();
-  const currentHit = useSearchInSessionStore((s) =>
-    s.currentHitIndex >= 0 ? s.hits[s.currentHitIndex] : null
+  const { loading, totalCount, loadedCount } = useTranscriptStore();
+  const currentHit = useSearchInSessionStore(
+    (s) => (s.currentHitIndex >= 0 ? s.hits[s.currentHitIndex] : null) ?? null
   );
+
+  const { entries, sortedEntries, sortAsc, setSortAsc } = useTranscriptPipeline();
   const filter = useTranscriptFilterStore();
   const filterActive = isFilterActive(filter);
-  const parentRef = useRef<HTMLDivElement>(null);
-  const [sortAsc, setSortAsc] = useState(true); // true=正序(旧→新), false=倒序(新→旧)
+  const fmtOpts = useFormatOpts();
+  const { tz } = fmtOpts;
 
-  // 时间筛选 + 排序
-  const filteredEntries = useMemo(() => {
-    if (!filterActive) return entries;
-    const fromMs = filter.from ? new Date(filter.from).getTime() : -Infinity;
-    const toMs = filter.to ? new Date(filter.to).getTime() : Infinity;
-    return entries.filter((e) => {
-      const t = e.normalized.timestamp;
-      if (!t) return true; // meta 条目保留
-      const ms = new Date(t).getTime();
-      if (isNaN(ms)) return true; // 解析失败保留
-      return ms >= fromMs && ms <= toMs;
-    });
-  }, [entries, filter.from, filter.to, filterActive]);
-
-  const sortedEntries = useMemo(() => {
-    if (sortAsc) return filteredEntries;
-    return [...filteredEntries].reverse();
-  }, [filteredEntries, sortAsc]);
-
-  const virtualizer = useVirtualizer({
-    count: sortedEntries.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 120,
-    overscan: 10,
-  });
-
-  useEffect(() => {
-    // v0.4.3 fix: 倒序 + filter + 流式加载时新 entry 加到顶部, 用户原 scroll 位置
-    // 持续指向"不存在的底部", virtualizer 总尺寸不断增长, 体感"无限下拉"。
-    // 改为: 不管 sortAsc / filterActive, 只要用户已经在底部, 新 entry 加载就跟到底。
-    if (currentHit) return;
-    if (!parentRef.current) return;
-    const el = parentRef.current;
-    // 用户在底部 50px 范围内才跟随
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-    if (!atBottom) return;
-    // rAF 等 React 把新 entry 渲染到 DOM 高度更新后再滚
-    requestAnimationFrame(() => {
-      if (parentRef.current) {
-        parentRef.current.scrollTop = parentRef.current.scrollHeight;
-      }
-    });
-  }, [entries.length, currentHit]);
-
-  // v0.4.3: 当前搜索命中变化时,把目标 entry 滚到虚拟列表可视区中央
-  // (否则 jumpToEntry 的 querySelector 找不到 DOM,定位失败)
-  useEffect(() => {
-    if (!currentHit) return;
-    const localIdx = sortedEntries.findIndex((e) => e.index === currentHit.entryIndex);
-    if (localIdx >= 0) {
-      virtualizer.scrollToIndex(localIdx, { align: "center" });
-    }
-  }, [currentHit, sortedEntries, virtualizer]);
+  const { parentRef, virtualizer } = useTranscriptScroll({ sortedEntries, currentHit });
 
   return (
     <div className="transcript-view">
-      <div className="transcript-toolbar">
-        <div className="transcript-sort-bar">
-          <button
-            className={`sort-btn ${sortAsc ? "sort-btn-active" : ""}`}
-            onClick={() => setSortAsc(true)}
-            title="从旧到新"
-          >
-            ↑ 正序
-          </button>
-          <button
-            className={`sort-btn ${!sortAsc ? "sort-btn-active" : ""}`}
-            onClick={() => setSortAsc(false)}
-            title="从新到旧"
-          >
-            ↓ 倒序
-          </button>
-        </div>
-        <FilterBar />
-      </div>
-      <div className="transcript-scroll" ref={parentRef}>
+      <TranscriptToolbar
+        preset={filter.preset}
+        from={filter.from}
+        to={filter.to}
+        tz={tz}
+        sortAsc={sortAsc}
+        localInputToIso={(input) => formatLocalInputToIsoInTz(input, tz)}
+        isoToLocalInput={(iso) => isoToLocalInputInTz(iso, tz)}
+        onPresetChange={(p) => useTranscriptFilterStore.getState().setPreset(p)}
+        onApply={(from, to) => useTranscriptFilterStore.getState().setRange(from, to)}
+        onClear={() => useTranscriptFilterStore.getState().clear()}
+        onSortChange={setSortAsc}
+      />
+      <div className="transcript-scroll" ref={parentRef} data-testid="transcript-scroll">
         {sortedEntries.length === 0 && loading && (
           <div className="transcript-loading">{t("detail.loading")}</div>
         )}
@@ -143,7 +98,7 @@ export function TranscriptView() {
         </div>
       </div>
 
-      <footer className="transcript-footer">
+      <footer className="transcript-footer" data-testid="transcript-footer">
         {loading
           ? `流式加载中… ${loadedCount}/${totalCount}`
           : filterActive
@@ -153,85 +108,6 @@ export function TranscriptView() {
               }) + ` · ${sortAsc ? "正序" : "倒序"}`
             : `已加载 ${entries.length} 条 · ${sortAsc ? "正序" : "倒序"}`}
       </footer>
-    </div>
-  );
-}
-
-/**
- * 时间筛选 bar — 4 个 preset + 自定义范围
- */
-function FilterBar() {
-  const { t } = useTranslation();
-  const { tz } = useFormatOpts();
-  const preset = useTranscriptFilterStore((s) => s.preset);
-  const from = useTranscriptFilterStore((s) => s.from);
-  const to = useTranscriptFilterStore((s) => s.to);
-  const setPreset = useTranscriptFilterStore((s) => s.setPreset);
-  const setRange = useTranscriptFilterStore((s) => s.setRange);
-  const clear = useTranscriptFilterStore((s) => s.clear);
-
-  const presets: Array<{ value: FilterPreset; label: string }> = [
-    { value: "all", label: t("detail.filter.all") },
-    { value: "1h", label: t("detail.filter.last1h") },
-    { value: "24h", label: t("detail.filter.last24h") },
-    { value: "7d", label: t("detail.filter.last7d") },
-  ];
-
-  // v0.4.2: naive datetime-local 字符串按选定 TZ 解析,不再依赖浏览器 OS TZ
-  const handleApply = () => {
-    const fromVal = (document.getElementById("filter-from") as HTMLInputElement)?.value;
-    const toVal = (document.getElementById("filter-to") as HTMLInputElement)?.value;
-    setRange(
-      fromVal ? formatLocalInputToIsoInTz(fromVal, tz) : undefined,
-      toVal ? formatLocalInputToIsoInTz(toVal, tz) : undefined
-    );
-  };
-
-  return (
-    <div className="transcript-filter-bar">
-      {presets.map((p) => (
-        <button
-          key={p.value}
-          className={`filter-btn ${preset === p.value ? "filter-btn-active" : ""}`}
-          onClick={() => setPreset(p.value)}
-        >
-          {p.label}
-        </button>
-      ))}
-      <button
-        className={`filter-btn ${preset === "custom" ? "filter-btn-active" : ""}`}
-        onClick={() => setPreset("custom")}
-      >
-        {t("detail.filter.custom")}
-      </button>
-      {preset === "custom" && (
-        <div className="filter-custom">
-          <input
-            id="filter-from"
-            type="datetime-local"
-            defaultValue={from ? isoToLocalInputInTz(from, tz) : ""}
-            placeholder={t("detail.filter.from")}
-            key={`from-${tz}-${from ?? ""}`}
-          />
-          <span>~</span>
-          <input
-            id="filter-to"
-            type="datetime-local"
-            defaultValue={to ? isoToLocalInputInTz(to, tz) : ""}
-            placeholder={t("detail.filter.to")}
-            key={`to-${tz}-${to ?? ""}`}
-          />
-          <span className="filter-tz-label">
-            ({tz === "auto" ? Intl.DateTimeFormat().resolvedOptions().timeZone : tz})
-          </span>
-          <button className="filter-apply-btn" onClick={handleApply}>
-            {t("detail.filter.apply")}
-          </button>
-          <button className="filter-clear-btn" onClick={clear}>
-            {t("detail.filter.clear")}
-          </button>
-        </div>
-      )}
     </div>
   );
 }
