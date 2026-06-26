@@ -3,11 +3,18 @@
  *
  * - 引入 @testing-library/jest-dom matchers (toBeInTheDocument / toHaveTextContent 等)
  * - 全局 mock @tauri-apps/api/* — 测试环境没有 Tauri runtime
+ * - 全局 afterEach cleanup — 防止 component test 间 DOM 残留
  * - 加载 i18n 资源 — 组件用了 useTranslation
  */
 
-import { vi } from "vitest";
+import { vi, afterEach } from "vitest";
+import { cleanup } from "@testing-library/react";
 import "@testing-library/jest-dom/vitest";
+
+// ---- 每个 test 后自动 cleanup DOM ----
+afterEach(() => {
+  cleanup();
+});
 
 // ---- Tauri API mock ----
 vi.mock("@tauri-apps/api/core", () => ({
