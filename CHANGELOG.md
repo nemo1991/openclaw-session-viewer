@@ -4,6 +4,23 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-06-25
+
+### 新增
+
+- ✨ **Edit 工具 line-level diff 视图** (PR1)：引入 `diff` (jsdiff) npm 库,Edit `tool_use` 卡片从折叠 JSON dump 改成红删/绿增 inline diff,未变行灰色,`replace_all: true` 加 "替换全部" badge;5000 行 cap 走 fallback。`packages/frontend/src/lib/diff.ts` 薄包装 + `diff.test.ts` 5 case 单测。
+- ✨ **Bash/Read/Task (TaskUpdate+TaskCreate) / tool_result 默认展开 + 优化展示** (PR2)：所有 tool 卡片 `useState(true)` 默认展开;Bash 卡片在等宽 code block 里显示 `command`、italic 灰字 `description`、"后台" badge;Read 卡片头部 `file_path` 粗体 + "lines N–M" offset/limit 指示;Task 卡片区分 TaskCreate (description + subagent_type + prompt 预览) vs TaskUpdate (taskId + status 大 badge);tool_result 卡片对常见代码文件后缀 lazy-import shiki 跑语法高亮 (前 500 字符)。其它 tool (Glob/Grep/WebFetch/WebSearch/Write/MultiEdit) 享受 default-open 但 body 仍 JSON dump。
+- ✨ **时区设置** (PR3)：AppSettings 加 `timezone` 字段,Settings → Appearance 加下拉 (auto/UTC/Asia/Shanghai/Asia/Tokyo/Europe/London/America/New_York/America/Los_Angeles,7 个常用 IANA);所有时间展示 (会话列表 / 详情 / 轨迹 / 消息气泡) 跟随;TranscriptView 时间 filter bar 的 `datetime-local` 改 TZ-aware (用 `formatLocalInputToIsoInTz` 显式把 naive 字符串按选定 TZ 解析,不再依赖浏览器 OS TZ);filter preset (1h/24h/7d) 数学 TZ-agnostic 仍正确。`format.test.ts` 5 case 单测覆盖 TZ 转换。
+
+### 变更
+
+- 🔧 **会话列表 source 默认改回 OpenClaw**：v0.4.1 改成 Claude 防止误把 OpenClaw 当普通会话看,现在改回 OpenClaw (项目初衷),无 OpenClaw 数据时显示现有 "无匹配" 空状态,用户自行切 Claude。
+
+### 测试
+
+- 🧪 Rust 单元测试 94 个（不变）
+- 🧪 TypeScript 测试 41 → 51 (+10: diff 5 + format 5)
+
 ## [0.4.1] - 2026-06-25
 
 ### 修复
