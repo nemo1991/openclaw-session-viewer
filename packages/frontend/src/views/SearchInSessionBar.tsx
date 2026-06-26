@@ -140,7 +140,9 @@ export function SearchInSessionBar({ onJump }: Props) {
             <div className="search-results-empty">{t("searchInSession.noResults")}</div>
           )}
           {visibleHits.map((hit, i) => {
-            const entry = entries.find((e) => e.index === hit.entryIndex);
+            // v0.4.3 fix: 从 searchableEntries(实际搜索范围)找 entry, 跟 TranscriptView 渲染的 filteredEntries 一致
+            // 否则 filter 模式下 row 显示的 entry 可能在 filter 范围外, 点不动
+            const entry = searchableEntries.find((e) => e.index === hit.entryIndex);
             const role = entry?.normalized.role ?? "unknown";
             const ts = entry?.normalized.timestamp;
             return (

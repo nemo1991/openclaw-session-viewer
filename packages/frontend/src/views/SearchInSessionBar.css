@@ -1,3 +1,9 @@
+/* v0.4.3 fix: wrapper 必须是 position: relative, 否则下面 .search-results-dropdown
+   的 position: absolute top: 100% 会锚定到错误祖先, dropdown 飘到屏幕外 */
+.search-in-session-bar-wrapper {
+  position: relative;
+}
+
 .search-in-session-bar {
   display: flex;
   align-items: center;
