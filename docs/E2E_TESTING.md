@@ -2,6 +2,8 @@
 
 本文档说明 OpenClaw Session Viewer 的端到端 (E2E) 测试方案 —— Playwright 配置、用法、如何写新 case、已知坑。
 
+> **最后更新**:2026-06-27(v0.4.5 重构后踩坑总结,把"代理问题"的真因全部查清)
+
 ---
 
 ## 📖 是什么 / 为什么
@@ -30,35 +32,32 @@
 
 ## 🛠 当前配置 (e2e/)
 
-| 文件                   | 作用                                                    |
-| ---------------------- | ------------------------------------------------------- |
-| `playwright.config.ts` | 顶层配置:chromium / port 4173 / 代理绕开 / globalSetup  |
-| `e2e/global-setup.ts`  | 启动 `vite preview` server,用 `env -u` 清掉坏的代理 env |
-| `e2e/smoke.spec.ts`    | 2 个 smoke case:首屏挂载 + 无 JS 错误                   |
+| 文件                      | 作用                                                                |
+| ------------------------- | ------------------------------------------------------------------- |
+| `playwright.config.ts`    | 顶层配置:chromium / port 4173 / **不加 proxy bypass** / globalSetup |
+| `e2e/global-setup.ts`     | 启动 `vite preview` server,用 `env -u` 清掉坏的代理 env             |
+| `e2e/smoke.spec.ts`       | 2 个 smoke case:首屏挂载 + 无 JS 错误                               |
+| `e2e/detail-page.spec.ts` | 6 个 detail page case(部分在 vite preview 下受 Tauri IPC 缺失限制)  |
 
-### 关键配置点
+### 关键配置点(2026-06-27 修订)
 
 ```ts
 // playwright.config.ts
 {
   testDir: "./e2e",
   use: {
-    baseURL: "http://localhost:4173",  // vite preview 默认端口
+    baseURL: "http://localhost:4173",  // localhost(macOS 解析到 ::1),不要 127.0.0.1
     trace: "on-first-retry",           // 失败时录 trace
     screenshot: "only-on-failure",     // 失败时截图
-    proxy: { server: "direct://" },    // 强制直连,绕开系统代理
+    // 不加 proxy bypass — 反而破坏 IPv4/IPv6 路径
   },
   projects: [{
     name: "chromium",
     use: {
       ...devices["Desktop Chrome"],
-      launchOptions: {
-        // chromium 协议层 direct://, 彻底绕开 system env
-        proxy: { server: "direct://" },
-      },
+      // 不传 launchOptions.proxy,默认行为 OK
     },
   }],
-  // 用 globalSetup 自己起 server, 不用 webServer (见下方"已知坑")
   globalSetup: "./e2e/global-setup.ts",
   globalTeardown: "./e2e/global-setup.ts",
 }
@@ -71,7 +70,7 @@
 ### 命令
 
 ```bash
-# 跑全部 e2e (顶层)
+# 跑全部 e2e(顶层,带全局 setup + teardown)
 pnpm test:e2e
 
 # 跑单个文件
@@ -94,16 +93,22 @@ pnpm exec playwright show-trace test-results/<name>/trace.zip
 pnpm exec playwright test --list
 ```
 
-### 跑之前
+### 跑之前(关键 — dev env 必做)
 
 ```bash
-# 1. 先 build (preview 跑的是 dist)
+# 1. 先 build(preview 跑的是 dist)
 pnpm --filter @ocsv/frontend build
 
-# 2. 装浏览器 (首次需要)
+# 2. 装浏览器(首次需要)
 pnpm exec playwright install chromium
 
-# 3. 跑
+# 3. ⚠️ 如果 dev env 设了 http_proxy=127.0.0.1:8001 (xray 之类),
+#    Chromium 会读 env 走代理 → ERR_PROXY_CONNECTION_FAILED
+#    shell 层清掉:
+env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+  pnpm exec playwright test
+
+# 4. 跑
 pnpm test:e2e
 ```
 
@@ -111,9 +116,9 @@ pnpm test:e2e
 
 ```json
 {
-  "test": "pnpm -r test", // 跑所有单元 + 组件测试
-  "test:e2e": "playwright test", // 只跑 e2e
-  "test:all": "pnpm test && pnpm test:e2e" // 全部
+  "test": "pnpm -r test", // 仅 vitest (单元 + 组件,3s)
+  "test:e2e": "playwright test", // 仅 Playwright (~8s)
+  "test:all": "pnpm test && pnpm test:e2e" // 全跑
 }
 ```
 
@@ -219,48 +224,87 @@ await page.evaluate(() => localStorage.setItem("key", "value"));
 
 ---
 
-## ⚠️ 已知坑 & 解决
+## ⚠️ 已知坑 & 解决 (2026-06-27 全部踩过一遍)
 
-### 1. dev 环境的 `http_proxy` 不可用
+### 1. dev 环境的 `http_proxy` 不可用 — **真因是 xray 代理**
 
 **症状**:
 
-- `curl http://localhost:4173/` 返回 `503 Service Unavailable` (走代理)
-- Playwright 报 `net::ERR_PROXY_CONNECTION_FAILED`
-- `pnpm preview` 自己能起,但 Playwright 调不通
+- `curl http://localhost:4173/` (带默认 env) 返回 `503`
+- Playwright `chromium.launch()` 报 `net::ERR_PROXY_CONNECTION_FAILED`
+- `chrome-headless-shell --proxy-server=direct:// ...` 直接命令行调却能拿到 HTML
+- **Chrome.app 日常使用 localhost 完全正常**
 
-**根因**: dev 环境的 `http_proxy` env 指向不存在的代理 (例如 `http://127.0.0.1:8001`),所有 HTTP 请求都被劫持去那里。
+**根因(经实测验证)**:
+
+- 本机 dev env 配了 `http_proxy=http://127.0.0.1:8001` (指向一个 xray 进程)
+- xray 监听 8001,只代理 V2Ray 白名单域名,localhost 收到直接返回 503
+- **Chrome.app 不读 `http_proxy` env**(macOS 上读 `scutil --proxy` 的 PAC),所以日常能通
+- **Playwright 启的 Chromium 进程读 `http_proxy` env** → 走 xray → 503
+- 加 `--proxy-server=direct://` 等 Chromium flag **没用**,Chromium 启起来后 env 优先级仍高于 CLI flag
 
 **缓解**(按推荐度):
 
-1. **临时去掉**:`unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY`
-2. **curl 加 flag**:`curl --noproxy localhost ...`
-3. **Playwright 配置**:已用 `proxy: { server: "direct://" }` + `globalSetup` 自己起 server (绕开 webServer 的 URL check)
-4. **CI 环境**:通常是干净的,直接跑就行
+1. **shell 层清 env(唯一可靠方案)**:
+   ```bash
+   env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+     pnpm exec playwright test
+   ```
+   Playwright 进程从一开始就无这些 env,Chromium 子进程也读不到
+2. CI 环境通常是干净的,直接跑就行
 
-### 2. `webServer` 不灵,用 `globalSetup` 替代
+### 2. ❌ 不要给 chromium 加 `--proxy-server=direct://`
+
+**症状**: 加了之后 chromium 报 `ERR_CONNECTION_REFUSED`,localhost 完全连不上。
+
+**真因(踩坑实测)**:
+
+- vite preview 在 macOS 默认 **只 listen IPv6 `::1`**,**不 listen IPv4 `127.0.0.1`**
+  ```bash
+  $ lsof -nP -iTCP:4173 -sTCP:LISTEN
+  COMMAND  PID  USER  FD  TYPE  DEVICE  NODE NAME
+  node     XX  user  18u IPv6  ...      TCP [::1]:4173 (LISTEN)  ← 只有 IPv6
+  ```
+- 加 `--proxy-server=direct://` 让 Chromium 强制 IPv4 解析路径 → 连不上
+- 解决:**不加任何 proxy flag**,Chromium 默认行为 OK
+- URL 用 `localhost`(macOS 解析到 `::1`),**不要用 127.0.0.1**
+
+**参考踩坑命令**:
+
+```bash
+# ✅ 通
+NO_PROXY='*' curl http://localhost:4173/  # → 200
+$CHROME --headless --dump-dom http://localhost:4173/  # → HTML
+chromium.launchPersistentContext('', { headless: true }) + localhost  # → 通
+
+# ❌ 不通
+$CHROME --proxy-server=direct:// --dump-dom http://127.0.0.1:4173/  # → 空 HTML (server 不在 IPv4)
+curl http://127.0.0.1:4173/  # → connection refused (server 只 listen ::1)
+```
+
+### 3. `webServer` 不灵,用 `globalSetup` 替代
 
 **原因**: Playwright 的 `webServer.url` 检查走系统代理,在 dev 环境会失败。
 
-**解法** (e2e/global-setup.ts):
+**解法** (`e2e/global-setup.ts`):
 
 ```ts
 import { spawn } from "node:child_process";
 
-// 关键: 清掉代理 env
+// 关键: 清掉代理 env,让 vite preview 子进程也不读这些
 const env = { ...process.env };
 delete env.http_proxy;
 delete env.https_proxy;
 delete env.HTTP_PROXY;
 delete env.HTTPS_PROXY;
 
-spawn("pnpm", ["--filter", "@ocsv/frontend", "preview", "--port", "4173"], {
+server = spawn("pnpm", ["--filter", "@ocsv/frontend", "preview", "--port", String(PORT)], {
   env,
   stdio: ["ignore", "pipe", "pipe"],
 });
 ```
 
-### 3. jsdom `<details>` 不自动 toggle
+### 4. jsdom `<details>` 不自动 toggle
 
 **背景**: jsdom 不模拟 `<details>` 元素的原生 `open` 切换 (这是已知 jsdom 限制,跟 Playwright 无关)。
 
@@ -268,16 +312,59 @@ spawn("pnpm", ["--filter", "@ocsv/frontend", "preview", "--port", "4173"], {
 
 Playwright 跑真实 Chromium 没问题,不用这个 workaround。
 
-### 4. Tauri IPC 在 e2e 不可用
+### 5. Tauri IPC 在 e2e 不可用 — 错误消息本身没 "tauri" 字样
 
-**背景**: `vite preview` 跑的是纯静态 dist,没有 Tauri runtime。`invoke()` 调用全部失败,所有数据返回 `undefined`。
+**背景**: `vite preview` 跑的是纯静态 dist,没有 Tauri runtime。`@tauri-apps/api/event` 的 `listen()` 调用 `window.__TAURI_INTERNALS__.transformCallback`,但 `__TAURI_INTERNALS__` 是 undefined。
 
-**解法** (二选一):
+**典型 pageerror**:
 
-- **mock 掉** (推荐用于 smoke):在 setup 里 `vi.mock("@tauri-apps/api/core", ...)`
-- **真测 Tauri 流程**:另起 tauri dev + WebDriver (见 [CROSS_PLATFORM_BUILD.md](CROSS_PLATFORM_BUILD.md) 的 "Tauri E2E" 章节,本文档不覆盖)
+```
+Cannot read properties of undefined (reading 'transformCallback')
+```
 
-### 5. 慢的 e2e 别 commit
+**关键**:错误消息本身**不含 "tauri" 字样**,原来的 e2e 错误过滤只过滤 `"tauri"` / `"__TAURI__"` 字符串,**漏掉了这个最常见的 Tauri 缺失错误**。
+
+**修复**(`e2e/smoke.spec.ts` + `e2e/detail-page.spec.ts`):
+
+```ts
+const realErrors = errors.filter(
+  (e) =>
+    !e.includes("__TAURI__") &&
+    !e.includes("tauri") &&
+    !e.includes("window.__TAURI_INTERNALS__") &&
+    !e.includes("transformCallback") // ← 必须加
+);
+```
+
+**完整 mock IPC**(更彻底的方案,适合 detail-page 完整测试):
+
+```ts
+await page.addInitScript((session) => {
+  (window as any).__TAURI_INTERNALS__ = {
+    transformCallback: () => 0,
+    invoke: async (cmd: string) => {
+      if (cmd === "list_sessions") return [session];
+      if (cmd === "get_session_meta") return session;
+      if (cmd === "list_live_pids") return [];
+      if (cmd === "get_settings") return { theme: "system", timezone: "UTC", ... };
+      return null;
+    },
+  };
+});
+```
+
+### 6. SessionDetailRoute 没 location.state → 走 fallback 分支
+
+**背景**: `SessionDetailRoute` 读 `useLocation().state.session`,没值就走 `if (!meta) return <NotFound/>` 早返回,**不挂** `<SearchInSessionBar />` / `<FilterPanel />` / `<TranscriptView />`。
+
+**症状**: `e2e/detail-page.spec.ts` 直接 `page.goto("/session/abc123")` 后,测试断言 `[data-testid="filter-preset-all"]` 存在但 count=0 — 因为 FilterPanel 没 mount。
+
+**已知妥协**:
+
+- 当前 `detail-page.spec.ts` 的 4 个 case 在 vite preview 下是 "不真挂载",**功能是 smoke**(确认页面不崩)
+- 要完整 verify detail page 行为,需要 mock Tauri invoke + 点击 session 卡片 navigate(state:{session})
+
+### 7. 慢的 e2e 别 commit
 
 **症状**: 100+ 个 e2e case 跑 5 分钟,本地调试很痛苦。
 
