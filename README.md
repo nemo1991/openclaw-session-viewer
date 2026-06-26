@@ -499,15 +499,16 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 📚 文档索引
 
-| 文档                                                          | 用途                                        |
-| ------------------------------------------------------------- | ------------------------------------------- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                       | 总体架构、数据流、性能基准、安全模型        |
-| [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)         | BlockRegistry + BlockHandler 设计、扩展指南 |
-| [CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)       | macOS / Windows / Linux 构建、签名、公证    |
-| [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md) | OpenClaw JSONL schema,trajectory 文件机制   |
-| [RELEASING.md](docs/RELEASING.md)                             | 维护者发版流程,故障恢复                     |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                 | 已修过的 bug 与开发经验                     |
-| [CHANGELOG.md](CHANGELOG.md)                                  | 各版本变更记录                              |
+| 文档                                                          | 用途                                            |
+| ------------------------------------------------------------- | ----------------------------------------------- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                       | 总体架构、数据流、性能基准、安全模型            |
+| [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)         | BlockRegistry + BlockHandler 设计、扩展指南     |
+| [CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)       | macOS / Windows / Linux 构建、签名、公证        |
+| [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md) | OpenClaw JSONL schema,trajectory 文件机制       |
+| [RELEASING.md](docs/RELEASING.md)                             | 维护者发版流程,故障恢复                         |
+| [E2E_TESTING.md](docs/E2E_TESTING.md)                         | Playwright E2E 配置 / 用法 / 写新 case / 已知坑 |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                 | 已修过的 bug 与开发经验                         |
+| [CHANGELOG.md](CHANGELOG.md)                                  | 各版本变更记录                                  |
 
 ## 📄 许可证
 
