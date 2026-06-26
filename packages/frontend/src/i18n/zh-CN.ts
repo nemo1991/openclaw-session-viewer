@@ -106,6 +106,11 @@ const zhCN = {
     next: "下一个 (n)",
     prev: "上一个 (p)",
   },
+  // v0.4.3: 会话内搜索结果下拉文案(独立命名空间, 避免与 search.inSession 字符串冲突)
+  searchInSession: {
+    noResults: "在当前会话未找到匹配",
+    more: "…还有 {{count}} 条未显示,缩小搜索词查看更多",
+  },
   analyze: {
     title: "大模型分析",
     template: "分析模板",

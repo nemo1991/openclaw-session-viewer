@@ -29,6 +29,8 @@ interface SearchInSessionStore {
   search: (entries: TranscriptEntryOut[]) => void;
   next: () => void;
   prev: () => void;
+  /** v0.4.3: 直接跳到指定 hit(drowdown row 点击用) */
+  setCurrentHitIndex: (i: number) => void;
 }
 
 export const useSearchInSessionStore = create<SearchInSessionStore>((set, get) => ({
@@ -72,6 +74,15 @@ export const useSearchInSessionStore = create<SearchInSessionStore>((set, get) =
     const { hits, currentHitIndex } = get();
     if (hits.length === 0) return;
     set({ currentHitIndex: (currentHitIndex - 1 + hits.length) % hits.length });
+  },
+  setCurrentHitIndex: (i) => {
+    const { hits } = get();
+    if (hits.length === 0) {
+      set({ currentHitIndex: -1 });
+      return;
+    }
+    const clamped = Math.max(0, Math.min(hits.length - 1, i));
+    set({ currentHitIndex: clamped });
   },
 }));
 

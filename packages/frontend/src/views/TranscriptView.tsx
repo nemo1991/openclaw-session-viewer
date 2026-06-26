@@ -66,6 +66,16 @@ export function TranscriptView() {
     }
   }, [entries.length, virtualizer, currentHit, sortAsc, filterActive, sortedEntries.length]);
 
+  // v0.4.3: 当前搜索命中变化时,把目标 entry 滚到虚拟列表可视区中央
+  // (否则 jumpToEntry 的 querySelector 找不到 DOM,定位失败)
+  useEffect(() => {
+    if (!currentHit) return;
+    const localIdx = sortedEntries.findIndex((e) => e.index === currentHit.entryIndex);
+    if (localIdx >= 0) {
+      virtualizer.scrollToIndex(localIdx, { align: "center" });
+    }
+  }, [currentHit, sortedEntries, virtualizer]);
+
   return (
     <div className="transcript-view">
       <div className="transcript-toolbar">
