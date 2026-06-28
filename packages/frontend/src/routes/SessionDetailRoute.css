@@ -93,3 +93,24 @@
   font-size: 11px;
   font-weight: 500;
 }
+
+/* v0.5.0:子会话顶部的"返回父会话"按钮 */
+.session-back-to-parent {
+  padding: 6px 16px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.session-back-to-parent button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-primary);
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.session-back-to-parent button:hover {
+  background: var(--color-primary-bg);
+}

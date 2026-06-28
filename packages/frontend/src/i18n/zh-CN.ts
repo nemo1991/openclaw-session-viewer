@@ -82,6 +82,7 @@ const zhCN = {
     // v0.5.0
     subagentTrigger: "子代理 ({{count}})",
     subagentPanel: {
+      title: "子代理 ({{count}})",
       open: "展开",
       close: "收起",
       empty: "该会话无子代理",
