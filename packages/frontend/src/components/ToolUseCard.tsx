@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Wrench,
   ChevronDown,
@@ -8,14 +9,22 @@ import {
   Edit3,
   Globe,
   ListChecks,
+  ExternalLink,
 } from "lucide-react";
 import { computeLineDiff, diffStats, DiffTooLargeError, type DiffLine } from "../lib/diff";
+import { apiListSubagentsByMeta } from "../lib/api";
+import { useSessionsStore } from "../state/sessionsStore";
+import { useTranslation } from "react-i18next";
 import "./ToolUseCard.css";
 
 interface Props {
-  id: string;
+  id?: string;
   name: string;
   input: Record<string, unknown>;
+  /** 主 session 的 jsonl 路径(用于查找对应子 agent) */
+  parentJsonlPath?: string;
+  /** 主 session 的 sessionId(用于 navigate 时 state 传父) */
+  parentSessionId?: string;
 }
 
 const TOOL_ICONS: Record<string, typeof Wrench> = {
@@ -29,9 +38,10 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   WebFetch: Globe,
   WebSearch: Globe,
   Task: Wrench,
+  Agent: Wrench,
 };
 
-export function ToolUseCard({ id, name, input }: Props) {
+export function ToolUseCard({ id, name, input, parentJsonlPath, parentSessionId }: Props) {
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
   const Icon = TOOL_ICONS[name] ?? Wrench;
@@ -46,15 +56,25 @@ export function ToolUseCard({ id, name, input }: Props) {
         <span className="tool-name">{name}</span>
         {summary && <span className="tool-summary">{summary}</span>}
         {replaceAll && <span className="tool-badge tool-badge-warn">替换全部</span>}
-        <span className="tool-id">{id.slice(0, 8)}</span>
+        <span className="tool-id">{id?.slice(0, 8) ?? ""}</span>
       </button>
-      {open && <div className="tool-use-body">{renderBody(name, input)}</div>}
+      {open && (
+        <div className="tool-use-body">
+          {renderBody(name, input, id, parentJsonlPath, parentSessionId)}
+        </div>
+      )}
     </div>
   );
 }
 
 /** v0.4.2: 按 tool name dispatch 到专属 body 渲染器 */
-function renderBody(name: string, input: Record<string, unknown>) {
+function renderBody(
+  name: string,
+  input: Record<string, unknown>,
+  toolUseId?: string,
+  parentJsonlPath?: string,
+  parentSessionId?: string
+) {
   switch (name) {
     case "Edit":
       return <EditToolBody input={input} />;
@@ -65,7 +85,18 @@ function renderBody(name: string, input: Record<string, unknown>) {
     case "NotebookEdit":
       return <ReadToolBody input={input} />;
     case "Task":
-      return <TaskToolBody input={input} />;
+    case "Agent":
+      // v0.5.0:Claude Code 用 name="Agent" 派生子代理,input schema
+      // 跟 Task 完全一样(description / subagent_type / prompt / taskId)
+      // 共用 TaskToolBody
+      return (
+        <TaskToolBody
+          input={input}
+          toolUseId={toolUseId}
+          parentJsonlPath={parentJsonlPath}
+          parentSessionId={parentSessionId}
+        />
+      );
     default:
       return <pre className="tool-body-json">{JSON.stringify(input, null, 2)}</pre>;
   }
@@ -196,8 +227,24 @@ function ReadToolBody({ input }: { input: Record<string, unknown> }) {
  * v0.4.2: Task 工具 — TaskCreate vs TaskUpdate 区分
  *  - TaskCreate: description + subagent_type + prompt 预览
  *  - TaskUpdate: taskId + status 大 badge + content
+ *
+ * v0.5.0:Claude Code Agent(name="Agent")也走这个 body(input schema 完全一致)。
+ *  末尾追加"打开子代理详情"按钮 — 按 toolUseId 在 list_subagents 中精确匹配
+ *  对应的子代理,跳到 /session/<agentId> + state.subagentContext。
  */
-function TaskToolBody({ input }: { input: Record<string, unknown> }) {
+function TaskToolBody({
+  input,
+  toolUseId,
+  parentJsonlPath,
+  parentSessionId,
+}: {
+  input: Record<string, unknown>;
+  toolUseId?: string;
+  parentJsonlPath?: string;
+  parentSessionId?: string;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   const isUpdate = input.taskId != null;
   const description = String(input.description ?? "");
   const subagentType = String(input.subagent_type ?? "");
@@ -205,6 +252,52 @@ function TaskToolBody({ input }: { input: Record<string, unknown> }) {
   const status = String(input.status ?? "");
   const content = input.content ? String(input.content) : "";
   const taskId = String(input.taskId ?? "");
+
+  // v0.5.0:点击按钮 → 按 toolUseId 匹配子代理
+  const [resolvedAgentId, setResolvedAgentId] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+  const handleOpenSubagent = async () => {
+    if (!toolUseId || !parentSessionId) return;
+    setResolving(true);
+    try {
+      const meta = useSessionsStore
+        .getState()
+        .sessions.find((s) => s.sessionId === parentSessionId);
+      if (!meta?.subagentDir) return;
+      const subs = await apiListSubagentsByMeta(meta);
+      // 按 .meta.json toolUseId 字段精确匹配(实测 19/19)
+      const matched = subs.find((s) => s.meta?.toolUseId === toolUseId);
+      if (matched) {
+        navigate(`/session/${encodeURIComponent(matched.agentId)}`, {
+          state: {
+            session: {
+              sessionId: matched.agentId,
+              jsonlPath: matched.jsonlPath,
+              title: matched.description ?? matched.agentId,
+              workspaceGuess: meta.workspaceGuess ?? meta.projectKey,
+              projectKey: meta.projectKey,
+              primaryModel: meta.primaryModel ?? null,
+              messageCount: matched.messageCount ?? 0,
+              sizeBytes: 0,
+              firstTimestamp: matched.firstTimestamp ?? null,
+              hasTrajectory: false,
+              subagentDir: null,
+              totalTokens: undefined,
+              source: "claude",
+            },
+            subagentContext: {
+              parentSessionId,
+              agentId: matched.agentId,
+              agentType: matched.agentType ?? null,
+            },
+          },
+        });
+        setResolvedAgentId(matched.agentId);
+      }
+    } finally {
+      setResolving(false);
+    }
+  };
 
   if (isUpdate) {
     return (
@@ -221,6 +314,9 @@ function TaskToolBody({ input }: { input: Record<string, unknown> }) {
     );
   }
 
+  // v0.5.0:只有 Claude Agent(非 TaskCreate/TaskUpdate)且有 toolUseId + parent 上下文时才显示
+  const showSubagentButton = !isUpdate && !!toolUseId && !!parentSessionId && !!parentJsonlPath;
+
   return (
     <div className="tool-body-task">
       {description && <div className="tool-task-headline">{description}</div>}
@@ -229,6 +325,22 @@ function TaskToolBody({ input }: { input: Record<string, unknown> }) {
         <pre className="tool-task-prompt">
           {prompt.length > 200 ? prompt.slice(0, 200) + "…" : prompt}
         </pre>
+      )}
+      {showSubagentButton && (
+        <div className="tool-task-actions">
+          <button
+            className="tool-task-action-btn"
+            data-testid="open-subagent-detail"
+            disabled={resolving || !!resolvedAgentId}
+            onClick={handleOpenSubagent}
+            title={t("detail.taskOpenDetail")}
+          >
+            <ExternalLink size={11} /> {t("detail.taskOpenDetail")}
+          </button>
+          {resolvedAgentId && (
+            <span className="tool-task-resolved">→ agent-{resolvedAgentId.slice(0, 12)}</span>
+          )}
+        </div>
       )}
     </div>
   );

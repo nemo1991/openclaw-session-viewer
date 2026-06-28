@@ -26,6 +26,17 @@ export interface SubagentMeta {
     toolUseId?: string;
     [k: string]: unknown;
   };
+  // --- v0.5.0:list_subagents 命令新增详情字段 ---
+  /** "Explore" / "Plan" / "general-purpose"(从 .meta.json 提取) */
+  agentType?: string;
+  /** 任务描述(从 .meta.json 提取) */
+  description?: string;
+  /** 子 agent 自身消息数(jsonl 头部扫描) */
+  messageCount?: number;
+  /** 首条消息 ISO timestamp */
+  firstTimestamp?: string;
+  /** 末条消息 ISO timestamp */
+  lastTimestamp?: string;
 }
 
 /** 搜索结果 */

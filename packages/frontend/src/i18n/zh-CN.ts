@@ -79,6 +79,16 @@ const zhCN = {
     trajectory: "运行轨迹",
     sortAsc: "从旧到新",
     sortDesc: "从新到旧",
+    // v0.5.0
+    subagentTrigger: "子代理 ({{count}})",
+    subagentPanel: {
+      open: "展开",
+      close: "收起",
+      empty: "该会话无子代理",
+      openChild: "打开子会话详情",
+      backToParent: "返回父会话",
+    },
+    taskOpenDetail: "打开子代理详情",
   },
   trajectory: {
     title: "运行轨迹",

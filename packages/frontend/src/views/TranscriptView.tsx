@@ -13,6 +13,7 @@
  */
 
 import { useTranslation } from "react-i18next";
+import { useParams } from "react-router-dom";
 
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
@@ -27,6 +28,7 @@ import "./TranscriptView.css";
 
 export function TranscriptView() {
   const { t } = useTranslation();
+  const path = useTranscriptStore((s) => s.path); // v0.5.0:透传给 MessageBubble
   const { loading, totalCount, loadedCount } = useTranscriptStore();
   const currentHit = useSearchInSessionStore(
     (s) => (s.currentHitIndex >= 0 ? s.hits[s.currentHitIndex] : null) ?? null
@@ -37,6 +39,7 @@ export function TranscriptView() {
   const filterActive = isFilterActive(filter);
   const fmtOpts = useFormatOpts();
   const { tz } = fmtOpts;
+  const parentSessionId = useParams()?.sessionId; // v0.5.0:从 URL 拿 sessionId 透传给子代理按钮
 
   const { parentRef, virtualizer } = useTranscriptScroll({ sortedEntries, currentHit });
 
@@ -91,7 +94,11 @@ export function TranscriptView() {
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <MessageBubble entry={entry} />
+                <MessageBubble
+                  entry={entry}
+                  parentJsonlPath={path ?? undefined}
+                  parentSessionId={parentSessionId}
+                />
               </div>
             );
           })}
