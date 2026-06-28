@@ -23,12 +23,20 @@ import { useTranscriptScroll } from "../hooks/useTranscriptScroll";
 import { useSessionUrlSync } from "../hooks/useSessionUrlSync";
 import { TranscriptView } from "../views/TranscriptView";
 import { SearchInSessionBar } from "../views/SearchInSessionBar";
+import { SubagentPanel } from "../components/SubagentPanel";
 import { useKey } from "../lib/keymap";
 import { formatBytes, formatNumber, formatTimeExact } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { apiRevealInFinder } from "../lib/api";
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionDetailRoute.css";
+
+/** v0.5.0:从 location.state 读 subagentContext(由 SubagentPanel 跳来时填充) */
+interface SubagentContext {
+  parentSessionId: string;
+  agentId: string;
+  agentType?: string | null;
+}
 
 export default function SessionDetailRoute() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -121,8 +129,24 @@ export default function SessionDetailRoute() {
     );
   }
 
+  // v0.5.0:子会话识别 — 从 location.state 读 subagentContext
+  const subCtx = (location.state as { subagentContext?: SubagentContext } | null)?.subagentContext;
+
   return (
     <div className="session-detail">
+      {/* v0.5.0:如果是子会话,在最顶部显示"返回父会话"按钮 */}
+      {subCtx && (
+        <div className="session-back-to-parent" data-testid="back-to-parent">
+          <button
+            type="button"
+            onClick={() => navigate(`/session/${encodeURIComponent(subCtx.parentSessionId)}`)}
+            title={t("detail.subagentPanel.backToParent")}
+          >
+            ← {t("detail.subagentPanel.backToParent")} ({subCtx.parentSessionId.slice(0, 12)}…)
+          </button>
+        </div>
+      )}
+
       <header className="session-header" data-testid="session-header">
         <button onClick={() => navigate("/")} className="back-btn">
           <ArrowLeft size={16} /> {t("detail.back")}
@@ -137,7 +161,9 @@ export default function SessionDetailRoute() {
                 ● {t("detail.pid", { pid: liveInfo.pid })} · {liveInfo.status}
               </span>
             )}
-            {meta.subagentDir && <span>⎇ {t("detail.subagent")}</span>}
+            {meta.subagentDir && meta.subagentCount && meta.subagentCount > 0 && (
+              <SubagentPanel parentSession={meta} />
+            )}
           </div>
           <div className="session-header-stats">
             <span>
