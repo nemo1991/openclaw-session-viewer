@@ -31,9 +31,13 @@ import "./MessageBubble.css";
 
 interface Props {
   entry: TranscriptEntryOut;
+  /** v0.5.0:主 session 的 jsonl 路径(透传到 ToolUseBlock → ToolUseCard → Agent 卡片定位子代理) */
+  parentJsonlPath?: string;
+  /** v0.5.0:主 session 的 sessionId */
+  parentSessionId?: string;
 }
 
-function MessageBubbleInner({ entry }: Props) {
+function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) {
   const msg = entry.normalized;
 
   // meta 类消息:不渲染大卡片,渲染小标签
@@ -80,7 +84,12 @@ function MessageBubbleInner({ entry }: Props) {
       />
       <div className="msg-body">
         {msg.blocks.map((block, i) => (
-          <BlockRenderer key={i} block={block} />
+          <BlockRenderer
+            key={i}
+            block={block}
+            parentJsonlPath={parentJsonlPath}
+            parentSessionId={parentSessionId}
+          />
         ))}
       </div>
     </div>
@@ -96,7 +105,15 @@ export const MessageBubble = memo(MessageBubbleInner);
  * 2. 已知 5 种 block kind 走 blocks/*Block
  * 3. 兜底 UnknownBlock(走 UnknownBlockCard)
  */
-export function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
+export function BlockRenderer({
+  block,
+  parentJsonlPath,
+  parentSessionId,
+}: {
+  block: NormalizedBlockFE;
+  parentJsonlPath?: string;
+  parentSessionId?: string;
+}) {
   const kind = block.kind as string;
 
   // meta 类 kind 统一走 MetaBlock
@@ -110,7 +127,13 @@ export function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
     case "thinking":
       return <ThinkingBlockWrap block={block} />;
     case "tool_use":
-      return <ToolUseBlock block={block} />;
+      return (
+        <ToolUseBlock
+          block={block}
+          parentJsonlPath={parentJsonlPath}
+          parentSessionId={parentSessionId}
+        />
+      );
     case "tool_result":
       return <ToolResultBlock block={block} />;
     case "image":

@@ -56,6 +56,11 @@ export interface SessionMeta {
   hasTrajectory?: boolean;
   /** trajectory 文件大小(字节) */
   trajectorySizeBytes?: number;
+  // --- v0.5.0 subagent 关联 ---
+  /** 子 agent 文件数量(<sessionId>/subagents/agent-*.jsonl) */
+  subagentCount?: number;
+  /** 子 agent id 列表(已排序去重) */
+  subagentIds?: string[];
 }
 
 /** 归一化后的内容块 */

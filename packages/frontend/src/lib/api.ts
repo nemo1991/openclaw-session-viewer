@@ -79,8 +79,33 @@ export const apiListSubagents = (
     jsonlPath: string;
     metaPath: string;
     meta?: Record<string, unknown>;
+    agentType?: string;
+    description?: string;
+    messageCount?: number;
+    firstTimestamp?: string;
+    lastTimestamp?: string;
   }>
 > => invoke("list_subagents", { sessionDir });
+
+/** v0.5.0:便利 helper — 直接传 SessionMeta,内部取 subagentDir */
+export const apiListSubagentsByMeta = (meta: {
+  subagentDir?: string | null;
+}): Promise<
+  Array<{
+    agentId: string;
+    jsonlPath: string;
+    metaPath: string;
+    meta?: Record<string, unknown>;
+    agentType?: string;
+    description?: string;
+    messageCount?: number;
+    firstTimestamp?: string;
+    lastTimestamp?: string;
+  }>
+> => {
+  if (!meta.subagentDir) return Promise.resolve([]);
+  return apiListSubagents(meta.subagentDir);
+};
 
 // ===== 工具溢出 =====
 export const apiGetToolResultFile = (

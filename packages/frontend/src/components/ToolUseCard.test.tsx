@@ -17,51 +17,58 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { ToolUseCard } from "./ToolUseCard";
+
+// v0.5.0:TaskToolBody 现在调 useNavigate(为 Claude Agent 卡片"打开子代理详情"
+// 按钮提供 navigate),需要在 <Router> 内渲染。包一层 MemoryRouter 统一处理。
+const renderWithRouter = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
 describe("ToolUseCard", () => {
   beforeEach(() => cleanup());
 
   describe("通用头部", () => {
     it("默认展开 (v0.4.2 变更)", () => {
-      render(<ToolUseCard id="abc123def456" name="Bash" input={{ command: "ls" }} />);
+      renderWithRouter(<ToolUseCard id="abc123def456" name="Bash" input={{ command: "ls" }} />);
       // 默认展开 → body 存在
       expect(document.querySelector(".tool-use-body")).toBeInTheDocument();
     });
 
     it("头部显示工具名 + id 截断前 8 字符", () => {
-      render(<ToolUseCard id="abcdef1234567890" name="Bash" input={{ command: "ls" }} />);
+      renderWithRouter(<ToolUseCard id="abcdef1234567890" name="Bash" input={{ command: "ls" }} />);
       expect(screen.getByText("Bash")).toBeInTheDocument();
       expect(screen.getByText("abcdef12")).toBeInTheDocument();
     });
 
     it("summary:Bash 用 command 截 80 字符 (在 header summary 里)", () => {
-      render(<ToolUseCard id="t1" name="Bash" input={{ command: "ls -la /tmp" }} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Bash" input={{ command: "ls -la /tmp" }} />);
       // text 出现在 summary 和 body 两处,用 summary 元素锁定 header
       const summary = document.querySelector(".tool-summary");
       expect(summary?.textContent).toBe("ls -la /tmp");
     });
 
     it("summary:Read 用 file_path (在 header summary 里)", () => {
-      render(<ToolUseCard id="t1" name="Read" input={{ file_path: "/etc/hosts" }} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Read" input={{ file_path: "/etc/hosts" }} />);
       const summary = document.querySelector(".tool-summary");
       expect(summary?.textContent).toBe("/etc/hosts");
     });
 
     it("summary:Glob 用 pattern", () => {
-      render(<ToolUseCard id="t1" name="Glob" input={{ pattern: "**/*.ts" }} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Glob" input={{ pattern: "**/*.ts" }} />);
       const summary = document.querySelector(".tool-summary");
       expect(summary?.textContent).toBe("**/*.ts");
     });
 
     it("summary:Task 有 taskId → 走 [更新] 路径 + status", () => {
-      render(<ToolUseCard id="t1" name="Task" input={{ taskId: "abc123", status: "completed" }} />);
+      renderWithRouter(
+        <ToolUseCard id="t1" name="Task" input={{ taskId: "abc123", status: "completed" }} />
+      );
       const summary = document.querySelector(".tool-summary");
       expect(summary?.textContent).toBe("[更新] completed");
     });
 
     it("summary:Task 无 taskId → 走 description", () => {
-      render(<ToolUseCard id="t1" name="Task" input={{ description: "搜索代码" }} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Task" input={{ description: "搜索代码" }} />);
       const summary = document.querySelector(".tool-summary");
       expect(summary?.textContent).toBe("搜索代码");
     });
@@ -144,7 +151,7 @@ describe("ToolUseCard", () => {
 
   describe("Bash body", () => {
     it("command 显示在等宽 code block", () => {
-      render(<ToolUseCard id="t1" name="Bash" input={{ command: "npm run build" }} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Bash" input={{ command: "npm run build" }} />);
       const cmd = document.querySelector(".tool-bash-command");
       expect(cmd).toBeInTheDocument();
       expect(cmd?.textContent).toBe("npm run build");
@@ -169,7 +176,7 @@ describe("ToolUseCard", () => {
     });
 
     it("缺 command → '(空命令)' 提示", () => {
-      render(<ToolUseCard id="t1" name="Bash" input={{}} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Bash" input={{}} />);
       expect(screen.getByText("(空命令)")).toBeInTheDocument();
     });
   });
@@ -190,17 +197,21 @@ describe("ToolUseCard", () => {
     });
 
     it("Read:仅 offset → '从 line N 起'", () => {
-      render(<ToolUseCard id="t1" name="Read" input={{ file_path: "/src/a.ts", offset: 50 }} />);
+      renderWithRouter(
+        <ToolUseCard id="t1" name="Read" input={{ file_path: "/src/a.ts", offset: 50 }} />
+      );
       expect(screen.getByText(/从 line 50 起/)).toBeInTheDocument();
     });
 
     it("Read:仅 limit → '前 N 行'", () => {
-      render(<ToolUseCard id="t1" name="Read" input={{ file_path: "/src/a.ts", limit: 100 }} />);
+      renderWithRouter(
+        <ToolUseCard id="t1" name="Read" input={{ file_path: "/src/a.ts", limit: 100 }} />
+      );
       expect(screen.getByText(/前 100 行/)).toBeInTheDocument();
     });
 
     it("Read:无 file_path → '(无文件路径)' 提示", () => {
-      render(<ToolUseCard id="t1" name="Read" input={{}} />);
+      renderWithRouter(<ToolUseCard id="t1" name="Read" input={{}} />);
       expect(screen.getByText("(无文件路径)")).toBeInTheDocument();
     });
 
@@ -215,7 +226,7 @@ describe("ToolUseCard", () => {
 
   describe("Task body", () => {
     it("Create:description + subagent_type badge + prompt 预览", () => {
-      render(
+      renderWithRouter(
         <ToolUseCard
           id="t1"
           name="Task"
@@ -235,7 +246,7 @@ describe("ToolUseCard", () => {
 
     it("Create:prompt 长于 200 字符 → 截断加 …", () => {
       const longPrompt = "x".repeat(250);
-      render(
+      renderWithRouter(
         <ToolUseCard id="t1" name="Task" input={{ description: "test", prompt: longPrompt }} />
       );
       const pre = document.querySelector(".tool-task-prompt");
@@ -243,7 +254,7 @@ describe("ToolUseCard", () => {
     });
 
     it("Update:有 taskId + status → status 大 badge + 中文标签", () => {
-      render(
+      renderWithRouter(
         <ToolUseCard
           id="t1"
           name="Task"
@@ -261,7 +272,9 @@ describe("ToolUseCard", () => {
     });
 
     it("Update:status badge 有对应 className", () => {
-      render(<ToolUseCard id="t1" name="Task" input={{ taskId: "t1", status: "completed" }} />);
+      renderWithRouter(
+        <ToolUseCard id="t1" name="Task" input={{ taskId: "t1", status: "completed" }} />
+      );
       const badge = document.querySelector(".tool-task-status-completed");
       expect(badge).toBeInTheDocument();
     });
@@ -269,7 +282,9 @@ describe("ToolUseCard", () => {
 
   describe("其它 tool (default JSON dump)", () => {
     it("Grep → JSON dump", () => {
-      render(<ToolUseCard id="t1" name="Grep" input={{ pattern: "TODO", path: "/src" }} />);
+      renderWithRouter(
+        <ToolUseCard id="t1" name="Grep" input={{ pattern: "TODO", path: "/src" }} />
+      );
       const json = document.querySelector(".tool-body-json");
       expect(json).toBeInTheDocument();
       // JSON 内容含 pattern
@@ -277,7 +292,9 @@ describe("ToolUseCard", () => {
     });
 
     it("WebFetch → JSON dump", () => {
-      render(<ToolUseCard id="t1" name="WebFetch" input={{ url: "https://example.com" }} />);
+      renderWithRouter(
+        <ToolUseCard id="t1" name="WebFetch" input={{ url: "https://example.com" }} />
+      );
       const json = document.querySelector(".tool-body-json");
       expect(json).toBeInTheDocument();
     });
