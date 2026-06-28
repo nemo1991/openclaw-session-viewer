@@ -128,13 +128,13 @@ describe("SubagentPanel", () => {
     const rows = screen.getAllByTestId("subagent-row");
     expect(rows).toHaveLength(2);
     // 顺序按 firstTimestamp: a1d92 (10:02) → b2867 (11:00)
-    expect(rows[0].getAttribute("data-agent-id")).toBe("a1d92");
-    expect(rows[1].getAttribute("data-agent-id")).toBe("b2867");
+    expect(rows[0]!.getAttribute("data-agent-id")).toBe("a1d92");
+    expect(rows[1]!.getAttribute("data-agent-id")).toBe("b2867");
     // 类型 badge
-    expect(within(rows[0]).getByText("Explore")).toBeInTheDocument();
-    expect(within(rows[1]).getByText("Plan")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("Explore")).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("Plan")).toBeInTheDocument();
     // 描述
-    expect(within(rows[0]).getByText("Explore release workflow setup")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("Explore release workflow setup")).toBeInTheDocument();
   });
 
   it("mock 返回 [] → 显示 empty 文案", async () => {
@@ -164,7 +164,7 @@ describe("SubagentPanel", () => {
     });
     // 点第一个 subagent 的打开按钮
     const openBtns = screen.getAllByTestId("subagent-open-btn");
-    await userEvent.click(openBtns[0]);
+    await userEvent.click(openBtns[0]!);
     expect(mockNavigate).toHaveBeenCalledWith(
       "/session/a1d92",
       expect.objectContaining({
