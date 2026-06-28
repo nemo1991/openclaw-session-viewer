@@ -277,7 +277,18 @@ export default function SessionsRoute() {
                         ● {t("sessions.liveBadge")}
                       </span>
                     )}
-                    {s.subagentDir && (
+                    {s.subagentDir && s.subagentCount && s.subagentCount > 0 && (
+                      <span
+                        className="subagent-badge"
+                        title={`包含 ${s.subagentCount} 个子代理`}
+                        data-testid="subagent-count-badge"
+                        data-count={s.subagentCount}
+                      >
+                        ⎇ {s.subagentCount}
+                      </span>
+                    )}
+                    {s.subagentDir && (!s.subagentCount || s.subagentCount === 0) && (
+                      // Fallback:subagentDir 存在但 count 缺失(老 backend / 旧 meta)
                       <span className="subagent-badge" title="包含子代理">
                         ⎇
                       </span>
