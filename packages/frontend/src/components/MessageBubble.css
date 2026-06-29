@@ -6,6 +6,28 @@
   overflow: hidden;
 }
 
+/* v0.6.0: 子代理内部消息缩进
+ * - 左侧紫色 accent border 标识 "这是子代理干的"
+ * - 缩进 24px 跟主 session 视觉分离
+ * - 0.92 opacity 让子代理消息不那么 "重", 父主 timeline 仍是焦点
+ */
+.msg.msg-subagent {
+  margin-left: 24px;
+  border-left: 3px solid var(--color-accent, #8250df);
+  opacity: 0.92;
+  position: relative;
+}
+
+/* v0.6.0: 子代理消息前小色块, 一眼能数清 subagent 数 */
+.msg.msg-subagent::before {
+  content: "▸";
+  position: absolute;
+  left: -18px;
+  top: 12px;
+  color: var(--color-accent, #8250df);
+  font-size: 12px;
+}
+
 .msg-header {
   display: flex;
   align-items: center;
