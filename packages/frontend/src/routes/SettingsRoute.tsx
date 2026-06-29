@@ -218,7 +218,7 @@ export default function SettingsRoute() {
               <span className={`kind-badge kind-${root.kind.toLowerCase()}`}>{root.kind}</span>
               <button
                 type="button"
-                onClick={() => apiRevealInFinder(root.path)}
+                onClick={() => apiRevealInFinder(root.path, null, true)}
                 title="在文件管理器中打开"
               >
                 <ExternalLink size={12} />
@@ -254,7 +254,9 @@ export default function SettingsRoute() {
                 <FolderOpen size={14} /> {t("settings.pickDir")}
               </button>
               {settings.defaultExportDir && (
-                <button onClick={() => apiRevealInFinder(settings.defaultExportDir!)}>打开</button>
+                <button onClick={() => apiRevealInFinder(settings.defaultExportDir!, null, true)}>
+                  打开
+                </button>
               )}
             </div>
           </div>

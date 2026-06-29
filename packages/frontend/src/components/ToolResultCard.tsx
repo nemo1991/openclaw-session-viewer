@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Check, X, ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { useFileReveal } from "../hooks/useFileReveal";
 import "./ToolResultCard.css";
 
 interface Props {
@@ -73,6 +74,20 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
 
   const text = stringifyContent(content);
   const truncated = text.length > PREVIEW_CHARS ? text.slice(0, PREVIEW_CHARS) + "…" : text;
+  const { revealAndNotify } = useFileReveal();
+
+  // v0.6.0: 文件路径变可点击 → reveal in Finder
+  // 默认 lock-down 模式: 路径必须在 workspace 内, 越界返回 PathSecurity 错误
+  const handleFilePathClick = async (e: ReactMouseEvent) => {
+    e.stopPropagation(); // 不触发 card 折叠切换
+    e.preventDefault();
+    if (!filePath) return;
+    const result = await revealAndNotify(filePath);
+    if (!result.ok) {
+      // 简单 console.warn, 后续接 toast 系统
+      console.warn("reveal 失败:", result.error);
+    }
+  };
 
   return (
     <div className={`tool-result-card ${isError ? "err" : ""}`}>
@@ -81,7 +96,12 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
         {isError ? <X size={12} /> : <Check size={12} />}
         <span>{isError ? "工具结果 (失败)" : "工具结果"}</span>
         {filePath && (
-          <span className="tool-result-file">
+          <span
+            className="tool-result-file file-path-clickable"
+            data-testid="file-path-reveal"
+            onClick={handleFilePathClick}
+            title={`${filePath} (点击 reveal in Finder)`}
+          >
             <FileText size={10} /> {filePath.split("/").slice(-2).join("/")}
           </span>
         )}

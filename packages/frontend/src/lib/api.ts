@@ -208,8 +208,22 @@ export const apiSaveSettings = (settings: AppSettings): Promise<void> =>
 
 // ===== 文件系统 =====
 export const apiPickExportDir = (): Promise<string | null> => invoke("pick_export_dir");
-export const apiRevealInFinder = (path: string): Promise<void> =>
-  invoke("reveal_in_finder", { path });
+/**
+ * v0.6.0: reveal in Finder/Explorer 加 workspace 安全沙箱
+ *
+ * @param path 要 reveal 的文件路径
+ * @param workspaceRoot 调用方 session 的 workspaceGuess(null = 不约束, 由 allowRelaxed 决定)
+ * @param allowRelaxed 来自 settings.pathSecurity.allowRelaxed
+ *                     false (默认) → 路径必须在 workspaceRoot 子树内, 越界返回 Err
+ *                     true          → 放宽到"在任一已知 root 下" (assert_within_any_root 兜底)
+ *
+ * 错误: 后端返回 "PathSecurity: ..." 开头的 message, 前端 catch 后弹 toast
+ */
+export const apiRevealInFinder = (
+  path: string,
+  workspaceRoot: string | null | undefined,
+  allowRelaxed: boolean
+): Promise<void> => invoke("reveal_in_finder", { path, workspaceRoot, allowRelaxed });
 
 // ===== Trajectory (OpenClaw) =====
 

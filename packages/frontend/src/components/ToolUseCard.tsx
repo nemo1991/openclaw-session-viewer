@@ -15,6 +15,7 @@ import { computeLineDiff, diffStats, DiffTooLargeError, type DiffLine } from "..
 import { apiListSubagentsByMeta } from "../lib/api";
 import { useSessionsStore } from "../state/sessionsStore";
 import { useTranslation } from "react-i18next";
+import { useFileReveal } from "../hooks/useFileReveal";
 import { SubagentInlineSummary } from "./SubagentInlineSummary";
 import "./ToolUseCard.css";
 
@@ -206,6 +207,7 @@ function ReadToolBody({ input }: { input: Record<string, unknown> }) {
   const filePath = String(input.file_path ?? input.notebook_path ?? input.path ?? "");
   const offset = typeof input.offset === "number" ? input.offset : null;
   const limit = typeof input.limit === "number" ? input.limit : null;
+  const { revealAndNotify } = useFileReveal();
 
   let rangeBadge: string | null = null;
   if (offset != null && limit != null) {
@@ -216,9 +218,23 @@ function ReadToolBody({ input }: { input: Record<string, unknown> }) {
     rangeBadge = `前 ${limit} 行`;
   }
 
+  // v0.6.0: 文件路径可点击 reveal
+  const handlePathClick = async () => {
+    if (!filePath) return;
+    const r = await revealAndNotify(filePath);
+    if (!r.ok) console.warn("reveal 失败:", r.error);
+  };
+
   return (
     <div className="tool-body-read">
-      <div className="tool-read-file-path">{filePath || "(无文件路径)"}</div>
+      <div
+        className="tool-read-file-path file-path-clickable"
+        data-testid="file-path-reveal"
+        onClick={handlePathClick}
+        title={filePath ? `${filePath} (点击 reveal in Finder)` : ""}
+      >
+        {filePath || "(无文件路径)"}
+      </div>
       {rangeBadge && <span className="tool-badge tool-read-range">{rangeBadge}</span>}
     </div>
   );
