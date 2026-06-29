@@ -4,29 +4,139 @@
 
 ## 版本总览
 
-| 版本    | 日期       | 主题                                                       | Rust 测试 | TS 测试 | 合计 |
-| ------- | ---------- | ---------------------------------------------------------- | --------: | ------: | ---: |
-| [0.5.0] | 2026-06-29 | 主-子 agent 关联展示 (SubagentPanel)                       |        94 |     251 |  345 |
-| [0.4.4] | 2026-06-25 | 重新设计 app icon (渐变 + 几何 C + 平台 mask)              |        94 |      65 |  159 |
-| [0.4.3] | 2026-06-25 | 会话内搜索下拉 + 6 个 bug 修复                             |        94 |      65 |  159 |
-| [0.4.2] | 2026-06-25 | Edit diff / 工具默认展开 / 时区设置 / 默认 OpenClaw        |        94 |      65 |  159 |
-| [0.4.1] | 2026-06-25 | 深色主题 meta 块 / 子代理字段折叠 / meta 7 种 block        |        94 |      41 |  135 |
-| [0.4.0] | 2026-06-25 | 时间段筛选 / 列表 UI 增强 / OpenClaw Trajectory            |        94 |      41 |  135 |
-| [0.3.2] | 2026-06-25 | 3 个新 BlockHandler (pr-link / agent-name / task_reminder) |        91 |      41 |  132 |
-| [0.3.1] | 2026-06-24 | 排序切换 + 4 个新 BlockHandler                             |        85 |      41 |  126 |
-| [0.3.0] | 2026-06-24 | BlockRegistry 重构 + UnknownBlockCard                      |        77 |      41 |  118 |
-| [0.2.6] | 2026-06-24 | Windows [object Object] / UNC 路径 / tool_call alias       |        53 |      41 |   94 |
-| [0.2.5] | 2026-06-24 | 自定义数据源根目录 + 热重载                                |        53 |      41 |   94 |
-| [0.2.4] | 2026-06-24 | 多 Agent UI 二级分组                                       |        41 |      41 |   82 |
-| [0.2.3] | 2026-06-23 | macOS 搜索崩溃 / trajectory 误列 / 双箭头                  |        35 |      41 |   76 |
-| [0.2.2] | 2026-06-23 | Windows MSI 改 ASCII productName                           |        35 |      41 |   76 |
-| [0.2.1] | 2026-06-23 | Windows / Linux release 修复                               |        35 |      41 |   76 |
-| [0.2.0] | 2026-06-23 | GitHub Actions 自动 release                                |        35 |      41 |   76 |
-| [0.1.0] | 2026-06-22 | 初次发布                                                   |        28 |      41 |   69 |
+| 版本    | 日期       | 主题                                                         | Rust 测试 | TS 测试 | 合计 |
+| ------- | ---------- | ------------------------------------------------------------ | --------: | ------: | ---: |
+| [0.6.0] | 2026-06-29 | Claude 会话关联信息优雅展示 (子代理缩进 + 内嵌摘要 + reveal) |       105 |     264 |  369 |
+| [0.5.0] | 2026-06-29 | 主-子 agent 关联展示 (SubagentPanel)                         |        94 |     251 |  345 |
+| [0.4.4] | 2026-06-25 | 重新设计 app icon (渐变 + 几何 C + 平台 mask)                |        94 |      65 |  159 |
+| [0.4.3] | 2026-06-25 | 会话内搜索下拉 + 6 个 bug 修复                               |        94 |      65 |  159 |
+| [0.4.2] | 2026-06-25 | Edit diff / 工具默认展开 / 时区设置 / 默认 OpenClaw          |        94 |      65 |  159 |
+| [0.4.1] | 2026-06-25 | 深色主题 meta 块 / 子代理字段折叠 / meta 7 种 block          |        94 |      41 |  135 |
+| [0.4.0] | 2026-06-25 | 时间段筛选 / 列表 UI 增强 / OpenClaw Trajectory              |        94 |      41 |  135 |
+| [0.3.2] | 2026-06-25 | 3 个新 BlockHandler (pr-link / agent-name / task_reminder)   |        91 |      41 |  132 |
+| [0.3.1] | 2026-06-24 | 排序切换 + 4 个新 BlockHandler                               |        85 |      41 |  126 |
+| [0.3.0] | 2026-06-24 | BlockRegistry 重构 + UnknownBlockCard                        |        77 |      41 |  118 |
+| [0.2.6] | 2026-06-24 | Windows [object Object] / UNC 路径 / tool_call alias         |        53 |      41 |   94 |
+| [0.2.5] | 2026-06-24 | 自定义数据源根目录 + 热重载                                  |        53 |      41 |   94 |
+| [0.2.4] | 2026-06-24 | 多 Agent UI 二级分组                                         |        41 |      41 |   82 |
+| [0.2.3] | 2026-06-23 | macOS 搜索崩溃 / trajectory 误列 / 双箭头                    |        35 |      41 |   76 |
+| [0.2.2] | 2026-06-23 | Windows MSI 改 ASCII productName                             |        35 |      41 |   76 |
+| [0.2.1] | 2026-06-23 | Windows / Linux release 修复                                 |        35 |      41 |   76 |
+| [0.2.0] | 2026-06-23 | GitHub Actions 自动 release                                  |        35 |      41 |   76 |
+| [0.1.0] | 2026-06-22 | 初次发布                                                     |        28 |      41 |   69 |
 
 > 测试数累计只增不减;Rust 单测在 [src-tauri/src/parser/blocks/](../src-tauri/src/parser/blocks/) 各 handler 文件里,TS 单测在 [packages/frontend/src/lib/](../packages/frontend/src/lib/) 跟 [packages/frontend/src/state/](../packages/frontend/src/state/) 跟 [packages/shared/src/](../packages/shared/src/),可视化组件测试在 [packages/frontend/src/components/\*.test.tsx](../packages/frontend/src/components/)。
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-06-29
+
+Claude 会话关联信息优雅展示 — 把 v0.5.0 已解析但未归一化的关联字段(`subagentId` / `spawnDepth` / `filePath`)真正落到 UI,补全 3 个用户可感知动作。不引入数据库。
+
+### 背景
+
+v0.5.0 ship 主→子 agent 跳转 + 子→父返回 + SubagentPanel。但调研发现 **大量关联字段已解析但未归一化**:`subagentId` 在 Rust 端写死 `None`、`.meta.json` 里的 `spawnDepth` 已 parse 但没存到 `SubagentMeta`、`tool_use.file_path` 和 `tool_result.filePath` 纯展示、planFilePath 没 UI。Claude JSONL **没有** `resume` / `previousSessionId` 字段(`~/.claude/history.jsonl` 也没有),cross-session 强链数据源没有,只能推测。
+
+### 决策(调研结论 + 用户确认)
+
+- **数据库**:v0.6.0 不引入(50-200 session 规模 O(N) 扫 < 100ms 够用),v0.7+ 再评估 redb
+- **安全**:文件路径 reveal 默认锁紧在 `workspaceGuess` 子树,设置里可放开
+- **范围**:只 ship P0 三个任务,1 个 sprint
+
+### 新增 (P0-A: subagentId 归一)
+
+- 🆕 **`NormalizedMessage.subagentId` 真正填上** (`src-tauri/src/parser/claude.rs:67-93`)
+  - 仅当 `isSidechain=true` 时信任 envelope 的 `agentId` 字段
+  - 安全考量:主 session 即便 envelope 写了 agentId 也不填(实测没有),避免子代理消息被误标到主 session timeline
+- 🆕 **子代理消息缩进渲染** (`packages/frontend/src/components/MessageBubble.{tsx,css}`)
+  - 检测 `subagentId` 触发 `.msg-subagent` class
+  - 视觉:`margin-left: 24px` + 左侧 `3px` 紫色 accent border + `0.92` opacity + `::before ▸` 小箭头
+  - 让"这是哪个子代理干的" 一眼可见
+- 测试: parser/claude.rs 3 case + MessageBubble 2 case
+
+### 新增 (P0-B: Agent 卡片内嵌子代理摘要)
+
+- 🆕 **新 Tauri 命令 `get_subagent_summary`** (`src-tauri/src/commands/subagents.rs:84-149`)
+  - 扫子 jsonl 头部 500 行(< 5ms),返回消息数 + 工具分布 + 时间段 + duration_seconds
+  - `scan_jsonl_summary` 函数提取 `tool_use.name` 聚合,按 count desc 排序
+- 🆕 **新共享类型 `SubagentSummary`** (`packages/shared/src/normalize.ts:100-122`)
+  - 描述 + 类型 + 消息数 + 工具分布 + 时间段
+- 🆕 **新前端组件 `SubagentInlineSummary`** (`packages/frontend/src/components/SubagentInlineSummary.{tsx,css}`)
+  - 取代 v0.5.0 那种"点按钮 → navigate 跳走"的交互
+  - Agent 卡片底部 inline 展开,显示 消息数 + 时长(`2m 30s` 格式) + top 3 工具 chip + "打开独立页面" 按钮
+  - loading 状态显示 spinner,error 状态降级到描述文字
+- 🆕 **递归子代理层级** (`SubagentMeta.spawnDepth`)
+  - 从 `.meta.json` 提取 `spawnDepth` 字段(v0.5.0 已 parse 但没存)
+  - `SubagentPanel` row 加 `data-spawn-depth` + "depth N" badge 标识递归子代理
+  - UI 暂不递归渲染避免深度爆炸
+- 🆕 **i18n**:`subagentPanel.spawnDepth` / `subagentInlineSummary.{messageCount, moreTools}`
+- 测试: Rust `scan_jsonl_summary` 3 case + SubagentInlineSummary 5 case
+
+### 新增 (P0-C: 文件路径点击 reveal)
+
+- 🆕 **`apiRevealInFinder` 加 workspace 安全沙箱** (`packages/frontend/src/lib/api.ts:204-222`)
+  - 新签名 `(path, workspaceRoot, allowRelaxed)`
+  - 越界返回 `"PathSecurity: ..."` 错误
+- 🆕 **Rust `reveal_in_finder` 加 path_within 检查** (`src-tauri/src/commands/fs_cmd.rs:36-86`)
+  - `allowRelaxed=false`: 严格 `path_within(p, root)` 检查
+  - `allowRelaxed=true`: 仍 `assert_within_any_root` 兜底(防 `~/.ssh/id_rsa` 等)
+  - 跨平台 shell:macOS `open -R` / Windows `explorer /select,` / Linux `xdg-open`
+- 🆕 **新 hook `useFileReveal`** (`packages/frontend/src/hooks/useFileReveal.ts`)
+  - 封装 reveal 逻辑, 集中错误处理
+- 🆕 **4 处接入点**:
+  - `ToolResultCard`: tool_result 的 `filePath` 变可点击
+  - `EditToolBody`: `file_path` 变可点击
+  - `ReadToolBody` (Read/Write/NotebookEdit): `file_path` 变可点击
+  - SettingsRoute / SessionDetailRoute: 用户主动 export 目录,走 `allowRelaxed=true`(用户已知道路径)
+- 🆕 **CSS 样式** `.file-path-clickable`:`cursor: pointer` + dotted underline + hover 高亮
+- 🆕 **i18n**:`settings.pathSecurity.{title, hint, allowRelaxed, allowRelaxedHint}`
+- 测试: Rust `path_within` 5 case + useFileReveal 6 case
+
+### 共享类型
+
+- `AppSettings.pathSecurity?: { allowRelaxed: boolean }` (默认 lock-down)
+- `IpcApi.reveal_in_finder({ path, workspaceRoot, allowRelaxed })` 签名升级
+- `SubagentMeta.spawnDepth?: number` 字段
+- 新增 `SubagentSummary` 类型
+
+### 数据
+
+- 子代理消息现在用 `data-subagent-id="<id>"` 标识(子 session 视角所有消息)
+- `agentId` 字段从 envelope 归一化到 `NormalizedMessage.subagentId`(子 session 行)
+- `spawnDepth` 从 `.meta.json` 归一化到 `SubagentMeta`(递归子代理层级)
+
+### 文件
+
+- 新建: `SubagentInlineSummary.{tsx, css, test.tsx}` / `useFileReveal.{ts, test.tsx}` / `docs/SECURITY.md`
+- 修改: `parser/claude.rs` / `commands/{subagents,fs_cmd,sessions}.rs` / `model/mod.rs` / `lib.rs`
+- 修改: `lib/api.ts` / `components/{MessageBubble, ToolResultCard, ToolUseCard, SubagentPanel}.{tsx,css}` / `hooks/` / `i18n/zh-CN.ts`
+- 修改: `shared/{ipc, normalize}.ts` / `state/settingsStore.ts` / `routes/{SessionDetailRoute,SettingsRoute}.tsx`
+- 文档: `CHANGELOG.md` (本 section) + `docs/SECURITY.md` (新)
+
+### 测试
+
+- 🧪 Rust 单元测试: `94 → 105` (+11) — subagent_id 3 / scan_jsonl_summary 3 / path_within 5
+- 🧪 Frontend 测试: `251 → 264` (+13) — MessageBubble 2 / SubagentInlineSummary 5 / useFileReveal 6
+- 🧪 合计: `105 + 41 + 264 = 410 tests` (从 386 +24)
+
+### 风险与缓解
+
+| 风险                      | 缓解                                                        |
+| ------------------------- | ----------------------------------------------------------- |
+| 文件路径越权 reveal       | P0-C 安全沙箱 + 设置锁 + Rust `assert_within_any_root` 兜底 |
+| `subagentId` 误填         | 仅 `is_sidechain=true` 时信任 envelope.agentId              |
+| 递归子代理爆炸            | SubagentPanel `spawnDepth` 截断(暂不递归)                   |
+| Tauri shell `reveal` 失败 | 命令返回 `Result<(), String>`,前端 catch                    |
+| InlineSummary 拉数据延迟  | 头部 500 行 < 5ms,展开详细时再拉更多                        |
+| Workspace guess 误判      | 设置里可放开,relaxed 模式仍受 `assert_within_any_root` 兜底 |
+
+### 不在范围 (v0.7+ 留口子)
+
+- cross-session resume 链:Claude JSONL 不写,推测误判率高
+- DB 引入:v0.6.0 不需要,v0.7+ 评估 redb
+- 图视图 (force-directed session graph):需先有 DB
+- OpenClaw trajectory ↔ Claude subagent 合并展示:跨产品边界
+- `promptId` group UI:queue/continue 场景少
 
 ## [0.5.0] - 2026-06-29
 
