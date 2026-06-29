@@ -144,12 +144,18 @@ function SubagentPanelBody({
                       fmtOpts
                     )}`
                   : formatTimeShort(s.firstTimestamp ?? undefined, fmtOpts);
+              // v0.6.0: 递归子代理 (spawnDepth >= 1) 在 row 加 'is-nested' 标记
+              // 当前 SubagentPanel 只列直接子代理 (主 session 直接派出),
+              // 但子代理内部又派出的孙代理会通过 SubagentMeta.spawnDepth 标记
+              // (UI 暂不递归渲染避免深度爆炸, 用户去子 session 详情页看)
+              const isNested = (s.spawnDepth ?? 0) >= 1;
               return (
                 <li
                   key={s.agentId}
-                  className="subagent-row"
+                  className={`subagent-row${isNested ? " is-nested" : ""}`}
                   data-testid="subagent-row"
                   data-agent-id={s.agentId}
+                  data-spawn-depth={s.spawnDepth ?? 0}
                 >
                   <span className="subagent-idx">#{i + 1}</span>
                   <code className="subagent-id" title={s.agentId}>
@@ -163,6 +169,15 @@ function SubagentPanelBody({
                       data-agent-type={s.agentType}
                     >
                       {s.agentType}
+                    </span>
+                  )}
+                  {/* v0.6.0: 递归子代理层级指示 */}
+                  {isNested && (
+                    <span
+                      className="subagent-depth-badge"
+                      title={t("detail.subagentPanel.spawnDepth", { depth: s.spawnDepth ?? 1 })}
+                    >
+                      depth {s.spawnDepth ?? 1}
                     </span>
                   )}
                   {s.description && (

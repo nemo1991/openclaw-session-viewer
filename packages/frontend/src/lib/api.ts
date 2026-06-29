@@ -5,7 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppSettings, SearchHit, SessionMeta } from "@ocsv/shared";
+import type { AppSettings, SearchHit, SessionMeta, SubagentSummary } from "@ocsv/shared";
 
 // ===== 会话 =====
 export const apiListSessions = (): Promise<SessionMeta[]> => invoke("list_sessions");
@@ -81,11 +81,18 @@ export const apiListSubagents = (
     meta?: Record<string, unknown>;
     agentType?: string;
     description?: string;
+    spawnDepth?: number;
     messageCount?: number;
     firstTimestamp?: string;
     lastTimestamp?: string;
   }>
 > => invoke("list_subagents", { sessionDir });
+
+/** v0.6.0: 单个子代理的轻量级摘要(Agent 卡片内嵌展开用) */
+export const apiGetSubagentSummary = (
+  sessionDir: string,
+  agentId: string
+): Promise<SubagentSummary | null> => invoke("get_subagent_summary", { sessionDir, agentId });
 
 /** v0.5.0:便利 helper — 直接传 SessionMeta。
  *

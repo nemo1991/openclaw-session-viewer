@@ -98,6 +98,26 @@ export interface NormalizedMessage {
   rawType: string;
 }
 
+// --- v0.6.0: 单个子代理摘要(Agent 卡片内嵌展开) ---
+/**
+ * 单个子代理的轻量级摘要,在 Agent 卡片内嵌展开时调用,
+ * 避免 navigate 跳到独立子 session 详情页。
+ *
+ * 由 Rust `get_subagent_summary` 命令返回。
+ */
+export interface SubagentSummary {
+  agentId: string;
+  description: string | null;
+  agentType: string | null;
+  messageCount: number | null;
+  /** 工具使用分布,按 count 降序: `[["Bash", 8], ["Read", 5], ...]` */
+  toolDistribution: Array<[string, number]>;
+  firstTimestamp: string | null;
+  lastTimestamp: string | null;
+  /** 从 first 到 last 的秒数 */
+  durationSeconds: number | null;
+}
+
 /** 解析后的转录条目(含位置) */
 export interface TranscriptEntry {
   index: number;

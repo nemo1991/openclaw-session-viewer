@@ -88,6 +88,12 @@ const zhCN = {
       empty: "该会话无子代理",
       openChild: "打开子会话详情",
       backToParent: "返回父会话",
+      spawnDepth: "递归层级 {{depth}}",
+    },
+    subagentInlineSummary: {
+      messageCount: "{{n}} 条消息",
+      messages: "条",
+      moreTools: "还有 {{n}} 个工具未显示",
     },
     taskOpenDetail: "打开子代理详情",
   },
