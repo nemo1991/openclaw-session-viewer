@@ -74,8 +74,16 @@ function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) 
     );
   }
 
+  // v0.6.0: 子代理内部消息缩进 (子 session 视角下, 所有消息 isSidechain=true 且有 subagentId)
+  // 用 msg.subagentId 触发 .msg-subagent class, CSS 加左侧 border + 缩进
+  const isSubagent = Boolean(msg.subagentId);
+  const cls = `msg msg-${msg.role}${isSubagent ? " msg-subagent" : ""}`;
   return (
-    <div className={`msg msg-${msg.role}`}>
+    <div
+      className={cls}
+      data-subagent-id={isSubagent ? msg.subagentId : undefined}
+      data-is-sidechain={msg.isSidechain ? "true" : "false"}
+    >
       <MessageHeader
         role={msg.role}
         model={msg.model}

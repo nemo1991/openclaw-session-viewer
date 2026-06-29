@@ -300,6 +300,51 @@ describe("MessageBubble", () => {
       expect(details).toBeInTheDocument();
     });
   });
+
+  // v0.6.0: subagentId 缩进渲染
+  describe("v0.6.0: subagentId 缩进", () => {
+    it("子代理消息 (subagentId 存在) → 加 .msg-subagent class + data-subagent-id", () => {
+      const entry: TranscriptEntryOut = {
+        index: 0,
+        byteOffset: 0,
+        raw: {},
+        normalized: {
+          id: "uuid-1",
+          role: "assistant",
+          blocks: [{ kind: "text", text: "子代理内部思考" }],
+          isSidechain: true,
+          subagentId: "a1d924c184a57a7da",
+          rawType: "assistant",
+        },
+      };
+      const { container } = render(<MessageBubble entry={entry} />);
+      const bubble = container.querySelector(".msg.msg-assistant");
+      expect(bubble).toBeInTheDocument();
+      expect(bubble?.classList.contains("msg-subagent")).toBe(true);
+      expect(bubble?.getAttribute("data-subagent-id")).toBe("a1d924c184a57a7da");
+      expect(bubble?.getAttribute("data-is-sidechain")).toBe("true");
+    });
+
+    it("主 session 消息 (无 subagentId) → 不加 .msg-subagent", () => {
+      const entry: TranscriptEntryOut = {
+        index: 0,
+        byteOffset: 0,
+        raw: {},
+        normalized: {
+          id: "uuid-2",
+          role: "user",
+          blocks: [{ kind: "text", text: "主 session 用户消息" }],
+          isSidechain: false,
+          rawType: "user",
+        },
+      };
+      const { container } = render(<MessageBubble entry={entry} />);
+      const bubble = container.querySelector(".msg.msg-user");
+      expect(bubble).toBeInTheDocument();
+      expect(bubble?.classList.contains("msg-subagent")).toBe(false);
+      expect(bubble?.getAttribute("data-subagent-id")).toBeNull();
+    });
+  });
 });
 
 describe("BlockRenderer 独立使用", () => {
