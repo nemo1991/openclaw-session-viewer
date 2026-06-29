@@ -16,6 +16,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowLeft, Download, Sparkles, Search, Activity } from "lucide-react";
 
 import { useTranscriptStore } from "../state/transcriptStore";
+import { useSessionsStore } from "../state/sessionsStore";
 import { useLivePids } from "../hooks/useLivePids";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
 import { useTranscriptPipeline } from "../hooks/useTranscriptPipeline";
@@ -163,6 +164,33 @@ export default function SessionDetailRoute() {
   // v0.5.0:子会话识别 — 从 location.state 读 subagentContext
   const subCtx = (location.state as { subagentContext?: SubagentContext } | null)?.subagentContext;
 
+  // v0.5.0 修复:back-to-parent 跳转时,从 sessionsStore 找父 jsonlPath,
+  // 通过 ?path= 持久化,避免父页 meta=undefined → notFound。
+  // sessions 可能在子会话详情页打开时尚未加载,此时 click 触发一次 load 再 navigate。
+  const sessions = useSessionsStore((s) => s.sessions);
+  const loadSessions = useSessionsStore((s) => s.load);
+  const handleBackToParent = async () => {
+    if (!subCtx) return;
+    // 先确保 sessions 列表有数据(若没 mount 过,load 一次)
+    let allSessions = sessions;
+    if (allSessions.length === 0) {
+      await loadSessions();
+      allSessions = useSessionsStore.getState().sessions;
+    }
+    const parent = allSessions.find((s) => s.sessionId === subCtx.parentSessionId);
+    if (parent) {
+      // 走 ?path= 持久化路径 — 父页能正常加载
+      navigate(
+        `/session/${encodeURIComponent(parent.sessionId)}?path=${encodeURIComponent(parent.jsonlPath)}`,
+        { state: { session: parent } }
+      );
+    } else {
+      // 父 session 不在 list_sessions 里(罕见,如被删) — 至少 navigate 不带 state,
+      // 父页会显示 notFound,但 URL 至少是合理的
+      navigate(`/session/${encodeURIComponent(subCtx.parentSessionId)}`);
+    }
+  };
+
   return (
     <div className="session-detail">
       {/* v0.5.0:如果是子会话,在最顶部显示"返回父会话"按钮 */}
@@ -170,7 +198,7 @@ export default function SessionDetailRoute() {
         <div className="session-back-to-parent" data-testid="back-to-parent">
           <button
             type="button"
-            onClick={() => navigate(`/session/${encodeURIComponent(subCtx.parentSessionId)}`)}
+            onClick={handleBackToParent}
             title={t("detail.subagentPanel.backToParent")}
           >
             ← {t("detail.subagentPanel.backToParent")} ({subCtx.parentSessionId.slice(0, 12)}…)
