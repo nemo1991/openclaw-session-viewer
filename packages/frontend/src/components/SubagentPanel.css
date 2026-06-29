@@ -5,6 +5,8 @@
   flex-direction: column;
   margin-top: 4px;
   position: relative;
+  /* panel 宽度独立于 trigger,撑到下方内容的最小可用宽度
+   * (left: 0; right: 0; 会让 panel 跟 trigger 等宽 → 太窄看不到 description) */
 }
 
 .subagent-trigger {
@@ -21,6 +23,8 @@
   transition:
     background 0.15s,
     border-color 0.15s;
+  /* 自身不要紧贴右边,留出 panel 向右延伸的空间 */
+  align-self: flex-start;
 }
 
 .subagent-trigger:hover,
@@ -34,7 +38,11 @@
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
-  right: 0;
+  /* 用 min-width 给 panel 一个"看起来够用"的最小宽度
+   * (560 = 描述可读 + agent id 完整 + 打开按钮不换行)
+   * max-width 限死避免超出视口右边 */
+  min-width: 560px;
+  max-width: min(720px, calc(100vw - 32px));
   z-index: 40;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
