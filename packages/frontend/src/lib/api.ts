@@ -87,7 +87,17 @@ export const apiListSubagents = (
   }>
 > => invoke("list_subagents", { sessionDir });
 
-/** v0.5.0:便利 helper — 直接传 SessionMeta,内部取 subagentDir */
+/** v0.5.0:便利 helper — 直接传 SessionMeta。
+ *
+ * ⚠️ 关键约定:后端 `list_subagents(session_dir)` 期望的是**父 session 目录**,
+ * 内部会 `dir.join("subagents")`。
+ * 而 SessionMeta.subagentDir 在后端 `build_claude_session_meta` 里被填成
+ * `<sessionId>/subagents` (已带 subagents/ 后缀,见 sessions.rs:371-381),
+ * 所以这里要去掉尾部的 "/subagents" 再传,否则后端会再 join 一次变成
+ * "<sessionId>/subagents/subagents" — 必然不存在 → 返回 [] → panel 空。
+ *
+ * 修复 commit: feat(subagent): 修 apiListSubagentsByMeta 路径双 join — panel 显示 N 行
+ */
 export const apiListSubagentsByMeta = (meta: {
   subagentDir?: string | null;
 }): Promise<
@@ -104,7 +114,11 @@ export const apiListSubagentsByMeta = (meta: {
   }>
 > => {
   if (!meta.subagentDir) return Promise.resolve([]);
-  return apiListSubagents(meta.subagentDir);
+  // 把 ".../<sessionId>/subagents" 变回 ".../<sessionId>"
+  // (path 风格分隔,Windows 上前端的 path.sep 是 "/",Tauri 传来的是 "/")
+  const parent = meta.subagentDir.replace(/\/subagents\/?$/, "");
+  if (!parent || parent === meta.subagentDir) return Promise.resolve([]);
+  return apiListSubagents(parent);
 };
 
 // ===== 工具溢出 =====
