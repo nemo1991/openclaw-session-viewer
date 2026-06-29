@@ -56,8 +56,39 @@ export default function SessionDetailRoute() {
   const { livePids } = useLivePids();
   const showSearchBar = useSearchInSessionStore((s) => s.show);
 
-  const meta = (location.state as { session?: SessionMeta } | null)?.session;
-  const targetPath = meta?.jsonlPath;
+  // v0.5.0:子代理跳转用 ?path=... 持久化(子代理不在 list_sessions 里,
+  // F5 后 state 丢失 → 仍能从 URL 找到 jsonl)。
+  // 优先 URL ?path= → fallback location.state.session.jsonlPath
+  const pathFromQuery = useMemo(() => {
+    const sp = new URLSearchParams(location.search);
+    return sp.get("path");
+  }, [location.search]);
+  const metaFromState = (location.state as { session?: SessionMeta } | null)?.session;
+
+  // v0.5.0 修复:从子代理跳转时,若 location.state 因 F5/直链丢失,
+  // 用 ?path= 构造一个最小 meta,避免走 notFound 分支。
+  // 这个 meta 字段少(没 messageCount/sizeBytes 等),仅够 TranscriptView 加载
+  // 和 header 显示"返回父会话"按钮用。
+  const meta: SessionMeta | undefined = useMemo(() => {
+    if (metaFromState) return metaFromState;
+    if (!pathFromQuery || !sessionId) return undefined;
+    // basename(去掉 .jsonl)就是子代理 id 形式 (e.g. "agent-a1d92" → "a1d92")
+    // 但我们的 sessionId 就是 agentId(panel navigate 时直接用的)
+    return {
+      sessionId,
+      projectKey: "(subagent)",
+      workspaceGuess: null,
+      source: "claude",
+      jsonlPath: pathFromQuery,
+      sizeBytes: 0,
+      mtimeMs: 0,
+      messageCount: 0,
+      title: sessionId.slice(0, 16),
+      hasTrajectory: false,
+    };
+  }, [metaFromState, pathFromQuery, sessionId]);
+
+  const targetPath = pathFromQuery ?? meta?.jsonlPath;
 
   // 流式加载 transcript
   useMemo(() => {

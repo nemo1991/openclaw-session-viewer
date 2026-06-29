@@ -151,7 +151,7 @@ describe("SubagentPanel", () => {
     expect(screen.getByText(/该会话无子代理|无子代理/)).toBeInTheDocument();
   });
 
-  it("点 '打开' 按钮 → useNavigate 到 /session/<agentId> + state.subagentContext", async () => {
+  it("点 '打开' 按钮 → useNavigate 到 /session/<agentId>?path=... + state.subagentContext", async () => {
     mockedList.mockResolvedValue(mockSubs);
     render(
       <MemoryRouter>
@@ -165,8 +165,9 @@ describe("SubagentPanel", () => {
     // 点第一个 subagent 的打开按钮
     const openBtns = screen.getAllByTestId("subagent-open-btn");
     await userEvent.click(openBtns[0]!);
+    // v0.5.0:URL 加 ?path=... 持久化,F5 刷新后仍能加载 transcript
     expect(mockNavigate).toHaveBeenCalledWith(
-      "/session/a1d92",
+      "/session/a1d92?path=%2Ftmp%2Fmain%2Fsubagents%2Fagent-a1d92.jsonl",
       expect.objectContaining({
         state: expect.objectContaining({
           session: expect.objectContaining({ sessionId: "a1d92" }),

@@ -77,8 +77,13 @@ function SubagentPanelBody({
   }, [parentSession]);
 
   const handleOpenSubagent = (s: SubagentMeta) => {
-    // 跳到子会话详情页,通过 state 传父上下文
-    navigate(`/session/${encodeURIComponent(s.agentId)}`, {
+    // 跳到子会话详情页。
+    //
+    // ⚠️ 关键修复 (v0.5.0): 子代理 **不在 list_sessions 里**(只有主 session 在),
+    // 详情页 `location.state.session` 必须是构造的虚拟 session(否则走 list_sessions 路径找不到)。
+    // 同时把 path 用 URL query `?path=...` 持久化,作为 location.state 丢失时的 fallback,
+    // 并让 F5 刷新后仍能定位子代理 jsonl。
+    navigate(`/session/${encodeURIComponent(s.agentId)}?path=${encodeURIComponent(s.jsonlPath)}`, {
       state: {
         session: {
           sessionId: s.agentId,
