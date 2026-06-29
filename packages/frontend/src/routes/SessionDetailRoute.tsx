@@ -149,7 +149,7 @@ export default function SessionDetailRoute() {
     } else {
       await apiExportHtml(targetPath, out);
     }
-    await apiRevealInFinder(out);
+    await apiRevealInFinder(out, null, true);
   };
 
   if (!meta) {

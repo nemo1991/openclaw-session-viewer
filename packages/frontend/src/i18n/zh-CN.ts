@@ -177,6 +177,14 @@ const zhCN = {
     pickDir: "选择…",
     save: "保存",
     saved: "已保存",
+    // v0.6.0: 文件路径 reveal 安全策略
+    pathSecurity: {
+      title: "文件路径安全",
+      hint: "从 Read / Edit / Write 工具结果点击文件路径会触发 reveal in Finder。默认仅允许 workspace 内, 越界会被拒绝。",
+      allowRelaxed: "允许 reveal 到任一已知会话主目录 (放宽到 ~/.claude / ~/.openclaw 子树)",
+      allowRelaxedHint:
+        "打开后 reveal 仍受 assert_within_any_root 兜底防 ~/.ssh 等敏感路径, 但允许跨 workspace",
+    },
   },
   blocks: {
     thinking: "思考",

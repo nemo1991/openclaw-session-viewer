@@ -98,6 +98,18 @@ export interface AppSettings {
    * 具体 IANA 名(如 "Asia/Shanghai" / "America/New_York")则用该 TZ 显示。
    */
   timezone?: string;
+  // --- v0.6.0:文件路径 reveal 安全策略 ---
+  /**
+   * 文件路径 reveal (apiRevealInFinder) 时的安全策略:
+   * - allowRelaxed: false (默认) → 路径必须在调用时传入的 workspaceRoot 子树内,
+   *                            越界返回 Err
+   * - allowRelaxed: true          → 放宽到"在任一已知 root 下"
+   *                              (paths::assert_within_any_root 兜底防 ~/.ssh 等)
+   * 用户设置开关"允许 reveal 到会话主目录"实际就是 allowRelaxed=true
+   */
+  pathSecurity?: {
+    allowRelaxed: boolean;
+  };
 }
 
 /** 分析范围 */
@@ -159,7 +171,17 @@ export interface IpcApi {
 
   // ---- 文件系统 ----
   pick_export_dir(): Promise<string | null>;
-  reveal_in_finder(path: string): Promise<void>;
+  /**
+   * v0.6.0: reveal in Finder/Explorer 加 workspace 安全沙箱
+   * @param path 要 reveal 的文件或目录
+   * @param workspaceRoot 调用方的 workspaceGuess(null/缺失 = 不检查, 由 allowRelaxed 决定)
+   * @param allowRelaxed 来自 settings.pathSecurity.allowRelaxed
+   */
+  reveal_in_finder(args: {
+    path: string;
+    workspaceRoot?: string | null;
+    allowRelaxed?: boolean;
+  }): Promise<void>;
 }
 
 /** 默认设置 */
@@ -174,4 +196,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   uiLanguage: "zh-CN",
   customRoots: [],
   timezone: "auto",
+  // v0.6.0:文件路径 reveal 默认锁紧在 workspace 内
+  pathSecurity: { allowRelaxed: false },
 };

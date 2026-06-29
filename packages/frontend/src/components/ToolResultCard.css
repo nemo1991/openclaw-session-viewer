@@ -117,3 +117,17 @@
   max-height: 600px;
   overflow: auto;
 }
+
+/* v0.6.0: 文件路径可点击 reveal */
+.tool-result-file.file-path-clickable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  transition:
+    color 0.1s,
+    background 0.1s;
+}
+
+.tool-result-file.file-path-clickable:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
+}
