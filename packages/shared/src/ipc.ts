@@ -37,6 +37,9 @@ export interface SubagentMeta {
   firstTimestamp?: string;
   /** 末条消息 ISO timestamp */
   lastTimestamp?: string;
+  // --- v0.6.0:递归子代理层级(从 .meta.json 的 spawnDepth) ---
+  /** 0 = 主 session 直接派出, 1+ = 递归深度 */
+  spawnDepth?: number;
 }
 
 /** 搜索结果 */

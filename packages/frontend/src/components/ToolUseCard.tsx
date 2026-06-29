@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Wrench,
@@ -15,6 +15,7 @@ import { computeLineDiff, diffStats, DiffTooLargeError, type DiffLine } from "..
 import { apiListSubagentsByMeta } from "../lib/api";
 import { useSessionsStore } from "../state/sessionsStore";
 import { useTranslation } from "react-i18next";
+import { SubagentInlineSummary } from "./SubagentInlineSummary";
 import "./ToolUseCard.css";
 
 interface Props {
@@ -253,50 +254,66 @@ function TaskToolBody({
   const content = input.content ? String(input.content) : "";
   const taskId = String(input.taskId ?? "");
 
-  // v0.5.0:点击按钮 → 按 toolUseId 匹配子代理
+  // v0.6.0: 异步解析子代理 agentId(按 toolUseId 匹配 .meta.json)
+  // 解析后传给 SubagentInlineSummary 显示摘要;解析失败 InlineSummary 走 error 态
   const [resolvedAgentId, setResolvedAgentId] = useState<string | null>(null);
-  const [resolving, setResolving] = useState(false);
-  const handleOpenSubagent = async () => {
+  const [parentSessionDir, setParentSessionDir] = useState<string | null>(null);
+  useEffect(() => {
     if (!toolUseId || !parentSessionId) return;
-    setResolving(true);
-    try {
+    let cancelled = false;
+    (async () => {
       const meta = useSessionsStore
         .getState()
         .sessions.find((s) => s.sessionId === parentSessionId);
       if (!meta?.subagentDir) return;
       const subs = await apiListSubagentsByMeta(meta);
-      // 按 .meta.json toolUseId 字段精确匹配(实测 19/19)
+      if (cancelled) return;
+      // .meta.json toolUseId 字段精确匹配(实测 19/19)
       const matched = subs.find((s) => s.meta?.toolUseId === toolUseId);
       if (matched) {
-        navigate(`/session/${encodeURIComponent(matched.agentId)}`, {
-          state: {
-            session: {
-              sessionId: matched.agentId,
-              jsonlPath: matched.jsonlPath,
-              title: matched.description ?? matched.agentId,
-              workspaceGuess: meta.workspaceGuess ?? meta.projectKey,
-              projectKey: meta.projectKey,
-              primaryModel: meta.primaryModel ?? null,
-              messageCount: matched.messageCount ?? 0,
-              sizeBytes: 0,
-              firstTimestamp: matched.firstTimestamp ?? null,
-              hasTrajectory: false,
-              subagentDir: null,
-              totalTokens: undefined,
-              source: "claude",
-            },
-            subagentContext: {
-              parentSessionId,
-              agentId: matched.agentId,
-              agentType: matched.agentType ?? null,
-            },
-          },
-        });
         setResolvedAgentId(matched.agentId);
+        // parentSessionDir = meta.subagentDir 去掉尾 /subagents
+        setParentSessionDir(meta.subagentDir.replace(/\/subagents\/?$/, ""));
       }
-    } finally {
-      setResolving(false);
-    }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [toolUseId, parentSessionId]);
+
+  const handleOpenChildPage = async () => {
+    if (!resolvedAgentId) return;
+    const meta = useSessionsStore.getState().sessions.find((s) => s.sessionId === parentSessionId);
+    const subs = await apiListSubagentsByMeta(meta ?? { subagentDir: null });
+    const matched = subs.find((s) => s.agentId === resolvedAgentId);
+    if (!matched) return;
+    navigate(
+      `/session/${encodeURIComponent(resolvedAgentId)}?path=${encodeURIComponent(matched.jsonlPath)}`,
+      {
+        state: {
+          session: {
+            sessionId: matched.agentId,
+            jsonlPath: matched.jsonlPath,
+            title: matched.description ?? matched.agentId,
+            workspaceGuess: meta?.workspaceGuess ?? meta?.projectKey ?? "",
+            projectKey: meta?.projectKey ?? "",
+            primaryModel: meta?.primaryModel ?? null,
+            messageCount: matched.messageCount ?? 0,
+            sizeBytes: 0,
+            firstTimestamp: matched.firstTimestamp ?? null,
+            hasTrajectory: false,
+            subagentDir: null,
+            totalTokens: undefined,
+            source: "claude",
+          },
+          subagentContext: {
+            parentSessionId: parentSessionId ?? "",
+            agentId: matched.agentId,
+            agentType: matched.agentType ?? null,
+          },
+        },
+      }
+    );
   };
 
   if (isUpdate) {
@@ -314,8 +331,9 @@ function TaskToolBody({
     );
   }
 
-  // v0.5.0:只有 Claude Agent(非 TaskCreate/TaskUpdate)且有 toolUseId + parent 上下文时才显示
-  const showSubagentButton = !isUpdate && !!toolUseId && !!parentSessionId && !!parentJsonlPath;
+  // v0.6.0: 显示 InlineSummary 需 toolUseId + parent 上下文 + 已解析出 resolvedAgentId
+  // 解析是异步的,InlineSummary 内部 loading/error 态由它自己处理
+  const canShowInlineSummary = !isUpdate && !!toolUseId && !!parentSessionId && !!parentJsonlPath;
 
   return (
     <div className="tool-body-task">
@@ -326,21 +344,13 @@ function TaskToolBody({
           {prompt.length > 200 ? prompt.slice(0, 200) + "…" : prompt}
         </pre>
       )}
-      {showSubagentButton && (
-        <div className="tool-task-actions">
-          <button
-            className="tool-task-action-btn"
-            data-testid="open-subagent-detail"
-            disabled={resolving || !!resolvedAgentId}
-            onClick={handleOpenSubagent}
-            title={t("detail.taskOpenDetail")}
-          >
-            <ExternalLink size={11} /> {t("detail.taskOpenDetail")}
-          </button>
-          {resolvedAgentId && (
-            <span className="tool-task-resolved">→ agent-{resolvedAgentId.slice(0, 12)}</span>
-          )}
-        </div>
+      {/* v0.6.0: 内嵌子代理摘要(取代 v0.5.0 的 navigate 按钮) */}
+      {canShowInlineSummary && resolvedAgentId && parentSessionDir && (
+        <SubagentInlineSummary
+          parentSessionDir={parentSessionDir}
+          agentId={resolvedAgentId}
+          onOpenChildPage={handleOpenChildPage}
+        />
       )}
     </div>
   );
