@@ -6,6 +6,7 @@
 
 | 版本    | 日期       | 主题                                                       | Rust 测试 | TS 测试 | 合计 |
 | ------- | ---------- | ---------------------------------------------------------- | --------: | ------: | ---: |
+| [0.5.0] | 2026-06-29 | 主-子 agent 关联展示 (SubagentPanel)                       |        94 |     251 |  345 |
 | [0.4.4] | 2026-06-25 | 重新设计 app icon (渐变 + 几何 C + 平台 mask)              |        94 |      65 |  159 |
 | [0.4.3] | 2026-06-25 | 会话内搜索下拉 + 6 个 bug 修复                             |        94 |      65 |  159 |
 | [0.4.2] | 2026-06-25 | Edit diff / 工具默认展开 / 时区设置 / 默认 OpenClaw        |        94 |      65 |  159 |
@@ -27,40 +28,70 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-29
+
+主-子 agent 关联展示 — 一个视图看清主代理何时派出哪些子代理,研究运行机制。
+
+### 背景
+
+Claude Code 的 sub-agent 会话展示碎片化:子代理 jsonl 在 `<mainSessionId>/subagents/agent-<id>.jsonl`,主 session timeline 里只有 `Agent` tool_use 卡片。本次按"本地数据 + 项目代码 + Claude 官方 docs"三角度验证后,设计成:
+
+- **关联键**:`toolUseId` (实测 19/19 匹配主 session `Agent` tool_use.id,强于路径关联)
+- **数据复用**:后端 `list_subagents` 命令已存在但前端零调用,扩字段不重写
+- **URL 一致**:子代理也走 `/session/<id>`,不引入新路由
+- **状态传父**:`location.state.subagentContext: { parentSessionId, agentId }`
+- **返回按钮合并**:子会话顶部不独立条,直接复用 header `.back-btn` 改文字
+
 ### 新增
 
-- 🧪 **测试体系大幅增强**:
-  - 单元测试 24 → **108** (+84) — 新增 6 个测试文件覆盖 v0.4.x 主要新功能
-    - `searchInSessionStore` (19 case): search 索引 / 大小写 / 跨 entry / snippet padding / next/prev 循环 / setCurrentHitIndex clamping
-    - `transcriptFilterStore` (13 case): preset 数学 (1h/24h/7d 用 vi.useFakeTimers 锁住 Date.now) / setRange / isFilterActive
-    - `settingsStore` (8 case): load() 失败 fallback / save() / update() 嵌套 anthropic 合并 / timezone (v0.4.2)
-    - `keymap` (12 case): 单键 / cmd+shift+f 多 modifier / 大小写不敏感
-    - `api.extractErrorMessage` (13 case): 修 [object Object] 错误 / 字符串 / 对象 / null / 嵌套
-    - `format` (+19 case): formatBytes (B/KB/MB/GB 边界) / formatNumber (k/M 阈值) / formatTime (刚刚/分钟前/小时前/天前/fallback)
-  - **可视化组件测试** (vitest + @testing-library/react + jsdom) — **77 case**
-    - `MessageBubble` (21): 4 角色头部 / 5 种 block 渲染 / meta 分支 7 种已知 + 未知 + 子代理 / BlockRenderer 入口
-    - `ToolUseCard` (27): Edit 走 line diff (stats / fallback / replace_all badge) / Bash (description + 后台 + 空命令) / Read (offset+limit 行号指示) / Task (Create/Update 区分) / 其它 JSON dump
-    - `ToolResultCard` (12): 默认展开 / 成功 vs 失败文案 / stdout 提取 / 数组拼接 / 500 字符截断 / shiki 高亮 (mock) / 未知扩展名 fallback
-    - `UnknownBlockCard` (17): 有/无 payload 退化 / 字段表 / 启发式 hint (tool_use/thinking/image/tool_result) / 复制 / 报告 / 字段值类型 (null/undefined/数字/布尔/长字符串/大对象)
-  - **Playwright E2E 配置** (e2e/smoke.spec.ts + playwright.config.ts)
-    - smoke 测试:首屏挂载 + 无 JS 错误
-    - 用 globalSetup 手动起 vite preview (绕开 Playwright webServer 的 http_proxy check)
-    - chromium 启动加 `--proxy-bypass-list=*` 兜底直连
-    - 注意:在系统代理指向不存在代理的 dev 环境下 e2e 仍可能失败;`pnpm -r test` (185 case) 跑通即可
+- 🆕 **SubagentPanel 组件** (`packages/frontend/src/components/SubagentPanel.{tsx,css}`)
+  - trigger 显示 `⎇ 子代理 (N) [展开▾]`,展开后调 `apiListSubagentsByMeta` 拉详情
+  - 每行:序号 + agentId + type badge (Explore/Plan/general-purpose) + description + 时间段 + 消息数 + 打开按钮
+  - 按 firstTimestamp 升序排,空状态显示"该会话无子代理"
+- 🆕 **列表 badge 数字** (`SessionsRoute.tsx`):主会话卡片右侧显示 `⎇ N`,`data-testid="subagent-count-badge"`,`data-count={N}`
+- 🆕 **Agent tool_use 卡片** (`ToolUseCard.tsx`): 跟 Task 同 schema 走 `TaskToolBody`, 修复 Claude 实际发 `name: "Agent"` 而非 `"Task"` 的错配(实测 19/19)
+- 🆕 **Agent 卡片"打开子代理详情"按钮**: 从 `meta.toolUseId` 匹配 `.meta.json` 的 `toolUseId`,跳到子会话
+- 🆕 **SessionMeta 新字段** (`shared/normalize.ts` + Rust `model/mod.rs`): `subagentCount?: number` / `subagentIds?: string[]`
+- 🆕 **SubagentMeta 新字段** (`subagents.rs` 头部 200 行扫描): `agentType` / `description` / `messageCount` / `firstTimestamp` / `lastTimestamp`
+- 🆕 **i18n 键** (`zh-CN.ts`): `detail.subagentTrigger` / `detail.subagentPanel.{title,open,close,empty,openChild,backToParent}` / `detail.taskOpenDetail`
+- 🆕 **SessionDetailRoute 子会话支持**: `location.state.subagentContext` 识别子会话,header `.back-btn` 复用为"返回父会话"并显示父 id 截断
 
-### 变更
+### 修复
 
-- 🔧 **`matchKey` 改 export** — 纯函数移到 export,方便单测
-- 🔧 **`extractErrorMessage` 移到 `lib/api.ts`** — 从 `transcriptStore.ts` 私有函数改为共享工具,transcriptStore re-export
-- 🔧 **vitest 配置增强** — vite.config.ts 加 `test.setupFiles` (Tauri api mock + i18n init + @testing-library/jest-dom) + `css: false`
-- 🔧 **devDeps 新增**: `@testing-library/react` ^16.3.2 / `@testing-library/jest-dom` ^6.9.1 / `@testing-library/user-event` ^14.6.1 / `jsdom` ^29.1.1 / `@playwright/test` ^1.61.1
-- 📝 **package.json scripts**: 加 `test:e2e` (playwright test) + `test:all` (unit + e2e)
+- 🐛 **`apiListSubagentsByMeta` 路径双 join** (`packages/frontend/src/lib/api.ts`):
+  - 后端 `build_claude_session_meta:371-381` 把 `subagentDir` 填成 `<sessionId>/subagents/`(已带 `subagents/`),前端 helper 又直接传给后端,后端 `list_subagents` 内部 `.join("subagents")` → 路径变 `subagents/subagents/`,必然不存在 → 返回 `vec![]` → panel 永远 "无子代理"
+  - 修复:helper 内 `replace(/\/subagents\/?$/, "")` 剥掉尾部,后端 join 一次正好 = 真实子代理目录
+  - 烟测:对真实 `~/.claude/projects/.../a2349f0e-.../subagents` 验证,fix 前 `exists? false`,fix 后 `exists? true`
+- 🐛 **子会话跳回父会话显示 notFound** (`SessionDetailRoute.tsx`):
+  - 旧实现 `navigate('/session/<parentId>')` 不传 state,父页 mount 时 `meta = undefined` → `if (!meta)` 触发 notFound
+  - 修复:从 `useSessionsStore` 找父 session,`navigate('?path=<parentJsonlPath>', { state: { session: parent } })`,sessionsStore 为空时触发 `load()` 再 find
+- 🐛 **Panel 太窄** (`SubagentPanel.css`): `.subagent-panel` 用 `left: 0; right: 0` 让宽度跟 trigger 等宽,description 看不到;改 `min-width: 560px` + `max-width: min(720px, 100vw-32px)`,trigger `align-self: flex-start`
+- 🐛 **顶部返回按钮跟 header 重复** (`SessionDetailRoute.tsx`):
+  - 顶部独立 `.session-back-to-parent` 条 + header `.back-btn` 视觉冗余
+  - 修复:去掉独立条,header `.back-btn` 在子会话场景下自动变 "← 返回父会话 (parent-sessi…)" 并调 `handleBackToParent`
+  - data-testid:子会话时 `back-to-parent`(兼容 E2E),非子会话时 `back-to-list`
+
+### 重构
+
+- ♻️ **ToolUseCard 27 个 test 全用 MemoryRouter 包装** (因 `useNavigate` 需要 Router 上下文)— `sed` 批量替换
+- ♻️ **API helper 拆公共路径** (`lib/api.ts`): `apiListSubagentsByMeta(meta)` 从 `apiListSubagents(sessionDir)` 派生,前端调用更简洁
+- ♻️ **删除 `SubagentMetaBlock` 死代码引用** (未用)— 减少 confusable
 
 ### 测试
 
-- 🧪 Rust 单元测试 94 个(不变)
-- 🧪 TypeScript 测试 24 → **108** (+84 单元) + 77 组件 = **185 frontend tests**
-- 🧪 合计: 94 + 41 (shared) + 108 (frontend unit) + 77 (frontend component) = **320 tests**
+- 🧪 **新增 17 个 case**:
+  - `apiListSubagentsByMeta` (5): 路径剥 / 尾带 `/` / undefined / null / 防御性 short-circuit
+  - `SubagentPanel` (7 → 含 1 bug 回归): count=0/3,展开,2 行渲染,空状态,打开按钮,bug 回归(?)
+  - `SessionDetailRoute` (5): back-to-parent 按钮,点 back → ?path= navigate,sessionsStore 空触发 load,父不在 list fallback,非子会话 back-to-list
+- 🧪 E2E spec 新增 4 个 (在 `test.describe.skip` 里): vite preview 下 react-router pushState 不触发重渲染,真 Tauri 环境应能跑通
+- 🧪 合计: 94 Rust + 41 shared + 251 frontend = **386 tests** (其中 17 来自本次 0.5.0)
+- 🧪 vi.mock `react-router-dom` 时 `mockNavigate` 必须用 `vi.hoisted` 包裹(hoisting 顺序问题,踩坑记入)
+
+### 文件
+
+- 新增:`packages/frontend/src/components/SubagentPanel.{tsx,css}` + `.test.tsx` + `packages/frontend/src/routes/SessionDetailRoute.test.tsx`
+- 修改:ToolUseCard / MessageBubble / TranscriptView / SessionDetailRoute / SessionsRoute / SubagentPanel / lib/api.ts / i18n/zh-CN.ts / shared/normalize.ts / 5 个 Rust 文件
+- 文档:`CHANGELOG.md` (本 section) + `e2e/detail-page.spec.ts` 注释
 
 ## [0.4.4] - 2026-06-25
 
