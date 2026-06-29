@@ -215,13 +215,31 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
             });
         }
         "last-prompt" => {
-            let prompt = obj.get("prompt").cloned().unwrap_or(Value::Null);
+            // v0.6.0: 真实数据字段是 `lastPrompt` (camelCase), 兼容老版本 `prompt`
+            let prompt = obj
+                .get("lastPrompt")
+                .or_else(|| obj.get("prompt"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let leaf_uuid = obj
+                .get("leafUuid")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let mut data = serde_json::Map::new();
             data.insert(
                 "label".to_string(),
                 Value::String("last-prompt".to_string()),
             );
-            data.insert("payload".to_string(), prompt);
+            // v0.6.0: payload 结构改成 { prompt, leafUuid? } 跟前端 normalize.ts 对齐
+            // (之前是裸 string, UI 拿不到 leafUuid 无法跳转)
+            let mut payload = serde_json::Map::new();
+            if !prompt.is_null() {
+                payload.insert("prompt".to_string(), prompt);
+            }
+            if let Some(lu) = leaf_uuid {
+                payload.insert("leafUuid".to_string(), Value::String(lu));
+            }
+            data.insert("payload".to_string(), Value::Object(payload));
             msg.blocks.push(NormalizedBlock {
                 kind: "meta".to_string(),
                 data,
