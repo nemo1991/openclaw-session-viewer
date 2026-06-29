@@ -191,24 +191,33 @@ export default function SessionDetailRoute() {
     }
   };
 
+  // v0.5.0:返回按钮逻辑 — 子会话场景下"返回"回父会话,否则回列表。
+  // 复用同一按钮,不再单独渲染顶部 back-to-parent 条,避免视觉重复。
+  const handleBack = () => {
+    if (subCtx) {
+      void handleBackToParent();
+    } else {
+      navigate("/");
+    }
+  };
+
   return (
     <div className="session-detail">
-      {/* v0.5.0:如果是子会话,在最顶部显示"返回父会话"按钮 */}
-      {subCtx && (
-        <div className="session-back-to-parent" data-testid="back-to-parent">
-          <button
-            type="button"
-            onClick={handleBackToParent}
-            title={t("detail.subagentPanel.backToParent")}
-          >
-            ← {t("detail.subagentPanel.backToParent")} ({subCtx.parentSessionId.slice(0, 12)}…)
-          </button>
-        </div>
-      )}
-
       <header className="session-header" data-testid="session-header">
-        <button onClick={() => navigate("/")} className="back-btn">
-          <ArrowLeft size={16} /> {t("detail.back")}
+        <button
+          onClick={handleBack}
+          className="back-btn"
+          data-testid={subCtx ? "back-to-parent" : "back-to-list"}
+          title={subCtx ? t("detail.subagentPanel.backToParent") : t("detail.back")}
+        >
+          <ArrowLeft size={16} />{" "}
+          {subCtx ? (
+            <>
+              {t("detail.subagentPanel.backToParent")} ({subCtx.parentSessionId.slice(0, 12)}…)
+            </>
+          ) : (
+            t("detail.back")
+          )}
         </button>
         <div className="session-header-info">
           <h1>{meta.title || meta.sessionId.slice(0, 8)}</h1>
