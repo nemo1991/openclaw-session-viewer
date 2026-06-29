@@ -10,10 +10,16 @@
  * 后端把它们归一化成 `kind: "meta"`,label 前缀分别为 "mode:" / "permission:" / "title" / "last-prompt"。
  *
  * 这里把它们识别出来,渲染成可折叠的"子代理元数据"块,默认折叠,点开看 value。
+ *
+ * v0.6.0: last-prompt 的 payload 结构从 `string` 改为 `{ prompt, leafUuid? }`
+ *  - 真实数据字段是 `lastPrompt` (camelCase), 之前取 `record.prompt` 永远是 undefined
+ *  - leafUuid 指向最后一条 user message (实测 5/5 命中), /resume 触发的恢复点
+ *  - UI 显示 prompt 全文, 旁边 "跳到对话位置" 按钮用 leafUuid 跳
  */
 
-import { Bot, FileText } from "lucide-react";
+import { Bot, FileText, ExternalLink } from "lucide-react";
 import type { NormalizedBlockFE } from "../lib/api";
+import { useTranscriptStore } from "../state/transcriptStore";
 
 interface Props {
   block: NormalizedBlockFE;
@@ -26,6 +32,8 @@ interface Parsed {
   summary: string;
   /** 展开后显示的内容,string 直接展示,object 走 JSON.stringify */
   detail: string;
+  /** v0.6.0: 可选 leafUuid — last-prompt 跳到对应 user message */
+  leafUuid?: string;
 }
 
 function parse(block: NormalizedBlockFE): Parsed | null {
@@ -53,18 +61,28 @@ function parse(block: NormalizedBlockFE): Parsed | null {
     };
   }
 
-  // last-prompt:label="last-prompt",payload 是 string(用户上一条 prompt 全文)
+  // v0.6.0: last-prompt 兼容新 schema { prompt, leafUuid? } + 旧 schema (裸 string)
   if (label === "last-prompt") {
+    const promptText =
+      typeof payload === "string"
+        ? payload
+        : typeof payload === "object" && payload !== null
+          ? String((payload as { prompt?: unknown }).prompt ?? "")
+          : "";
+    const leafUuid =
+      typeof payload === "object" && payload !== null
+        ? (payload as { leafUuid?: unknown }).leafUuid
+        : undefined;
     return {
       icon: FileText,
       badge: "last-prompt",
-      summary:
-        typeof payload === "string"
-          ? payload.length > 60
-            ? payload.slice(0, 60) + "…"
-            : payload
-          : "(无内容)",
-      detail: typeof payload === "string" ? payload : JSON.stringify(payload ?? "", null, 2),
+      summary: promptText
+        ? promptText.length > 60
+          ? promptText.slice(0, 60) + "…"
+          : promptText
+        : "(无内容)",
+      detail: promptText || "(无内容)",
+      leafUuid: typeof leafUuid === "string" ? leafUuid : undefined,
     };
   }
 
@@ -95,6 +113,52 @@ export function SubagentMetaBlock({ block }: Props) {
         <span className="subagent-meta-chevron">▸</span>
       </summary>
       <pre className="subagent-meta-detail">{parsed.detail}</pre>
+      {parsed.leafUuid && <LeafJumpButton leafUuid={parsed.leafUuid} />}
     </details>
+  );
+}
+
+/**
+ * v0.6.0: last-prompt 跳到对应 user message 按钮
+ * - 在 entries 里找 uuid 匹配的 entry
+ * - 找到 → virtualizer.scrollToIndex(localIdx, { align: "center" })
+ * - 找不到 → 提示 "目标消息不在当前 transcript 范围"
+ */
+function LeafJumpButton({ leafUuid }: { leafUuid: string }) {
+  const entries = useTranscriptStore((s) => s.entries);
+  const jumpTo = useTranscriptStore((s) => s.jumpTo);
+
+  const shortId = leafUuid.slice(0, 8);
+  const matchedEntry = entries.find((e) => e.normalized?.id === leafUuid);
+  const matchedIdx = matchedEntry?.index ?? -1;
+
+  const handleClick = () => {
+    if (matchedIdx < 0) {
+      // 找不到时给出明确提示, 不静默失败
+      console.warn(
+        `[last-prompt] leafUuid ${shortId}... 不在当前 transcript 范围 (${entries.length} 条)`,
+        { leafUuid }
+      );
+      return;
+    }
+    // 通过 store.jumpTo 触发, TranscriptView 内的 useTranscriptScroll 监听滚动
+    jumpTo(matchedIdx);
+  };
+
+  return (
+    <button
+      type="button"
+      className="subagent-meta-jump-btn"
+      data-testid="last-prompt-jump"
+      onClick={handleClick}
+      title={
+        matchedIdx >= 0
+          ? `跳到 uuid=${shortId}... 的消息 (entry #${matchedIdx})`
+          : `uuid=${shortId}... 不在当前 transcript 范围`
+      }
+    >
+      <ExternalLink size={10} />{" "}
+      {matchedIdx >= 0 ? `跳到 user message (${shortId}…)` : `目标不在范围 (${shortId}…)`}
+    </button>
   );
 }

@@ -14,8 +14,12 @@ interface TranscriptStore {
   totalCount: number;
   loadedCount: number;
   error: string | null;
+  /** v0.6.0: 跳转目标 entry.index — 任意组件可 set, TranscriptView 监听滚动 */
+  jumpTarget: number | null;
   start: (path: string) => Promise<void>;
   reset: () => void;
+  /** v0.6.0: 触发跳到 entry.index(被 useTranscriptScroll 在 TranscriptView 监听) */
+  jumpTo: (entryIndex: number) => void;
 }
 
 export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
@@ -25,6 +29,7 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
   totalCount: 0,
   loadedCount: 0,
   error: null,
+  jumpTarget: null,
   reset: () =>
     set({
       path: null,
@@ -33,7 +38,9 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
       totalCount: 0,
       loadedCount: 0,
       error: null,
+      jumpTarget: null,
     }),
+  jumpTo: (entryIndex: number) => set({ jumpTarget: entryIndex }),
   start: async (path: string) => {
     if (get().path === path) return;
     get().reset();

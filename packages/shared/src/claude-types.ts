@@ -143,7 +143,14 @@ export interface CustomTitleRecord extends ClaudeEnvelope {
 
 export interface LastPromptRecord extends ClaudeEnvelope {
   type: "last-prompt";
+  /**
+   * v0.6.0: 真实数据用 `lastPrompt` (camelCase),不是 `prompt`。
+   * 实测 ~/.claude/projects/.../a2349...jsonl 753 条 last-prompt 全部用 lastPrompt 字段。
+   * 旧的 `prompt` 字段保留作 optional 兼容(避免老 Claude 版本 break)。
+   */
+  lastPrompt?: string;
   prompt?: string;
+  /** 指向最后一条 user message 的 uuid(/resume 触发的恢复点) */
   leafUuid?: string;
 }
 
@@ -177,7 +184,23 @@ export type ClaudeRecord =
   | LastPromptRecord
   | FileHistorySnapshotRecord
   | TaskReminderRecord
-  | (ClaudeEnvelope & { type: Exclude<ClaudeRecordType, "user" | "assistant" | "system" | "attachment" | "mode" | "permission-mode" | "ai-title" | "custom-title" | "last-prompt" | "file-history-snapshot" | "task_reminder">; [k: string]: unknown });
+  | (ClaudeEnvelope & {
+      type: Exclude<
+        ClaudeRecordType,
+        | "user"
+        | "assistant"
+        | "system"
+        | "attachment"
+        | "mode"
+        | "permission-mode"
+        | "ai-title"
+        | "custom-title"
+        | "last-prompt"
+        | "file-history-snapshot"
+        | "task_reminder"
+      >;
+      [k: string]: unknown;
+    });
 
 /** 类型守卫 */
 export function isUserRecord(r: ClaudeRecord): r is UserRecord {

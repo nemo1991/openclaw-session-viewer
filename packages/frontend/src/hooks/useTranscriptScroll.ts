@@ -15,6 +15,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type { TranscriptEntryOut } from "../lib/api";
 import type { InSessionHit } from "../state/searchInSessionStore";
+import { useTranscriptStore } from "../state/transcriptStore";
 
 interface ScrollOpts {
   sortedEntries: TranscriptEntryOut[];
@@ -73,6 +74,17 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
     },
     [sortedEntries, virtualizer]
   );
+
+  // v0.6.0: 监听 useTranscriptStore.jumpTarget — 任意组件 (SubagentMetaBlock LeafJumpButton)
+  // 可触发跳到 entry.index (last-prompt.leafUuid 等场景)
+  useEffect(() => {
+    const target = useTranscriptStore.getState().jumpTarget;
+    if (target == null) return;
+    const idx = sortedEntries.findIndex((e) => e.index === target);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
+    // 触发后清空, 避免重复触发 (如 React strict mode 跑两次 effect)
+    useTranscriptStore.setState({ jumpTarget: null });
+  }, [sortedEntries, virtualizer]);
 
   return { parentRef, virtualizer, jumpToEntry };
 }

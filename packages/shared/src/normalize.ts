@@ -214,13 +214,23 @@ export function normalizeClaudeRecord(
         blocks: [{ kind: "meta", label: "title", payload: record.title }],
         rawType: record.type,
       };
-    case "last-prompt":
+    case "last-prompt": {
+      // v0.6.0: 真实数据字段是 `lastPrompt` (camelCase), 不是 `prompt`。
+      // 优先取 lastPrompt, fallback 到 prompt (老版本兼容)。
+      const promptText = record.lastPrompt ?? record.prompt ?? "";
+      // leafUuid 指向最后一条 user message (实测 5/5 命中 type=user) — /resume 触发的恢复点
+      // 透传到 payload 里, UI 可点击跳到那条 message
+      const payload: Record<string, unknown> = { prompt: promptText };
+      if (record.leafUuid) {
+        payload.leafUuid = record.leafUuid;
+      }
       return {
         ...base,
         role: "meta",
-        blocks: [{ kind: "meta", label: "last-prompt", payload: record.prompt }],
+        blocks: [{ kind: "meta", label: "last-prompt", payload }],
         rawType: "last-prompt",
       };
+    }
     case "file-history-snapshot":
       return {
         ...base,
