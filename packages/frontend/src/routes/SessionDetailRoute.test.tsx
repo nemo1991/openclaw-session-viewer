@@ -111,10 +111,12 @@ describe("SessionDetailRoute — back-to-parent (v0.5.0)", () => {
     useSessionsStore.setState({ sessions: [parentMeta], loading: false, error: null });
   });
 
-  it("子会话页:渲染 'back-to-parent' 按钮", async () => {
+  it("子会话页:现有 'back-btn' 复用为 '返回父会话' (data-testid=back-to-parent)", async () => {
     renderChildRoute(childMeta);
+    // v0.5.0:去掉了独立顶部 back-to-parent 条,改复用 header 的 .back-btn
     const backBtn = await screen.findByTestId("back-to-parent");
     expect(backBtn).toBeInTheDocument();
+    expect(backBtn.classList.contains("back-btn")).toBe(true);
     expect(backBtn.textContent).toContain("返回父会话");
     // 按钮文字是 "parent-sessi…" (12 字符截断)
     expect(backBtn.textContent).toContain("parent-sessi");
@@ -122,9 +124,7 @@ describe("SessionDetailRoute — back-to-parent (v0.5.0)", () => {
 
   it("点 back → 从 sessionsStore 找父 jsonlPath, navigate 走 ?path= 持久化", async () => {
     renderChildRoute(childMeta);
-    // back-to-parent testid 挂在 div 上,真正的 button 在其内部
-    const wrap = await screen.findByTestId("back-to-parent");
-    const backBtn = wrap.querySelector("button")!;
+    const backBtn = await screen.findByTestId("back-to-parent");
     await userEvent.click(backBtn);
 
     // 关键断言:navigate 必须带父 jsonlPath
@@ -154,8 +154,7 @@ describe("SessionDetailRoute — back-to-parent (v0.5.0)", () => {
     });
 
     renderChildRoute(childMeta);
-    const wrap = await screen.findByTestId("back-to-parent");
-    const backBtn = wrap.querySelector("button")!;
+    const backBtn = await screen.findByTestId("back-to-parent");
     await userEvent.click(backBtn);
 
     await waitFor(() => {
@@ -175,8 +174,7 @@ describe("SessionDetailRoute — back-to-parent (v0.5.0)", () => {
     });
 
     renderChildRoute(childMeta);
-    const wrap = await screen.findByTestId("back-to-parent");
-    const backBtn = wrap.querySelector("button")!;
+    const backBtn = await screen.findByTestId("back-to-parent");
     await userEvent.click(backBtn);
 
     await waitFor(() => {
@@ -187,5 +185,28 @@ describe("SessionDetailRoute — back-to-parent (v0.5.0)", () => {
     expect(url).toBe("/session/parent-session-id");
     // options 可能 undefined
     expect(options).toBeUndefined();
+  });
+
+  it("非子会话:back 按钮 textContent 是 detail.back (回列表),data-testid=back-to-list", async () => {
+    // 父会话(无 subagentContext) → 现有"返回"按钮照常回列表
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/session/parent-session-id",
+            state: { session: parentMeta }, // 无 subagentContext
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    const backBtn = await screen.findByTestId("back-to-list");
+    expect(backBtn).toBeInTheDocument();
+    expect(backBtn.classList.contains("back-btn")).toBe(true);
+    // textContent 应只是 "返回"(不带 parent-sessi…)
+    expect(backBtn.textContent).not.toContain("parent-sessi");
   });
 });
