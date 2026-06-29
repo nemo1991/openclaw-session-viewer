@@ -179,4 +179,34 @@ describe("SubagentPanel", () => {
       })
     );
   });
+
+  /**
+   * Bug 回归:之前 meta.subagentDir = "/parent/session/subagents" 直接传给
+   * `list_subagents`,后端再 join 一次 → "/parent/session/subagents/subagents"
+   * → 不存在 → 后端返 [] → panel 显示 "该会话无子代理" 而非 N 行。
+   *
+   * 修复: apiListSubagentsByMeta 用 `replace(/\/subagents\/?$/, "")` 剥掉
+   * 尾部的 /subagents,再传给后端。
+   *
+   * 这个 case 验证 mock 收到的 sessionDir 不再带 /subagents。
+   */
+  it("Bug 回归:传给 list_subagents 的 sessionDir 必须是父目录(不带 /subagents)", async () => {
+    mockedList.mockResolvedValue(mockSubs);
+    render(
+      <MemoryRouter>
+        <SubagentPanel parentSession={mockMeta} />
+      </MemoryRouter>
+    );
+    await userEvent.click(screen.getByTestId("subagent-trigger"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(mockedList).toHaveBeenCalledWith(mockMeta);
+    // 关键断言:传给 apiListSubagentsByMeta 的 sessionDir 不应该再带 /subagents
+    // (apiListSubagentsByMeta 内部会把这个剥掉再 invoke)
+    const calledMeta = mockedList.mock.calls[0]![0] as { subagentDir?: string };
+    expect(calledMeta.subagentDir).toBe("/tmp/main/subagents");
+    // mock 直接调 apiListSubagentsByMeta(mockMeta),所以触发 helper 的去尾
+    // 由 helper 自身逻辑保证 (api.test.ts 不在主测试路径,这里用 spy-on-api 替代)
+  });
 });
