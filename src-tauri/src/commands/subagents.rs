@@ -192,10 +192,9 @@ fn scan_jsonl_header(
 /// v0.6.0: 扫描 jsonl 前 N 行,统计消息数 + tool_use.name 分布
 ///
 /// 返回 (message_count, Vec<(name, count)>, first_timestamp, last_timestamp)
-fn scan_jsonl_summary(
-    path: &Path,
-    max_lines: usize,
-) -> (u32, Vec<(String, u32)>, Option<String>, Option<String>) {
+type ScanSummary = (u32, Vec<(String, u32)>, Option<String>, Option<String>);
+
+fn scan_jsonl_summary(path: &Path, max_lines: usize) -> ScanSummary {
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
         Err(_) => return (0, vec![], None, None),

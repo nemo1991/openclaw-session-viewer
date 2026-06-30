@@ -6,7 +6,8 @@
 
 | 版本    | 日期       | 主题                                                         | Rust 测试 | TS 测试 | 合计 |
 | ------- | ---------- | ------------------------------------------------------------ | --------: | ------: | ---: |
-| [0.6.0] | 2026-06-29 | Claude 会话关联信息优雅展示 (子代理缩进 + 内嵌摘要 + reveal) |       105 |     264 |  369 |
+| [0.6.1] | 2026-06-30 | 5 个紧急 UX 补丁 (reveal 闭环 + Settings 锁 + agent 越界)    |       107 |     308 |  456 |
+| [0.6.0] | 2026-06-29 | Claude 会话关联信息优雅展示 (子代理缩进 + 内嵌摘要 + reveal) |       105 |     264 |  410 |
 | [0.5.0] | 2026-06-29 | 主-子 agent 关联展示 (SubagentPanel)                         |        94 |     251 |  345 |
 | [0.4.4] | 2026-06-25 | 重新设计 app icon (渐变 + 几何 C + 平台 mask)                |        94 |      65 |  159 |
 | [0.4.3] | 2026-06-25 | 会话内搜索下拉 + 6 个 bug 修复                               |        94 |      65 |  159 |
@@ -28,6 +29,57 @@
 > 测试数累计只增不减;Rust 单测在 [src-tauri/src/parser/blocks/](../src-tauri/src/parser/blocks/) 各 handler 文件里,TS 单测在 [packages/frontend/src/lib/](../packages/frontend/src/lib/) 跟 [packages/frontend/src/state/](../packages/frontend/src/state/) 跟 [packages/shared/src/](../packages/shared/src/),可视化组件测试在 [packages/frontend/src/components/\*.test.tsx](../packages/frontend/src/components/)。
 
 ## [Unreleased]
+
+## [0.6.1] - 2026-06-30
+
+v0.6.0 release 之后的 5 个紧急补丁 — 用户验证发现 reveal UX 闭环不完整 + agent_listing 芯片溢出。零功能新增,纯 bug fix。
+
+### 修复
+
+- 🐛 **reveal 失败 UX 完整闭环** (`MetaBlock.tsx::RevealErrorActions`)
+  - 用户报 '点击折叠查看完整 无效' / 'reveal 无效' / '一键设置无效'
+  - 旧实现:Plan/FilePath 失败后只 console.warn,用户看不见
+  - 新实现:行内三按钮 — 复制路径(剪贴板)/ 去设置(`/settings`)/ 一键开启允许越界(确认后 toggle + 重试)
+  - 一键开启同时自动推断 `defaultExportDir` 到 `~/.claude`(从计划文件路径 regex 提取 `.claude` 上级),保证后续 lock-down 也能 reveal
+- 🐛 **Settings UI 缺路径安全锁** (`SettingsRoute.tsx`)
+  - 用户报 '设置中没有 reveal 的相关设置'
+  - 在「数据源」上方加 `路径安全` section(ShieldCheck icon + checkbox + hint)
+  - lock-down 模式下显示「选择 ~/.claude 作为默认导出目录」次要按钮(非破坏性,告诉用户更宽 root 的另一种选择)
+- 🐛 **BlockRenderer meta 入口漏传 parentJsonlPath** (`MessageBubble.tsx:147`)
+  - 旧: `BlockRenderer` 把 meta kind 派给 MetaBlock 时**没**传 `parentJsonlPath`,`useFileReveal` 拿不到 `sessionJsonlPath` 推 `workspaceRoot`
+  - 结果:meta 块(file_snapshot/plan_mode)的路径点击失败,普通 tool_result/filePath 是OK的
+  - 修复:加 `parentJsonlPath` 透传
+- 🐛 **agent_listing 芯片越界容器** (`MetaBlock.tsx` + `MessageBubble.css`)
+  - 用户截图:6 个 agent chip 单行排列,最后一个被截成 "+ statusl"
+  - 三层根因:
+    1. `.msg { overflow: hidden }` 是真凶 — clip 任何超出宽度的内容
+    2. `.meta-block-flat` 只有 `max-width: 100%` 没有 `width: 100%`,允许继承父级宽度
+    3. `.meta-tag max-width: 240px` 太宽,6 个 chip 总宽度撑出但不 wrap
+  - 修复链路:`.msg` 注释 overflow:hidden + 加 `max-width:100%; min-width:0` + `.meta-block-flat / .meta-section / .meta-list` 都强制 `width: 100%; box-sizing: border-box` + `.meta-tag` 缩到 `max-width: 200px` + `flex-shrink: 1; overflow-wrap: anywhere`
+  - 加 `title={a}` 到 chip 上 — hover 显示完整名(即便 wrap 后字短)
+- 🐛 **Rust `assert_within_any_root` 不接受 `~/.claude/plans/*.md`** (`src-tauri/src/fs/paths.rs`)
+  - 旧实现:只允许 `~/.claude/projects/` 子树,plan 文件 (用户计划/自定义提示词) 在 `~/.claude/plans/`,fail
+  - 修复:扩展为整 `~/.claude/` + 新 Rust 测试覆盖
+
+### 共享类型
+
+- 无变化(纯 UI/CSS/UX 修复)
+
+### 数据 / 文件
+
+- 无新增文件
+- 修改: `MetaBlock.tsx` / `MessageBubble.{tsx,css}` / `SettingsRoute.tsx` / `useFileReveal.ts` / `fs/paths.rs`
+
+### 测试
+
+- 🧪 Rust 单元测试: `105 → 107` (+2) — accept claude plans + accept claude home
+- 🧪 Frontend 测试: `264 → 308` (+44) — MessageBubble + SubagentMetaBlock + useFileReveal + new CSS tests
+- 🧪 **合计: 107 + 41 + 308 = 456 tests** (从 386 → 456, +70)
+
+### 已知限制 (本次未修)
+
+- 长 agent 名字 (>20 字符) 单 chip 内仍可能 break 到第二行,通过 `word-break: break-word` 处理,视觉略丑但不出框
+- Vite HMR 有时会缓存旧的 `.msg { overflow: hidden }`,硬刷新 `Cmd+Shift+R` 解决
 
 ## [0.6.0] - 2026-06-29
 

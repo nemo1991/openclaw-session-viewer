@@ -68,6 +68,8 @@ chmod +x OpenClaw*.AppImage
 ### 核心
 
 - 📜 **完整会话转录** — 文本、思考、工具调用、工具结果、图片、附件、压缩事件,所有类型
+- 🤖 **主-子 agent 关联展示** (v0.6.0) — 子代理消息自动缩进(紫色 accent 边 + ▸ 箭头),主 session timeline 显示子代理计数 badge,Agent 卡片底部内嵌子代理摘要(消息数 + 工具分布 + 时长),不再 navigate 跳走
+- 📂 **文件路径一键 reveal** (v0.6.0) — `Read`/`Edit`/`Write` 工具结果、`.plan` 文件、tracked file snapshot 全可点击 → Finder/Explorer。Workspace 沙箱保护(默认锁紧 `workspaceGuess` 子树,设置里可放开),防 `~/.ssh/id_rsa` 等
 - 🔍 **三种搜索**:
   - 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
   - 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
@@ -93,8 +95,8 @@ chmod +x OpenClaw*.AppImage
 
 ### 工程化
 
-- ✅ **单元测试** — Rust 94 + TS shared 41 + TS frontend 108 + 组件可视化 77 = **320 个测试**
-- 🔒 **路径安全** — 所有 Tauri 命令做词法检查,防止 `../../etc/passwd`
+- ✅ **单元测试** — Rust 107 + TS shared 41 + TS frontend 308 = **456 个测试**
+- 🔒 **路径安全** — 所有 Tauri 命令做词法检查 + `assert_within_any_root` 兜底,Reveal 设 workspace 沙箱(用户可放开),防 `../../etc/passwd`
 - ♻️ **BlockRegistry 模式** — `BlockHandler` trait + 可扩展注册表,符合开闭原则
 - 🚀 **自动更新** — Tauri updater + GitHub Releases
 - 📦 **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
@@ -233,7 +235,7 @@ pnpm tauri build
 ┌──────────────────────────┴───────────────────────────────┐
 │                    Backend (Rust)                         │
 │  ┌─────────────────────────────────────────────────────┐ │
-│  │  Commands (12 个 Tauri commands)                    │ │
+│  │  Commands (16 个 Tauri commands)                    │ │
 │  │  list_sessions / stream_transcript / search_all /  │ │
 │  │  analyze_session / export_markdown / …             │ │
 │  └─────────────────────────────────────────────────────┘ │
@@ -298,6 +300,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 │   ├── CROSS_PLATFORM_BUILD.md
 │   ├── OPENCLAW_SESSION_FORMAT.md
 │   ├── RELEASING.md
+│   ├── SECURITY.md             # v0.6.0: 文件路径 reveal 安全模型
 │   └── TROUBLESHOOTING.md
 ├── scripts/
 │   └── seed-fixture.ts   # 生成测试 JSONL
@@ -311,7 +314,7 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 # Rust 单元测试 (94 个)
 cd src-tauri && cargo test --lib
 
-# TypeScript 单元测试 (shared 41 + frontend 108 = 149)
+# TypeScript 单元测试 (shared 41 + frontend 308 = 349)
 cd packages/shared && pnpm test
 
 # 类型检查
@@ -472,11 +475,14 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [x] 会话列表默认改回 OpenClaw (v0.4.2)
 - [x] 会话内搜索结果下拉列表 + 修 Next 按钮不滚动 / 倒序+filter 无限下拉 / agent-name(连字符) 识别 (v0.4.3)
 - [x] 重新设计 app icon (蓝紫→青渐变 + 几何 C 字母 + 平台 mask) (v0.4.4)
-- [x] 单元测试 + 组件可视化测试 (320 个: Rust 94 + TS shared 41 + TS frontend 108 + 组件 77)
+- [x] 主-子 agent 跳转 + SubagentPanel + back-to-parent (v0.5.0)
+- [x] Claude 会话关联信息优雅展示:子代理消息缩进 + Agent 卡片内嵌摘要 + 文件路径点击 reveal (v0.6.0)
+- [x] 5 个紧急 UX 补丁:Settings 路径安全锁 + reveal 失败三按钮(复制/去设置/一键开启) + agent 芯片越界修复 (v0.6.1)
+- [x] 单元测试 + 组件可视化测试 (456 个: Rust 107 + TS shared 41 + TS frontend 308)
 - [x] 跨平台 CI (macOS/Windows/Linux)
 - [x] docs-only 推送跳过 CI (paths-ignore)
 
-### 计划中 (v0.4.4+)
+### 计划中 (v0.6.1+)
 
 - [ ] **MultiEdit 工具的专属 diff** — 多文件编辑 diff
 - [ ] **ToolResultCard spillover** — 真正拉全内容
@@ -507,6 +513,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 | [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md) | OpenClaw JSONL schema,trajectory 文件机制       |
 | [RELEASING.md](docs/RELEASING.md)                             | 维护者发版流程,故障恢复                         |
 | [E2E_TESTING.md](docs/E2E_TESTING.md)                         | Playwright E2E 配置 / 用法 / 写新 case / 已知坑 |
+| [SECURITY.md](docs/SECURITY.md)                               | 文件路径 reveal 安全模型 (v0.6.0 引入)          |
 | [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                 | 已修过的 bug 与开发经验                         |
 | [CHANGELOG.md](CHANGELOG.md)                                  | 各版本变更记录                                  |
 
