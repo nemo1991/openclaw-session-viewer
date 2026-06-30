@@ -145,7 +145,13 @@ export function BlockRenderer({
 
   // meta 类 kind 统一走 MetaBlock
   if (isMetaKind(kind)) {
-    return <MetaBlock block={block} label={String(block.label ?? kind)} />;
+    return (
+      <MetaBlock
+        block={block}
+        label={String(block.label ?? kind)}
+        parentJsonlPath={parentJsonlPath}
+      />
+    );
   }
 
   switch (kind) {
