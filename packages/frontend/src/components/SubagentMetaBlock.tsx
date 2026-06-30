@@ -1,5 +1,5 @@
 /**
- * v0.4.1: 子代理会话专属元数据块折叠组件
+ * 子代理会话专属元数据块折叠组件
  *
  * Claude sub-agent 会话的 content 数组里会塞一些专属字段:
  * - mode (`mode: normal` / `plan` / `accept-edits` / `bypass-permissions`)
@@ -11,13 +11,14 @@
  *
  * 这里把它们识别出来,渲染成可折叠的"子代理元数据"块,默认折叠,点开看 value。
  *
- * v0.6.0: last-prompt 的 payload 结构从 `string` 改为 `{ prompt, leafUuid? }`
- *  - 真实数据字段是 `lastPrompt` (camelCase), 之前取 `record.prompt` 永远是 undefined
- *  - leafUuid 指向最后一条 user message (实测 5/5 命中), /resume 触发的恢复点
- *  - UI 显示 prompt 全文, 旁边 "跳到对话位置" 按钮用 leafUuid 跳
+ * v0.6.0:
+ * - last-prompt 字段错配 (字段是 lastPrompt, 不是 prompt)
+ * - leafUuid 跳到 user message
+ * - mode / permission 值进 chip,配色区分 plan/bypass/normal/...
  */
 
-import { Bot, FileText, ExternalLink } from "lucide-react";
+import { useCallback, useState } from "react";
+import { Bot, FileText, ExternalLink, Copy, Check } from "lucide-react";
 import type { NormalizedBlockFE } from "../lib/api";
 import { useTranscriptStore } from "../state/transcriptStore";
 
@@ -25,15 +26,32 @@ interface Props {
   block: NormalizedBlockFE;
 }
 
+type BadgeKind = "mode" | "permission" | "title" | "last-prompt";
+
 interface Parsed {
   icon: typeof Bot;
-  badge: string;
+  badge: BadgeKind;
   /** 折叠 summary 上显示的主文本(比如 "mode: normal") */
   summary: string;
   /** 展开后显示的内容,string 直接展示,object 走 JSON.stringify */
   detail: string;
+  /** v0.6.0: 修饰 — mode/permission 单独渲染成彩色 chip,而不是整个 summary */
+  modeValue?: string;
   /** v0.6.0: 可选 leafUuid — last-prompt 跳到对应 user message */
   leafUuid?: string;
+  /** v0.6.0: prompt 长度,long 时给提示 */
+  detailLength?: number;
+}
+
+/**
+ * mode/permission 值配色:plan → 蓝,bypass → 红, accept-edits/normal → 灰
+ * 实测 ~/.claude/projects/.../*.jsonl 大多数是 normal,plan/bypass 是少数"危险" 状态需要眼睛看到
+ */
+function chipTone(value: string): "danger" | "plan" | "neutral" {
+  const v = value.toLowerCase();
+  if (v.includes("bypass")) return "danger";
+  if (v === "plan" || v.includes("plan")) return "plan";
+  return "neutral";
 }
 
 function parse(block: NormalizedBlockFE): Parsed | null {
@@ -41,23 +59,28 @@ function parse(block: NormalizedBlockFE): Parsed | null {
   const payload = block.payload;
 
   // mode / permission 标签形如 "mode: normal" / "permission: plan"
+  // parser 没有 payload,完整 label 已足够 ("mode: <value>")
   if (label.startsWith("mode:") || label.startsWith("permission:")) {
+    const isMode = label.startsWith("mode:");
+    const kind: BadgeKind = isMode ? "mode" : "permission";
+    const value = label.slice(label.indexOf(":") + 1).trim() || "(空)";
     return {
-      icon: Bot,
-      badge: (label.split(":")[0] ?? label).trim(),
-      summary: label,
-      detail:
-        typeof payload === "string" && payload ? payload : JSON.stringify(payload ?? "", null, 2),
+      icon: isMode ? Bot : Bot,
+      badge: kind,
+      summary: isMode ? `mode` : `permission`,
+      modeValue: value,
+      detail: value,
     };
   }
 
   // title 来自 ai-title / custom-title,label="title",payload 是 title 字符串
   if (label === "title") {
+    const titleText = typeof payload === "string" ? payload : "";
     return {
       icon: FileText,
       badge: "title",
-      summary: typeof payload === "string" && payload ? payload : "(空标题)",
-      detail: typeof payload === "string" ? payload : JSON.stringify(payload ?? "", null, 2),
+      summary: titleText || "(空标题)",
+      detail: titleText,
     };
   }
 
@@ -73,20 +96,63 @@ function parse(block: NormalizedBlockFE): Parsed | null {
       typeof payload === "object" && payload !== null
         ? (payload as { leafUuid?: unknown }).leafUuid
         : undefined;
+    const hasPrompt = promptText.length > 0;
     return {
       icon: FileText,
       badge: "last-prompt",
-      summary: promptText
+      // summary 上带 "[长 N]" 标识,提示用户展开看全文
+      summary: hasPrompt
         ? promptText.length > 60
-          ? promptText.slice(0, 60) + "…"
+          ? `${promptText.slice(0, 60)}… (+${promptText.length - 60})`
           : promptText
         : "(无内容)",
       detail: promptText || "(无内容)",
       leafUuid: typeof leafUuid === "string" ? leafUuid : undefined,
+      detailLength: promptText.length,
     };
   }
 
   return null;
+}
+
+/** mode/permission 的 value chip,带配色 (plan/bypass/normal 不同色) */
+function ModeChip({ value }: { value: string }) {
+  const tone = chipTone(value);
+  return (
+    <span
+      className={`subagent-meta-value subagent-meta-value-${tone}`}
+      data-tone={tone}
+      title={`值: ${value}`}
+    >
+      {value}
+    </span>
+  );
+}
+
+/** title 拷贝按钮:点了之后显示 ✓ 2s,便于用户拿长 title */
+function CopyableText({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (e) {
+      console.warn("copy 失败:", e);
+    }
+  }, [text]);
+  return (
+    <button
+      type="button"
+      className="subagent-meta-copy-btn"
+      data-testid="subagent-meta-copy"
+      onClick={onCopy}
+      title="复制 title"
+    >
+      {copied ? <Check size={11} /> : <Copy size={11} />}
+      {copied ? "已复制" : "复制"}
+    </button>
+  );
 }
 
 export function SubagentMetaBlock({ block }: Props) {
@@ -109,12 +175,75 @@ export function SubagentMetaBlock({ block }: Props) {
         <span className="meta-kind-badge subagent-meta-badge">
           <Icon size={11} /> {parsed.badge}
         </span>
-        <span className="subagent-meta-text">{parsed.summary}</span>
+        {parsed.modeValue ? (
+          <>
+            <span className="subagent-meta-text">:</span>
+            <ModeChip value={parsed.modeValue} />
+          </>
+        ) : (
+          <span className="subagent-meta-text">{parsed.summary}</span>
+        )}
+        {/* last-prompt 长度标识:展开前就知道 prompt 多长 */}
+        {parsed.detailLength !== undefined && parsed.detailLength > 100 && (
+          <span
+            className="subagent-meta-tag subagent-meta-tag-length"
+            title={`prompt 全文 ${parsed.detailLength} 字`}
+          >
+            长 {parsed.detailLength}
+          </span>
+        )}
+        {/* 跳按钮直接放 summary 上 — 不用展开 details 也能跳 */}
+        {parsed.leafUuid && <SummaryJumpProbe leafUuid={parsed.leafUuid} />}
         <span className="subagent-meta-chevron">▸</span>
       </summary>
       <pre className="subagent-meta-detail">{parsed.detail}</pre>
+      {parsed.badge === "title" && parsed.detail && <CopyableText text={parsed.detail} />}
       {parsed.leafUuid && <LeafJumpButton leafUuid={parsed.leafUuid} />}
     </details>
+  );
+}
+
+/**
+ * v0.6.0: 在 summary 上显示一个小 "→" 提示, 提示用户 "这里有跳按钮 (看下边)"
+ * 真按钮在 details 内, 这里只显示图标态的 quick-jump button (matched 直接跳, 也允许
+ * 用户不展开 details 就跳 — 用户报 "last-prompt 显示不全" 说想直接能用)
+ */
+function SummaryJumpProbe({ leafUuid }: { leafUuid: string }) {
+  const entries = useTranscriptStore((s) => s.entries);
+  const jumpTo = useTranscriptStore((s) => s.jumpTo);
+  const matched = entries.find((e) => e.normalized?.id === leafUuid);
+  const matchedIdx = matched?.index ?? -1;
+  const shortId = leafUuid.slice(0, 8);
+
+  const handleClick = useCallback(
+    (ev: React.MouseEvent) => {
+      // 阻止触发 details 的 toggle
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (matchedIdx < 0) {
+        console.warn(`[last-prompt] leafUuid ${shortId}... 不在 transcript 范围`, { leafUuid });
+        return;
+      }
+      jumpTo(matchedIdx);
+    },
+    [matchedIdx, shortId, leafUuid, jumpTo]
+  );
+
+  return (
+    <button
+      type="button"
+      className={`subagent-meta-summary-jump${matchedIdx < 0 ? " subagent-meta-summary-jump-disabled" : ""}`}
+      data-testid="last-prompt-summary-jump"
+      data-state={matchedIdx >= 0 ? "ready" : "disabled"}
+      onClick={handleClick}
+      title={
+        matchedIdx >= 0
+          ? `跳到 uuid=${shortId}... (entry #${matchedIdx})`
+          : `uuid=${shortId}... 不在当前 transcript 范围`
+      }
+    >
+      <ExternalLink size={10} />
+    </button>
   );
 }
 
