@@ -103,15 +103,25 @@ describe("useFileReveal", () => {
     expect(mockInvoke).toHaveBeenCalledWith(expect.any(String), "/Users/test/workspace", false);
   });
 
-  it("reveal() 静默吞错误(不抛 Promise rejection)", async () => {
+  it("v0.6.x: reveal() 失败 → console.warn + 派发 'openclaw:reveal-error' CustomEvent (修旧 silent fail)", async () => {
     mockInvoke.mockRejectedValue(new Error("PathSecurity: nope"));
     const consoleSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const eventListener = vi.fn();
+    // v0.6.x: 不再是 silent fail (用户报 'reveal 按钮无效')
+    // → console.warn 完整错 + dispatch CustomEvent 给 App 弹 toast
+    window.addEventListener("openclaw:reveal-error", eventListener);
     const { result } = renderHook(() => useFileReveal());
     await act(async () => {
       await result.current.reveal("/etc/passwd");
     });
-    // console.warn 由调用方负责(reveal 内部不输出, 留给 UI)
-    expect(consoleSpy).not.toHaveBeenCalled();
+    // reveal 不抛, Promise 正常 resolve
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining("[reveal] failed"),
+      expect.stringContaining("PathSecurity")
+    );
+    expect(eventListener).toHaveBeenCalledTimes(1);
+    window.removeEventListener("openclaw:reveal-error", eventListener);
+    consoleSpy.mockRestore();
   });
 });
 

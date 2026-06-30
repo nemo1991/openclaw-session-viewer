@@ -671,3 +671,221 @@
   background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
   border-color: var(--color-primary);
 }
+
+/* ===== v0.6.x 默认展开的 meta 块样式 =====
+ * 用户报: '已展开, 不需要折叠按钮' — 所有 meta 块不再用 <details> 折叠,
+ * 改用 flex 列布局, 内容永远可见。
+ *
+ * 配套:
+ * - .meta-block-flat 基础样式 (替代原 .block-meta-info 在 meta 类里的多行版本)
+ * - .meta-list-scrollable 列表滚动 (> 6 个不再折叠, 而是 max-height 滚动)
+ * - .meta-reveal-error 内联错误显示 (用户报 reveal 无效 — 给错误提示)
+ * - .meta-plan-block plan_mode 平面块
+ * - .meta-task-row-head / .meta-task-meta / .meta-task-graph 关联字段展示
+ *   (task_reminder 关联关系: id 跨 reminder 串联, blocks/blockedBy DAG)
+ */
+
+/* 默认展开的 meta 块 (替代 <details>) */
+.subagent-meta-block-flat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  margin: 4px 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.subagent-meta-block-flat .subagent-meta-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* last-prompt 上下结构: prompt 在上, 跳按钮在下 */
+.subagent-meta-block-flat .subagent-meta-detail {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+/* last-prompt action row — 跳按钮单独占一行, 左对齐 */
+.subagent-meta-action-row {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+.subagent-meta-action-row .subagent-meta-jump-btn {
+  margin-top: 0;
+}
+
+/* title 文本 — 比 .subagent-meta-text 更长的样式 (取消 ellipsis) */
+.subagent-meta-text-title {
+  font-family: var(--font-text, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-size: 12px;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+}
+
+/* === MetaBlock 默认展开 === */
+.meta-block-flat {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 12px;
+}
+.meta-block-flat > .meta-kind-badge {
+  align-self: flex-start;
+}
+
+/* 列表滚动 — 替代 <details> 折叠 */
+.meta-list-scrollable {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  width: 100%;
+  padding: 4px 0;
+  scrollbar-width: thin;
+}
+
+/* === 路径 reveal 内联错误 === */
+.meta-path-clickable-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+.meta-reveal-error {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgb(220, 38, 38);
+  background: rgba(220, 38, 38, 0.08);
+  border-left: 2px solid rgb(220, 38, 38);
+  padding: 2px 6px;
+  border-radius: 2px;
+  word-break: break-all;
+}
+
+/* === plan_mode 平面块 === */
+.meta-plan-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 0;
+}
+.meta-plan-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.meta-plan-filename {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === task_reminder 关联字段 === */
+.meta-task-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.meta-task-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.meta-task-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.meta-task-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--color-border);
+}
+.meta-task-activeform {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-primary, #5b6bff);
+}
+.meta-task-activeform-label {
+  display: inline-block;
+  margin-right: 4px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.meta-task-desc {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.meta-task-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.meta-task-graph-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.meta-task-graph-label {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.meta-task-ref {
+  padding: 0 5px;
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
+  color: var(--color-primary, #5b6bff);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
