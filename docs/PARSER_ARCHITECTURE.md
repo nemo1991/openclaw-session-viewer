@@ -485,21 +485,30 @@ export interface NormalizedBlockFE {
 
 ## 已知 block type 速查
 
-| 原始 type(s)                                                        | Normalized kind | 文件               | 前端渲染               |
-| ------------------------------------------------------------------- | --------------- | ------------------ | ---------------------- |
-| `text`                                                              | `text`          | `text.rs`          | `<TextBlock>` Markdown |
-| `thinking` / `redacted_thinking`                                    | `thinking`      | `thinking.rs`      | `<ThinkingBlock>` 折叠 |
-| `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | `tool_use`      | `tool_use.rs`      | `<ToolUseCard>`        |
-| `tool_result` / `toolResult`                                        | `tool_result`   | `tool_result.rs`   | `<ToolResultCard>`     |
-| `image`                                                             | `image`         | `image.rs`         | `<ImageBlock>`         |
-| `agent_listing_delta`                                               | `agent_listing` | `agent_listing.rs` | `<BlockMetaInfo>` 精简 |
-| `skill_listing`                                                     | `skill_listing` | `skill_listing.rs` | `<BlockMetaInfo>` 精简 |
-| `plan_mode`                                                         | `plan_mode`     | `plan_mode.rs`     | `<BlockMetaInfo>` 精简 |
-| `file_history_snapshot`                                             | `file_snapshot` | `file_snapshot.rs` | `<BlockMetaInfo>` 精简 |
-| (其它)                                                              | `meta`          | `meta.rs`          | `<UnknownBlockCard>`   |
+| 原始 type(s)                                                        | Normalized kind | 文件               | 前端渲染                                                     |
+| ------------------------------------------------------------------- | --------------- | ------------------ | ------------------------------------------------------------ |
+| `text`                                                              | `text`          | `text.rs`          | `<TextBlock>` Markdown                                       |
+| `thinking` / `redacted_thinking`                                    | `thinking`      | `thinking.rs`      | `<ThinkingBlock>` 折叠                                       |
+| `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | `tool_use`      | `tool_use.rs`      | `<ToolUseCard>`                                              |
+| `tool_result` / `toolResult`                                        | `tool_result`   | `tool_result.rs`   | `<ToolResultCard>`                                           |
+| `image`                                                             | `image`         | `image.rs`         | `<ImageBlock>`                                               |
+| `agent_listing_delta`                                               | `agent_listing` | `agent_listing.rs` | `<BlockMetaInfo>` + chip wrap 溢出保护 (v0.6.x)              |
+| `skill_listing`                                                     | `skill_listing` | `skill_listing.rs` | `<BlockMetaInfo>` 默认全显示 (>6 行滚动) (v0.6.x)            |
+| `plan_mode`                                                         | `plan_mode`     | `plan_mode.rs`     | `<MetaBlock>` reveal 按钮 + 失败行内三按钮 (v0.6.x)          |
+| `file_history_snapshot`                                             | `file_snapshot` | `file_snapshot.rs` | `<MetaBlock>` 路径可点击 + 失败行内三按钮 (v0.6.x)           |
+| `task_reminder`                                                     | `task_reminder` | `task_reminder.rs` | `<MetaBlock>` 含 id 串联 + description + blocks DAG (v0.6.x) |
+| `agent_name` / `agent-name`                                         | `agent_name`    | `agent_name.rs`    | `<MetaBlock>` 单行 优雅展示 (v0.6.x)                         |
+| `pr_link` / `pr-link`                                               | `pr_link`       | `pr_link.rs`       | `<MetaBlock>` 带链接徽章 (v0.6.x)                            |
+| (其它)                                                              | `meta`          | `meta.rs`          | `<UnknownBlockCard>`                                         |
 
 **多 alias 是有意为之** — 同一概念在不同 agent / 不同 schema 中命名不同,
 handler `matches()` 一次认全,前端只需一个 `case "<kind>"`。
+
+### v0.6.x 新增关键归一化 (`parser/claude.rs`)
+
+- `NormalizedMessage.subagentId` — 从 envelope.agentId 提取(仅 `isSidechain=true` 时)
+- 旧的 Rust 端写死 `None` 让 v0.5.0 浪费了这条关键关联 — v0.6.0 真正归一化进数据
+- 测试: 3 case (有/无 isSidechain × 有/无 agentId)
 
 ---
 

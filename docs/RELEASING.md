@@ -6,7 +6,12 @@
 
 发版前确认:
 
-- [ ] 所有合并的 PR 都已写进 `CHANGELOG.md` 的 `## [Unreleased]` 段
+- [ ] 所有合并的 PR 都已写进 `CHANGELOG.md` 的 `## [Unreleased]` 段(注意: 历史养成的习惯是
+      release commit 之后打的 fix 全部累积,直到下个版本才写进 CHANGELOG——**v0.6.1 fix**
+      即源自此:5 个补丁在 [0.6.0] 之后才补进去,**只发 patch 版本** (0.6.1) 而不是直接修
+      v0.6.0 release 的 git tag)
+- [ ] `CHANGELOG.md` 顶部版本总览表的 Rust / TS / 合计测试数跟实际 `cargo test` /
+      `pnpm test` 输出对得上(本次 v0.6.0 发布时 CHANGELOG 写 410 但跑出来 456,差 +44)
 - [ ] 本地完整验证通过:
 
   ```bash

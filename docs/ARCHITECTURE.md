@@ -15,11 +15,15 @@
 │  │              Rust Backend (src-tauri/src/)             │   │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐        │   │
 │  │  │  Commands  │  │   Parser   │  │    LLM     │        │   │
-│  │  │  (12 个)   │  │ + blocks/  │  │  Client    │        │   │
+│  │  │  (16 个)   │  │ + blocks/  │  │  Client    │        │   │
+│  │  │  + reveal  │  │  v0.6 sub- │  │            │        │   │
+│  │  │  sandbox   │  │  agentId   │  │            │        │   │
 │  │  └────────────┘  └────────────┘  └────────────┘        │   │
 │  │  ┌────────────┐  ┌────────────┐                       │   │
 │  │  │    FS      │  │   Cache    │                       │   │
-│  │  │  Paths     │  │   Moka     │                       │   │
+│  │  │  Paths v0.6│  │   Moka     │                       │   │
+│  │  │  accepts   │  │            │                       │   │
+│  │  │  ~/.claude │  │            │                       │   │
 │  │  └────────────┘  └────────────┘                       │   │
 │  └─────────────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────────┘
@@ -120,6 +124,55 @@ Rust analyze_session:
 Frontend listenAnalyze → 流式更新 result
 ```
 
+### 5. 子代理摘要内嵌 (v0.6.0 P0-B)
+
+```
+用户点 Agent 卡片 (主 session timeline)
+  ↓
+SubagentInlineSummary 组件 mount (默认展开,但 inline 嵌入不是 navigate)
+  ↓
+invoke("get_subagent_summary", { parentSessionDir, agentId })
+  ↓
+Rust scan_jsonl_summary:
+  - 扫子 jsonl 头部 500 行 (< 5ms)
+  - 提取 message_count + tool_use.name 分布 + timestamps
+  - 返回 SubagentSummary { messageCount, toolDistribution, durationSeconds, ... }
+  ↓
+前端 SubagentInlineSummary 渲染:
+  - 消息数 + 时长 + top 3 工具 chip
+  - "打开独立页面" 按钮 → navigate 跳到子会话(原 v0.5.0 行为)
+```
+
+**为什么 inline**: v0.5.0 那种"点 Agent 卡片直接跳走"反馈很差 — 用户失去了主 session timeline 的视觉锚点。
+inline 展开让用户**一眼看清**该子代理的产出(消息数 + 工具分布 + 时长),需要细看再手动跳。
+
+### 6. 文件 reveal (v0.6.0 P0-C)
+
+```
+用户点 Read 工具结果 [filePath] / Edit 工具 [file_path] / .plan reveal 按钮
+  ↓
+useFileReveal.revealAndNotify(path):
+  - workspaceRoot 推导:
+      opts.workspaceRoot > settings.defaultExportDir > sessionJsonlPath 父目录 > null
+  - invoke("reveal_in_finder", { path, workspaceRoot, allowRelaxed: settings.pathSecurity.allowRelaxed })
+  ↓
+Rust reveal_in_finder:
+  - allowRelaxed=false → 严格 path_within(path, workspaceRoot)
+  - allowRelaxed=true  → assert_within_any_root(path)
+  - 失败: Err("PathSecurity: ...")
+  - 成功: 跨平台 shell reveal
+      macOS: open -R
+      Windows: explorer /select,
+      Linux: xdg-open
+  ↓
+前端:
+  - result.ok → 静默成功
+  - 失败 → 行内 RevealErrorActions 三按钮:
+      复制路径 / 去设置 / 一键开启 (确认后 toggle + 自动推断 ~/.claude 为 defaultExportDir + 重试)
+```
+
+**安全模型完整文档**: [SECURITY.md](SECURITY.md)
+
 ## 模块边界
 
 ### `packages/shared/src/` — 跨进程类型
@@ -207,11 +260,16 @@ if p.starts_with(&state.paths.claude.projects_dir) {
 
 ### 攻击面
 
-- ❌ 无法读取 `~/.ssh/id_rsa` 等其他位置
+- ❌ 无法读取 `~/.ssh/id_rsa` 等其他位置(受 `assert_within_any_root` 兜底)
 - ❌ 无法删除文件(没有 delete 命令)
-- ❌ 无法执行任意命令
-- ✅ 只能读 `~/.claude/` 和 `~/.openclaw/` 下的 JSONL/MD/TXT
+- ❌ 无法执行任意命令(reveal 走 `args([..])` 不走 shell)
+- ✅ Tauri 命令读路径必须在 `~/.claude/` 或 `~/.openclaw/` 下
+- ✅ `reveal_in_finder` (v0.6.0) 默认 lock-down 到 `workspaceGuess` 子树,relaxed 模式仍受 `assert_within_any_root` 兜底
 - ✅ API Key 存在 `app_config_dir/settings.json`(用户家目录,OS 权限保护)
+
+> **v0.6.1: `assert_within_any_root` 接受整 `~/.claude/`** (不止 `~/.claude/projects/`),让 `.plan` 文件 / tracked snapshot 路径通过时不被拒。
+
+详见 [SECURITY.md](SECURITY.md) 文件路径 reveal 完整安全模型。
 
 ## 扩展点
 
