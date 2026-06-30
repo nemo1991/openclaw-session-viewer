@@ -1,19 +1,20 @@
 /**
- * MetaBlock 组件可视化测试
+ * MetaBlock 组件可视化测试 (v0.6.x)
  *
- * 覆盖 4 种代表性 meta label(7 种里的关键路径):
- * - agent_listing(顶层 kind + 平铺字段,BlockRenderer 入口风格)
- * - agent_listing(meta role + payload 嵌套,meta 分支入口风格)
- * - task_reminder
+ * 覆盖 (4 种代表性 meta label + 默认展开):
+ * - agent_listing 顶层 kind + 平铺字段 (BlockRenderer 入口)
+ * - agent_listing meta role + payload 嵌套 (meta 分支入口)
+ * - task_reminder (含关联字段: id / description / activeForm / blocks / blockedBy)
  * - pr_link
+ * - plan_mode reveal 错误显示
  * - 默认 fallback 走 UnknownBlockCard
  *
- * v0.6.0 增强覆盖:
- * - file_snapshot: 路径列表 + reveal 点击
- * - skill_listing: 长列表折叠 (>6)
- * - plan_mode: reminder 配色 + reveal 路径按钮
+ * v0.6.x 关键回归:
+ * - meta-block-flat 不再是 <details>
+ * - skill_listing 长列表滚动
+ * - file_snapshot 路径列出 + reveal 失败错误显示
  *
- * 关键回归:`payload ?? block` 双形 fallback 必须两条路径都通。
+ * 关键:payload ?? block 双形 fallback 必须两条路径都通。
  */
 
 // @vitest-environment jsdom
@@ -25,12 +26,16 @@ import * as api from "../../lib/api";
 import { useSettingsStore } from "../../state/settingsStore";
 import type { NormalizedBlockFE } from "../../lib/api";
 
-const mockApiRevealInFinder = vi.spyOn(api, "apiRevealInFinder").mockResolvedValue(undefined);
+const mockApiRevealInFinder = vi.spyOn(api, "apiRevealInFinder");
 
 beforeEach(() => {
   cleanup();
-  mockApiRevealInFinder.mockClear();
-  // 关闭 settings.pathSecurity.allowRelaxed 让 reveal 走默认锁紧模式 (workspaceRoot=null)
+  mockApiRevealInFinder.mockReset();
+  // 默认 pathSecurity.lock-down 模式 + workspaceRoot=null (没设 defaultExportDir)
+  // → 后端会拒绝并返回 'PathSecurity: 需提供 workspace_root'
+  mockApiRevealInFinder.mockRejectedValue(
+    new Error("PathSecurity: 需提供 workspace_root (lock-down 模式)")
+  );
   useSettingsStore.setState({
     settings: {
       ...useSettingsStore.getState().settings,
@@ -39,72 +44,260 @@ beforeEach(() => {
   });
 });
 
-describe("MetaBlock", () => {
-  describe("顶层平铺字段 (BlockRenderer 入口)", () => {
-    it("agent_listing:顶层 kind + addedTypes 直接显示", () => {
+describe("MetaBlock (v0.6.x 默认展开)", () => {
+  describe("agent_listing", () => {
+    it("顶层 kind + addedTypes 直接显示 (不走 <details>)", () => {
       const block: NormalizedBlockFE = {
         kind: "agent_listing",
         addedTypes: ["Explore", "Plan"],
         isInitial: true,
       };
-      render(<MetaBlock block={block} label="agent_listing" />);
+      const { container } = render(<MetaBlock block={block} label="agent_listing" />);
+      expect(container.querySelector("details")).toBeNull();
+      expect(container.querySelector(".meta-block-flat")).toBeInTheDocument();
       expect(screen.getByText("🤖 agent")).toBeInTheDocument();
       expect(screen.getByText(/初始化 2 个 agent/)).toBeInTheDocument();
     });
 
-    it("agent_listing_delta:顶层 kind + addedTypes 增量", () => {
+    it("agent_listing_delta: 显示 +N / -M 标配色", () => {
       const block: NormalizedBlockFE = {
         kind: "agent_listing_delta",
         addedTypes: ["NewAgent"],
         removedTypes: ["OldAgent"],
         isInitial: false,
       };
-      render(<MetaBlock block={block} label="agent_listing_delta" />);
-      expect(screen.getByText("🤖 agent")).toBeInTheDocument();
+      const { container } = render(<MetaBlock block={block} label="agent_listing_delta" />);
+      // 默认展开后 add/remove 标签直接可见
       expect(screen.getByText(/\+1 agent|\+1 \/ -1/)).toBeInTheDocument();
-      expect(screen.getByText(/-1 agent|\+1 \/ -1/)).toBeInTheDocument();
-    });
-
-    it("v0.6.0: agent_listing details summary = '查看 agent 列表'", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "agent_listing",
-        payload: {
-          addedTypes: ["Explore", "Plan"],
-          removedTypes: ["OldAgent"],
-          isInitial: false,
-        },
-      };
-      render(<MetaBlock block={block} label="agent_listing" />);
-      // summary 文案存在
-      expect(screen.getByText(/查看 agent 列表/)).toBeInTheDocument();
+      // 配色 class
+      expect(container.querySelector(".meta-tag-add")).toBeInTheDocument();
+      expect(container.querySelector(".meta-tag-remove")).toBeInTheDocument();
     });
   });
 
-  describe("payload 嵌套字段 (meta 分支入口)", () => {
-    it("task_reminder:meta role → payload 嵌套,显示统计 + 折叠列表", () => {
+  describe("v0.6.x task_reminder 关联字段", () => {
+    it("显示 task id (#N), description, activeForm", () => {
       const block: NormalizedBlockFE = {
         kind: "meta",
         label: "task_reminder",
         payload: {
-          itemCount: 3,
-          pendingCount: 1,
+          itemCount: 1,
+          pendingCount: 0,
           inProgressCount: 1,
-          completedCount: 1,
+          completedCount: 0,
           content: [
-            { id: "t1", status: "pending", subject: "task A" },
-            { id: "t2", status: "in_progress", subject: "task B" },
-            { id: "t3", status: "completed", subject: "task C" },
+            {
+              id: "4",
+              subject: "Phase 0: 项目骨架",
+              description: "初始化 pnpm workspace + Tauri 2 + React + TypeScript 项目结构",
+              activeForm: "搭建项目骨架 (Phase 0)",
+              status: "in_progress",
+              blocks: [],
+              blockedBy: [],
+            },
+          ],
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="task_reminder" />);
+      // task id 标签
+      expect(screen.getByText("#4")).toBeInTheDocument();
+      // description 截断显示
+      expect(container.querySelector(".meta-task-desc")).toBeInTheDocument();
+      // activeForm
+      expect(screen.getByText(/搭建项目骨架 \(Phase 0\)/)).toBeInTheDocument();
+      // status
+      expect(screen.getByText("in_progress")).toBeInTheDocument();
+    });
+
+    it("blocks / blockedBy DAG 依赖显示为 task ref 标签", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "task_reminder",
+        payload: {
+          itemCount: 1,
+          pendingCount: 0,
+          inProgressCount: 1,
+          completedCount: 0,
+          content: [
+            {
+              id: "5",
+              subject: "Phase 1",
+              status: "in_progress",
+              blocks: ["8", "9"],
+              blockedBy: ["4"],
+            },
           ],
         },
       };
       render(<MetaBlock block={block} label="task_reminder" />);
-      expect(screen.getByText("📝 task_reminder")).toBeInTheDocument();
-      expect(screen.getByText(/1 待办 · 1 进行 · 1 完成/)).toBeInTheDocument();
-      expect(screen.getByText(/3 个 task/)).toBeInTheDocument();
+      expect(screen.getByText(/等待:/)).toBeInTheDocument();
+      expect(screen.getByText(/阻塞:/)).toBeInTheDocument();
+      // task ref 标签 #4 #8 #9
+      const refs = screen.getAllByText(/^#\d+$/);
+      expect(refs.length).toBeGreaterThanOrEqual(3);
     });
 
-    it("pr-link:payload 嵌套,显示 PR URL 链接", () => {
+    it("task 空描述/无依赖时不显示 .meta-task-meta", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "task_reminder",
+        payload: {
+          itemCount: 1,
+          pendingCount: 1,
+          inProgressCount: 0,
+          completedCount: 0,
+          content: [
+            {
+              id: "1",
+              subject: "简单任务",
+              status: "pending",
+              blocks: [],
+              blockedBy: [],
+            },
+          ],
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="task_reminder" />);
+      expect(container.querySelector(".meta-task-meta")).toBeNull();
+      expect(screen.getByText("简单任务")).toBeInTheDocument();
+    });
+  });
+
+  describe("v0.6.x file_snapshot (默认展开路径)", () => {
+    it("空 trackedFileBackups → 显示 '空 snapshot (无文件)' + 不渲染 ul", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "file-history-snapshot",
+        payload: {
+          messageId: "abc12345-6789-0abc-def0-123456789012",
+          trackedFileBackups: {},
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
+      expect(screen.getByText(/空 snapshot/)).toBeInTheDocument();
+      expect(container.querySelector("details")).toBeNull();
+      expect(container.querySelector(".meta-file-list")).toBeNull();
+    });
+
+    it("有文件 → 默认展开 ul.meta-file-list 列出所有路径", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "file-history-snapshot",
+        payload: {
+          trackedFileBackups: {
+            "/Users/foo/bar.ts": { version: 1 },
+            "/Users/foo/baz.ts": { version: 2 },
+          },
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
+      expect(screen.getByText(/2 个跟踪文件/)).toBeInTheDocument();
+      const ul = container.querySelector(".meta-file-list")!;
+      expect(ul).toBeInTheDocument();
+      expect(ul.querySelectorAll("li").length).toBe(2);
+    });
+
+    it("点路径按钮 → 调 useFileRevealAndNotify; 失败显示内联错误", async () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "file-history-snapshot",
+        payload: {
+          trackedFileBackups: { "/Users/foo/bar.ts": { version: 1 } },
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
+      const pathBtn = container.querySelector("[data-testid='meta-file-path']")!;
+      await userEvent.click(pathBtn);
+      expect(mockApiRevealInFinder).toHaveBeenCalled();
+      // 失败显示 .meta-reveal-error
+      const error = await screen.findByTestId("meta-file-path-error");
+      expect(error).toBeInTheDocument();
+      expect(error.textContent).toMatch(/PathSecurity/);
+    });
+  });
+
+  describe("v0.6.x skill_listing (长列表滚动)", () => {
+    it("skill 列表默认展开在 .meta-list-scrollable 内, 无 <details>", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "skill_listing",
+        payload: {
+          names: Array.from({ length: 14 }, (_, i) => `skill-${i}`),
+          skillCount: 14,
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="skill_listing" />);
+      expect(container.querySelector("details")).toBeNull();
+      const scrollable = container.querySelector(".meta-list-scrollable")!;
+      expect(scrollable).toBeInTheDocument();
+      // 14 个全部渲染 (DOM 内, 滚动条控制视觉)
+      expect(scrollable.querySelectorAll(".meta-tag").length).toBe(14);
+      // data-count 用于 CSS 计算 max-height
+      expect(scrollable.getAttribute("data-count")).toBe("14");
+    });
+  });
+
+  describe("v0.6.x plan_mode reveal", () => {
+    it("reminderType='full' → 蓝色 pill", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/path/to/plan.md",
+          planExists: false,
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
+      const pill = container.querySelector(".meta-reminder-full");
+      expect(pill).toBeInTheDocument();
+      expect(pill?.textContent).toContain("full");
+    });
+
+    it("planMode 路径 → .meta-plan-block 显示 + reveal 按钮", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
+      expect(container.querySelector(".meta-plan-block")).toBeInTheDocument();
+      // basename 显示
+      expect(container.textContent).toContain("my-plan.md");
+      // reveal 按钮
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']");
+      expect(revealBtn).toBeInTheDocument();
+      // 默认展开 (无 details)
+      expect(container.querySelector("details")).toBeNull();
+    });
+
+    it("点 plan_mode reveal 失败 → 显示错误提示", async () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
+      await userEvent.click(revealBtn);
+      expect(mockApiRevealInFinder).toHaveBeenCalled();
+      // 失败 → 内联红字提示
+      const error = await screen.findByTestId("plan-mode-reveal-error");
+      expect(error).toBeInTheDocument();
+      expect(error.textContent).toMatch(/PathSecurity|reveal 失败/);
+    });
+  });
+
+  describe("pr_link 仍可工作", () => {
+    it("pr-link: payload 嵌套, 显示 PR URL 链接", () => {
       const block: NormalizedBlockFE = {
         kind: "meta",
         label: "pr-link",
@@ -122,164 +315,6 @@ describe("MetaBlock", () => {
     });
   });
 
-  // v0.6.0 增强覆盖
-  describe("v0.6.0 file_snapshot", () => {
-    it("空 trackedFileBackups → 显示 '空 snapshot (无文件)'", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "file-history-snapshot",
-        payload: {
-          messageId: "abc12345-6789-0abc-def0-123456789012",
-          trackedFileBackups: {},
-        },
-      };
-      render(<MetaBlock block={block} label="file-history-snapshot" />);
-      expect(screen.getByText(/空 snapshot/)).toBeInTheDocument();
-    });
-
-    it("有文件 → 显示 'N 个跟踪文件' + 折叠路径列表", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "file-history-snapshot",
-        payload: {
-          trackedFileBackups: {
-            "/Users/foo/bar.ts": { version: 1 },
-            "/Users/foo/baz.ts": { version: 2 },
-          },
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
-      expect(screen.getByText(/2 个跟踪文件/)).toBeInTheDocument();
-      // 列表被包在 <details> 内: 默认 <details> 是折叠的, 真实浏览器不展开
-      // jsdom 同样默认 open=false; summary 显示 "查看路径 (2)"
-      expect(screen.getByText(/查看路径 \(2\)/)).toBeInTheDocument();
-      // 默认未展开 details → ul.meta-file-list 不存在 (hidden via DOM)
-      const details = container.querySelector(".meta-details")!;
-      expect(details).toBeInTheDocument();
-    });
-
-    it("点 summary 展开 details → 列出可点击 reveal 路径", async () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "file-history-snapshot",
-        payload: {
-          trackedFileBackups: { "/Users/foo/bar.ts": { version: 1 } },
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
-      const summary = container.querySelector(".meta-details summary")!;
-      await userEvent.click(summary);
-      // 展开后 meta-file-list 出现 (div summary 此时 click 触发 details[open]=true)
-      // 在 jsdom 中 userEvent.click 真实切换 open
-      expect(container.querySelector(".meta-file-list")).toBeInTheDocument();
-      const pathBtns = container.querySelectorAll("[data-testid='meta-file-path']");
-      expect(pathBtns.length).toBe(1);
-    });
-
-    it("点路径按钮 → 调 useFileReveal", async () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "file-history-snapshot",
-        payload: {
-          trackedFileBackups: { "/Users/foo/bar.ts": { version: 1 } },
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
-      const summary = container.querySelector(".meta-details summary")!;
-      await userEvent.click(summary);
-      const pathBtn = container.querySelector("[data-testid='meta-file-path']")!;
-      await userEvent.click(pathBtn);
-      expect(mockApiRevealInFinder).toHaveBeenCalled();
-    });
-  });
-
-  describe("v0.6.0 skill_listing", () => {
-    it("skill 数 ≤ 6 → 不折叠,inline 显示", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "skill_listing",
-        payload: {
-          names: ["drawio", "verify", "init"],
-          skillCount: 3,
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="skill_listing" />);
-      expect(container.querySelector(".meta-list-inline")).toBeInTheDocument();
-      expect(screen.getByText("drawio")).toBeInTheDocument();
-    });
-
-    it("skill 数 > 6 → 显示 details summary 提示 '查看全部 N 个'", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "skill_listing",
-        payload: {
-          names: Array.from({ length: 14 }, (_, i) => `skill-${i}`),
-          skillCount: 14,
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="skill_listing" />);
-      // summary 上写 "查看全部 14 个"
-      expect(screen.getByText(/查看全部 14 个/)).toBeInTheDocument();
-      // inline list 不存在 (因为走 details 分支)
-      expect(container.querySelector(".meta-list-inline")).toBeNull();
-      // 折叠状态下 details 元素存在但 open=false
-      const details = container.querySelector(".meta-details")!;
-      expect(details).toBeInTheDocument();
-    });
-  });
-
-  describe("v0.6.0 plan_mode", () => {
-    it("reminderType='full' → 蓝色 pill", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "plan_mode",
-        payload: {
-          reminderType: "full",
-          planFilePath: "/path/to/plan.md",
-          planExists: false,
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
-      const pill = container.querySelector(".meta-reminder-full");
-      expect(pill).toBeInTheDocument();
-      expect(pill?.textContent).toContain("full");
-    });
-
-    it("planMode 有路径 → details summary 显示文件名 + reveal 按钮", () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "plan_mode",
-        payload: {
-          reminderType: "full",
-          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
-          planExists: true,
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
-      expect(container.textContent).toContain("my-plan.md");
-      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']");
-      expect(revealBtn).toBeInTheDocument();
-    });
-
-    it("点 plan_mode reveal → 调 apiRevealInFinder", async () => {
-      const block: NormalizedBlockFE = {
-        kind: "meta",
-        label: "plan_mode",
-        payload: {
-          reminderType: "full",
-          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
-          planExists: true,
-        },
-      };
-      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
-      const summary = container.querySelector(".meta-details-plan summary")!;
-      await userEvent.click(summary);
-      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
-      await userEvent.click(revealBtn);
-      expect(mockApiRevealInFinder).toHaveBeenCalled();
-    });
-  });
-
   describe("fallback", () => {
     it("未知 label → 走 UnknownBlockCard(<details>)", () => {
       const block: NormalizedBlockFE = {
@@ -288,7 +323,6 @@ describe("MetaBlock", () => {
         payload: { foo: "bar" },
       };
       render(<MetaBlock block={block} label="totally-future" />);
-      // UnknownBlockCard 是 <details>
       expect(document.querySelector("details")).toBeInTheDocument();
     });
   });

@@ -1,14 +1,19 @@
 /**
- * useFileReveal — 文件路径 reveal 集中处理 hook (v0.6.0)
+ * useFileReveal — 文件路径 reveal 集中处理 hook (v0.6.0, 0.6.x 改)
  *
  * 封装:
  * - 调 apiRevealInFinder, 透传 workspaceRoot + allowRelaxed
- * - 错误转成 i18n 友好的 toast message
- * - 后续可加 click analytics, 现在先 1 个 hook 集中
+ * - 错误不再静默 fail — console.warn 完整信息 + 让 UI 显示反馈
+ *
+ * v0.6.x fix: 之前 reveal() 函数静默吞错误 (void t 是有意), 用户报
+ * 'reveal 按钮无效' — 实际是后端拒绝路径 (workspace 越界) 但 UI 无感知。
+ * 修复: revealAndNotify 已有错信息返回, 改 reveal() 让它 console.warn
+ * + 通过 window event 让全屏有 toast 的组件监听。
  *
  * 用法:
- *   const { reveal } = useFileReveal();
- *   <span onClick={() => reveal(filePath)}>{filePath}</span>
+ *   const { reveal, revealAndNotify } = useFileReveal();
+ *   // 简单场景: reveal(path) — 失败会 console.warn + 派发 'reveal-error' 事件
+ *   // 复杂场景: revealAndNotify(path) — 拿 {ok, error} 自己处理 UI
  */
 
 import { useCallback } from "react";
@@ -18,11 +23,19 @@ import { useSettingsStore } from "../state/settingsStore";
 import { extractErrorMessage } from "../lib/api";
 
 export interface FileRevealResult {
-  /** reveal 文件, 失败返回错误消息(可显示 toast) */
+  /**
+   * reveal 文件, 失败 → console.warn + 派发 'openclaw:reveal-error' CustomEvent
+   * (App 可在 window 上 addEventListener 弹 toast)
+   */
   reveal: (path: string) => Promise<void>;
-  /** 直接拿错误消息(给 UI 弹 toast 用) */
-  revealAndNotify: (path: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+  /** 直接拿错误消息(给 UI 弹 inline error 用) */
+  revealAndNotify: (
+    path: string
+  ) => Promise<{ ok: true; error?: undefined } | { ok: false; error: string }>;
 }
+
+/** 自定义事件名 — App.tsx 可以 addEventListener 弹 toast */
+export const REVEAL_ERROR_EVENT = "openclaw:reveal-error";
 
 export function useFileReveal(): FileRevealResult {
   const { t } = useTranslation();
@@ -30,9 +43,6 @@ export function useFileReveal(): FileRevealResult {
   const workspaceRoot = useSettingsStore(
     (s) => s.settings.defaultExportDir // 暂用 defaultExportDir 当 workspaceRoot proxy
   );
-
-  // 实际: workspaceRoot 应从当前 SessionMeta.workspaceGuess 来 (v0.6.0 UX 改进)
-  // 现在先用 settings 里的值, 后续可让调用方传 meta
 
   const revealAndNotify = useCallback(
     async (path: string) => {
@@ -51,11 +61,16 @@ export function useFileReveal(): FileRevealResult {
     async (path: string) => {
       const result = await revealAndNotify(path);
       if (!result.ok) {
-        // ⚠️ 这里不打 console.log (会污染 Tauri 生产日志)
-        // 调用方应该 listen 这个 Promise 返回的错误, 自己决定 UI 处理
-        // (通常弹 toast, 跟 useToast 配合)
-        // 静默 fail 是有意 — 用户取消 reveal 不需要错误噪音
-        void t; // 保留 i18n 引用, 后续可加错误 toast
+        // v0.6.x fix: 不再静默 (用户报 'reveal 按钮无效')
+        // 1) console.warn 完整错 (开发者能看见)
+        // 2) 派发 CustomEvent 让 App 弹 toast
+        console.warn(`[reveal] failed for ${path}:`, result.error);
+        window.dispatchEvent(
+          new CustomEvent(REVEAL_ERROR_EVENT, {
+            detail: { path, error: result.error },
+          })
+        );
+        void t; // 保留 i18n 引用
       }
     },
     [revealAndNotify, t]

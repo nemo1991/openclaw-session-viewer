@@ -302,7 +302,7 @@ describe("MessageBubble", () => {
       expect(pill?.textContent).toContain("minimal");
     });
 
-    it("子代理字段 (mode:) → 走 SubagentMetaBlock (可折叠 details)", () => {
+    it("子代理字段 (mode:) → 走 SubagentMetaBlock (v0.6.x 平面块, 无 <details>)", () => {
       render(
         <MessageBubble
           entry={makeEntry(0, "meta", [
@@ -313,8 +313,10 @@ describe("MessageBubble", () => {
           ])}
         />
       );
-      const details = document.querySelector("details");
-      expect(details).toBeInTheDocument();
+      // v0.6.x: 不再是 <details>, 是平面 <div class="subagent-meta-block-flat">
+      const flat = document.querySelector(".subagent-meta-block-flat");
+      expect(flat).toBeInTheDocument();
+      expect(document.querySelector("details")).toBeNull();
     });
   });
 
