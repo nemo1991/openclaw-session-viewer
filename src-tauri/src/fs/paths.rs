@@ -239,27 +239,36 @@ impl AppPaths {
 /// 上失败:base canonicalize 后会带 `\\?\` UNC 前缀,target 是短路径,
 /// 字符串比较失败但实际是子路径。
 pub fn assert_within_any_root(paths: &AppPaths, target: &Path) -> crate::error::AppResult<()> {
-    // 1) default claude.projects_dir
+    // 1) default claude.projects_dir (含所有 Claude 子树: projects/plans/skills/...)
+    //    v0.6.x: 接受整个 ~/.claude 而不仅是 ~/.claude/projects/, 让 plan 文件
+    //    (~/.claude/plans/*.md) 也能 reveal
     if let Some(c) = &paths.default_root.claude {
-        if path_starts_with(target, &c.projects_dir) {
+        if path_starts_with(target, &c.home) {
             return Ok(());
         }
     }
     // 2) default openclaw.agents_dir
     if let Some(o) = &paths.default_root.openclaw {
-        if path_starts_with(target, &o.agents_dir) {
+        if path_starts_with(target, &o.home) {
             return Ok(());
         }
     }
-    // 3) 每个 custom_root
+    // 3) 每个 custom_root (整个 root 也接受, 用户自定义的 Claude/OpenClaw 路径
+    //    以及 ~/Downloads 之类的也可能含 projects/)
     for cr in &paths.custom_roots {
+        // 3a) 用户提供的整个 path 都接受 (e.g. /tmp/my-claude-root/*)
+        if path_starts_with(target, &cr.path) {
+            return Ok(());
+        }
+        // 3b) Claude home (整个 ~/.claude 子树)
         if let Some(c) = &cr.claude {
-            if path_starts_with(target, &c.projects_dir) {
+            if path_starts_with(target, &c.home) {
                 return Ok(());
             }
         }
+        // 3c) OpenClaw home (整个 ~/.openclaw 子树)
         if let Some(o) = &cr.openclaw {
-            if path_starts_with(target, &o.agents_dir) {
+            if path_starts_with(target, &o.home) {
                 return Ok(());
             }
         }
@@ -400,6 +409,61 @@ mod tests {
         let base = std::path::Path::new("/Users/foo");
         let target = std::path::Path::new("/etc/passwd");
         assert!(assert_within_lexical(base, target).is_err());
+    }
+
+    /// v0.6.x: ~/.claude/plans/my-plan.md 应该在 ~/.claude 树下 (不再只检查 projects/)
+    #[test]
+    fn test_assert_within_any_root_accepts_claude_plan_file() {
+        use crate::fs::paths::{assert_within_any_root, AppPaths, ClaudePaths, RootSource};
+        let home = std::path::PathBuf::from("/Users/test");
+        let paths = AppPaths {
+            home: home.clone(),
+            default_root: RootSource {
+                label: "default".to_string(),
+                path: home.join(".claude"),
+                claude: Some(ClaudePaths::new(&home)),
+                openclaw: None,
+            },
+            custom_roots: vec![],
+        };
+        // 计划文件 ~/.claude/plans/my-plan.md 应被接受
+        let target = std::path::Path::new("/Users/test/.claude/plans/my-plan.md");
+        assert!(assert_within_any_root(&paths, target).is_ok());
+        // ~/.claude/projects/<encoded>/abc.jsonl 也应被接受
+        let target2 = std::path::Path::new("/Users/test/.claude/projects/-Users-foo/sess.jsonl");
+        assert!(assert_within_any_root(&paths, target2).is_ok());
+        // ~/.ssh/id_rsa 仍然拒绝
+        let bad = std::path::Path::new("/Users/test/.ssh/id_rsa");
+        assert!(assert_within_any_root(&paths, bad).is_err());
+    }
+
+    /// v0.6.x: custom_root 整个 path 都接受 (不再仅 claude_projects_dir)
+    #[test]
+    fn test_assert_within_any_root_accepts_custom_root_path() {
+        use crate::fs::paths::{assert_within_any_root, AppPaths, RootSource};
+        let home = std::path::PathBuf::from("/Users/test");
+        let custom_path = std::path::PathBuf::from("/tmp/my-claude-root");
+        let paths = AppPaths {
+            home: home.clone(),
+            default_root: RootSource {
+                label: "default".to_string(),
+                path: home.join(".claude"),
+                claude: None,
+                openclaw: None,
+            },
+            custom_roots: vec![RootSource {
+                label: "my-root".to_string(),
+                path: custom_path.clone(),
+                claude: None,
+                openclaw: None,
+            }],
+        };
+        // 自定义 root 下任何路径都接受
+        let target = std::path::Path::new("/tmp/my-claude-root/foo/bar.jsonl");
+        assert!(assert_within_any_root(&paths, target).is_ok());
+        // 之外仍然拒绝
+        let bad = std::path::Path::new("/etc/passwd");
+        assert!(assert_within_any_root(&paths, bad).is_err());
     }
 
     /// v0.2.6 回归测试:Windows 上 base 是短路径 (`C:\Users\keepn\.openclaw\agents`),

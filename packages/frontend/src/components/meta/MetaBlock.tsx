@@ -34,9 +34,11 @@ import { UnknownBlockCard } from "../UnknownBlockCard";
 export interface MetaBlockProps {
   block: NormalizedBlockFE;
   label: string;
+  /** v0.6.x: 透传 parentJsonlPath, 让 useFileReveal (file_snapshot / plan_mode reveal) 推 workspaceRoot */
+  parentJsonlPath?: string;
 }
 
-export function MetaBlock({ block, label }: MetaBlockProps) {
+export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
   // 解包:meta 分支里字段都在 payload 里,顶层平铺的为 BlockRenderer 入口用
   const payload = (block.payload ?? block) as Record<string, unknown>;
   const get = (key: string): unknown => payload[key] ?? block[key];
@@ -121,7 +123,7 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
               reminder: {reminder}
             </span>
           )}
-          {planFile && <PlanFilePath path={planFile} />}
+          {planFile && <PlanFilePath path={planFile} parentJsonlPath={parentJsonlPath} />}
         </div>
       );
     }
@@ -143,7 +145,7 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
             <ul className="meta-file-list" data-count={fileCount}>
               {paths.map((p) => (
                 <li key={p} className="meta-file-item">
-                  <FilePathClickable path={p} />
+                  <FilePathClickable path={p} parentJsonlPath={parentJsonlPath} />
                 </li>
               ))}
             </ul>
@@ -283,8 +285,10 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
  *    - [去设置] 按钮 (跳到 /settings, 用户能配置 workspaceRoot)
  *    - [一键开启允许越界] 按钮 (确认后 toggle settings.pathSecurity.allowRelaxed=true + 重试)
  */
-function FilePathClickable({ path }: { path: string }) {
-  const { revealAndNotify, reveal } = useFileReveal();
+function FilePathClickable({ path, parentJsonlPath }: { path: string; parentJsonlPath?: string }) {
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
   const [error, setError] = useState<string | null>(null);
   const allowRelaxed = useSettingsStore((s) => s.settings.pathSecurity?.allowRelaxed ?? false);
 
@@ -317,6 +321,7 @@ function FilePathClickable({ path }: { path: string }) {
           path={path}
           error={error}
           allowRelaxed={allowRelaxed}
+          parentJsonlPath={parentJsonlPath}
           onRetried={() => setError(null)}
         />
       )}
@@ -324,8 +329,10 @@ function FilePathClickable({ path }: { path: string }) {
   );
 }
 
-function PlanFilePath({ path }: { path: string }) {
-  const { revealAndNotify } = useFileReveal();
+function PlanFilePath({ path, parentJsonlPath }: { path: string; parentJsonlPath?: string }) {
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
   const [error, setError] = useState<string | null>(null);
   const allowRelaxed = useSettingsStore((s) => s.settings.pathSecurity?.allowRelaxed ?? false);
 
@@ -357,6 +364,7 @@ function PlanFilePath({ path }: { path: string }) {
           path={path}
           error={error}
           allowRelaxed={allowRelaxed}
+          parentJsonlPath={parentJsonlPath}
           onRetried={() => setError(null)}
         />
       )}
@@ -377,18 +385,22 @@ function RevealErrorActions({
   path,
   error,
   allowRelaxed,
+  parentJsonlPath,
   onRetried,
 }: {
   path: string;
   error: string;
   allowRelaxed: boolean;
+  parentJsonlPath?: string;
   onRetried: () => void;
 }) {
   const [copied, setCopied] = useState(false);
   const navigate = useNavigate();
   const updateSettings = useSettingsStore((s) => s.update);
   const saveSettings = useSettingsStore((s) => s.save);
-  const { revealAndNotify } = useFileReveal();
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
 
   // 把 PathSecurity 错转成人类语言
   const humanError = (() => {
@@ -420,10 +432,19 @@ function RevealErrorActions({
         "受 assert_within_any_root 兜底, 不会触碰 ~/.ssh 等敏感路径。\n\n确认开启?"
     );
     if (!ok) return;
-    updateSettings({ pathSecurity: { allowRelaxed: true } });
+    // v0.6.x fix: 同时把 defaultExportDir 也设上 (保证之后 lock-down 也能 reveal 计划文件)
+    // 从 path 推断 ~/.claude: '/Users/foo/.claude/plans/x.md' → '/Users/foo/.claude'
+    let inferredExportDir: string | undefined;
+    const claudeMatch = path.match(/^(.*?\.claude)(\/|$)/);
+    if (claudeMatch) inferredExportDir = claudeMatch[1];
+    updateSettings({
+      pathSecurity: { allowRelaxed: true },
+      ...(inferredExportDir ? { defaultExportDir: inferredExportDir } : {}),
+    });
     await saveSettings({
       ...useSettingsStore.getState().settings,
       pathSecurity: { allowRelaxed: true },
+      ...(inferredExportDir ? { defaultExportDir: inferredExportDir } : {}),
     });
     // 重试 reveal
     const result = await revealAndNotify(path);

@@ -8,6 +8,8 @@ interface Props {
   content: unknown;
   isError?: boolean;
   filePath?: string;
+  /** v0.6.x: 透传 session jsonl path → useFileReveal 推 workspaceRoot */
+  parentJsonlPath?: string;
 }
 
 const SHIKI_LANGS_BY_EXT: Record<string, string> = {
@@ -35,7 +37,7 @@ const SHIKI_LANGS_BY_EXT: Record<string, string> = {
 
 const PREVIEW_CHARS = 500;
 
-export function ToolResultCard({ toolUseId, content, isError, filePath }: Props) {
+export function ToolResultCard({ toolUseId, content, isError, filePath, parentJsonlPath }: Props) {
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
   // v0.6.0: 文本截断的展开/折叠状态(独立于 card 自身的 open)
@@ -80,7 +82,9 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
   const truncated = isTruncated ? text.slice(0, PREVIEW_CHARS) + "…" : text;
   // expanded ? 完整 : 截断 (独立于 card open)
   const displayText = expanded ? text : truncated;
-  const { revealAndNotify } = useFileReveal();
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
 
   // v0.6.0: 文件路径变可点击 → reveal in Finder
   // 默认 lock-down 模式: 路径必须在 workspace 内, 越界返回 PathSecurity 错误
