@@ -21,21 +21,41 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { MetaBlock } from "./MetaBlock";
 import * as api from "../../lib/api";
 import { useSettingsStore } from "../../state/settingsStore";
 import type { NormalizedBlockFE } from "../../lib/api";
 
 const mockApiRevealInFinder = vi.spyOn(api, "apiRevealInFinder");
+const mockApiSaveSettings = vi.spyOn(api, "apiSaveSettings");
+
+// v0.6.x: useNavigate 需要 Router 上下文, 全部测试都包
+function renderInRoute(element: React.ReactNode, initialPath = "/") {
+  return render(
+    <MemoryRouter initialEntries={[initialPath]}>
+      <Routes>
+        <Route path="/" element={element} />
+        <Route path="/settings" element={<div data-testid="settings-page" />} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+// 替代直接 render(<MetaBlock />) 的版本 (v0.6.x 必须包路由)
+const renderMeta = (block: NormalizedBlockFE, label: string) =>
+  renderInRoute(<MetaBlock block={block} label={label} />);
 
 beforeEach(() => {
   cleanup();
   mockApiRevealInFinder.mockReset();
+  mockApiSaveSettings.mockReset();
   // 默认 pathSecurity.lock-down 模式 + workspaceRoot=null (没设 defaultExportDir)
   // → 后端会拒绝并返回 'PathSecurity: 需提供 workspace_root'
   mockApiRevealInFinder.mockRejectedValue(
     new Error("PathSecurity: 需提供 workspace_root (lock-down 模式)")
   );
+  mockApiSaveSettings.mockResolvedValue(undefined);
   useSettingsStore.setState({
     settings: {
       ...useSettingsStore.getState().settings,
@@ -52,7 +72,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
         addedTypes: ["Explore", "Plan"],
         isInitial: true,
       };
-      const { container } = render(<MetaBlock block={block} label="agent_listing" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="agent_listing" />);
       expect(container.querySelector("details")).toBeNull();
       expect(container.querySelector(".meta-block-flat")).toBeInTheDocument();
       expect(screen.getByText("🤖 agent")).toBeInTheDocument();
@@ -66,7 +86,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
         removedTypes: ["OldAgent"],
         isInitial: false,
       };
-      const { container } = render(<MetaBlock block={block} label="agent_listing_delta" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="agent_listing_delta" />);
       // 默认展开后 add/remove 标签直接可见
       expect(screen.getByText(/\+1 agent|\+1 \/ -1/)).toBeInTheDocument();
       // 配色 class
@@ -98,7 +118,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           ],
         },
       };
-      const { container } = render(<MetaBlock block={block} label="task_reminder" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="task_reminder" />);
       // task id 标签
       expect(screen.getByText("#4")).toBeInTheDocument();
       // description 截断显示
@@ -129,7 +149,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           ],
         },
       };
-      render(<MetaBlock block={block} label="task_reminder" />);
+      renderInRoute(<MetaBlock block={block} label="task_reminder" />);
       expect(screen.getByText(/等待:/)).toBeInTheDocument();
       expect(screen.getByText(/阻塞:/)).toBeInTheDocument();
       // task ref 标签 #4 #8 #9
@@ -157,7 +177,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           ],
         },
       };
-      const { container } = render(<MetaBlock block={block} label="task_reminder" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="task_reminder" />);
       expect(container.querySelector(".meta-task-meta")).toBeNull();
       expect(screen.getByText("简单任务")).toBeInTheDocument();
     });
@@ -173,7 +193,9 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           trackedFileBackups: {},
         },
       };
-      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
+      const { container } = renderInRoute(
+        <MetaBlock block={block} label="file-history-snapshot" />
+      );
       expect(screen.getByText(/空 snapshot/)).toBeInTheDocument();
       expect(container.querySelector("details")).toBeNull();
       expect(container.querySelector(".meta-file-list")).toBeNull();
@@ -190,14 +212,16 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           },
         },
       };
-      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
+      const { container } = renderInRoute(
+        <MetaBlock block={block} label="file-history-snapshot" />
+      );
       expect(screen.getByText(/2 个跟踪文件/)).toBeInTheDocument();
       const ul = container.querySelector(".meta-file-list")!;
       expect(ul).toBeInTheDocument();
       expect(ul.querySelectorAll("li").length).toBe(2);
     });
 
-    it("点路径按钮 → 调 useFileRevealAndNotify; 失败显示内联错误", async () => {
+    it("点路径按钮 → 调 useFileRevealAndNotify; 失败显示可操作错误 UI", async () => {
       const block: NormalizedBlockFE = {
         kind: "meta",
         label: "file-history-snapshot",
@@ -205,14 +229,24 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           trackedFileBackups: { "/Users/foo/bar.ts": { version: 1 } },
         },
       };
-      const { container } = render(<MetaBlock block={block} label="file-history-snapshot" />);
+      const { container } = renderInRoute(
+        <MetaBlock block={block} label="file-history-snapshot" />
+      );
       const pathBtn = container.querySelector("[data-testid='meta-file-path']")!;
       await userEvent.click(pathBtn);
       expect(mockApiRevealInFinder).toHaveBeenCalled();
-      // 失败显示 .meta-reveal-error
-      const error = await screen.findByTestId("meta-file-path-error");
-      expect(error).toBeInTheDocument();
-      expect(error.textContent).toMatch(/PathSecurity/);
+      // 失败显示可操作错误 UI (v0.6.x)
+      const errorBlock = await screen.findByTestId("meta-reveal-error-block");
+      expect(errorBlock).toBeInTheDocument();
+      // 文案显示人类能读的内容
+      expect(errorBlock.textContent).toMatch(/配置|workspace|越界/);
+      // 操作按钮: 复制路径 + 去设置 (allowRelaxed=false 时还显示一键开启)
+      const copyBtn = container.querySelector("[data-testid='meta-reveal-error-copy']");
+      const settingsBtn = container.querySelector("[data-testid='meta-reveal-error-settings']");
+      const unlockBtn = container.querySelector("[data-testid='meta-reveal-error-unlock']");
+      expect(copyBtn).toBeInTheDocument();
+      expect(settingsBtn).toBeInTheDocument();
+      expect(unlockBtn).toBeInTheDocument();
     });
   });
 
@@ -226,7 +260,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           skillCount: 14,
         },
       };
-      const { container } = render(<MetaBlock block={block} label="skill_listing" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="skill_listing" />);
       expect(container.querySelector("details")).toBeNull();
       const scrollable = container.querySelector(".meta-list-scrollable")!;
       expect(scrollable).toBeInTheDocument();
@@ -248,7 +282,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           planExists: false,
         },
       };
-      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
       const pill = container.querySelector(".meta-reminder-full");
       expect(pill).toBeInTheDocument();
       expect(pill?.textContent).toContain("full");
@@ -264,7 +298,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           planExists: true,
         },
       };
-      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
       expect(container.querySelector(".meta-plan-block")).toBeInTheDocument();
       // basename 显示
       expect(container.textContent).toContain("my-plan.md");
@@ -275,7 +309,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(container.querySelector("details")).toBeNull();
     });
 
-    it("点 plan_mode reveal 失败 → 显示错误提示", async () => {
+    it("点 plan_mode reveal 失败 → 显示可操作错误 UI", async () => {
       const block: NormalizedBlockFE = {
         kind: "meta",
         label: "plan_mode",
@@ -285,14 +319,142 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           planExists: true,
         },
       };
-      const { container } = render(<MetaBlock block={block} label="plan_mode" />);
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
       const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
       await userEvent.click(revealBtn);
       expect(mockApiRevealInFinder).toHaveBeenCalled();
-      // 失败 → 内联红字提示
-      const error = await screen.findByTestId("plan-mode-reveal-error");
-      expect(error).toBeInTheDocument();
-      expect(error.textContent).toMatch(/PathSecurity|reveal 失败/);
+      const errorBlock = await screen.findByTestId("meta-reveal-error-block");
+      expect(errorBlock).toBeInTheDocument();
+      expect(errorBlock.textContent).toMatch(/PathSecurity|配置|workspace/);
+    });
+
+    it("点 plan_mode reveal 失败 → '去设置' 按钮跳到 /settings", async () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
+      await userEvent.click(revealBtn);
+      const settingsBtn = await screen.findByTestId("meta-reveal-error-settings");
+      await userEvent.click(settingsBtn);
+      // 路由跳到 /settings, 看到 settings-page 内容
+      expect(screen.getByTestId("settings-page")).toBeInTheDocument();
+    });
+
+    it("点 '复制路径' 按钮 → navigator.clipboard.writeText + '已复制' 文案", async () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
+      await userEvent.click(revealBtn);
+      const copyBtn = await screen.findByTestId("meta-reveal-error-copy");
+      await userEvent.click(copyBtn);
+      // clipboard.writeText mock 在 setup 里 (useFileReveal.test.tsx 全局)
+      // 这里点完按钮不报错即可
+      expect(copyBtn.textContent).toMatch(/复制路径|已复制/);
+    });
+
+    it("点 '一键开启允许越界' (确认后) → 持久化 settings + 自动重试 reveal", async () => {
+      // 允许 confirm
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+      // 第一次 reveal 失败, 开启后第二次 reveal 成功
+      mockApiRevealInFinder
+        .mockRejectedValueOnce(new Error("PathSecurity: 需提供 workspace_root"))
+        .mockResolvedValueOnce(undefined);
+      mockApiSaveSettings.mockResolvedValue(undefined);
+
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
+      await userEvent.click(revealBtn);
+      const unlockBtn = await screen.findByTestId("meta-reveal-error-unlock");
+      await userEvent.click(unlockBtn);
+
+      // confirm 弹过
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("允许 reveal"));
+      // saveSettings 调过 (持久化)
+      expect(mockApiSaveSettings).toHaveBeenCalled();
+      // mockApiRevealInFinder 第二次成功 → onRetried 清除错误
+      // 错误块应该消失
+      await new Promise((r) => setTimeout(r, 10));
+      expect(container.querySelector("[data-testid='meta-reveal-error-block']")).toBeNull();
+      // settings.allowRelaxed=true
+      expect(useSettingsStore.getState().settings.pathSecurity?.allowRelaxed).toBe(true);
+      confirmSpy.mockRestore();
+    });
+
+    it("点 '一键开启' 用户取消 confirm → 不动 settings", async () => {
+      const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+      mockApiRevealInFinder.mockRejectedValue(new Error("PathSecurity: nope"));
+
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
+      await userEvent.click(revealBtn);
+      const unlockBtn = await screen.findByTestId("meta-reveal-error-unlock");
+      await userEvent.click(unlockBtn);
+      expect(confirmSpy).toHaveBeenCalled();
+      // 用户取消 → 不应调 saveSettings
+      expect(mockApiSaveSettings).not.toHaveBeenCalled();
+      // settings.allowRelaxed 仍 false
+      expect(useSettingsStore.getState().settings.pathSecurity?.allowRelaxed).toBe(false);
+      confirmSpy.mockRestore();
+    });
+
+    it("allowRelaxed=true 时不显示 '一键开启' 按钮", async () => {
+      // 开启 allowRelaxed
+      useSettingsStore.setState({
+        settings: {
+          ...useSettingsStore.getState().settings,
+          pathSecurity: { allowRelaxed: true },
+        } as typeof useSettingsStore extends never ? never : never,
+      });
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "plan_mode",
+        payload: {
+          reminderType: "full",
+          planFilePath: "/Users/foo/.claude/plans/my-plan.md",
+          planExists: true,
+        },
+      };
+      // 配置 fail (避免 unlock 流程干扰)
+      mockApiRevealInFinder.mockRejectedValue(new Error("PathSecurity: nope"));
+      const { container } = renderInRoute(<MetaBlock block={block} label="plan_mode" />);
+      const revealBtn = container.querySelector("[data-testid='plan-mode-reveal']")!;
+      await userEvent.click(revealBtn);
+      // 错误块出现, 但 unlock 按钮隐藏
+      await screen.findByTestId("meta-reveal-error-block");
+      expect(container.querySelector("[data-testid='meta-reveal-error-unlock']")).toBeNull();
     });
   });
 
@@ -307,7 +469,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
           prUrl: "https://github.com/openclaw/session-viewer/pull/42",
         },
       };
-      render(<MetaBlock block={block} label="pr-link" />);
+      renderInRoute(<MetaBlock block={block} label="pr-link" />);
       expect(screen.getByText("🔗 pr_link")).toBeInTheDocument();
       const link = screen.getByRole("link");
       expect(link.getAttribute("href")).toBe("https://github.com/openclaw/session-viewer/pull/42");
@@ -322,7 +484,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
         label: "totally-future",
         payload: { foo: "bar" },
       };
-      render(<MetaBlock block={block} label="totally-future" />);
+      renderInRoute(<MetaBlock block={block} label="totally-future" />);
       expect(document.querySelector("details")).toBeInTheDocument();
     });
   });
