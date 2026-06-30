@@ -254,13 +254,6 @@
   background: var(--color-surface-2);
   font-family: monospace;
   font-size: 11px;
-  /* v0.6.x fix: 长 agent name 撑破父容器 (e.g. 'claude-code-guide')
-   * - max-width 限制单个 tag 最大占位, hover 时 title 显示完整
-   * - overflow-wrap: anywhere 在任何字符间断行, 中文/英文/连字符混合都安全 */
-  max-width: 240px;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  white-space: normal;
 }
 
 .meta-path {
@@ -606,6 +599,14 @@
 .meta-tag {
   display: inline-flex;
   align-items: center;
+  /* v0.6.x fix: 长 agent name 撑破父容器 (e.g. 'claude-code-guide') — 合并两处定义
+   * 之前 .meta-tag 在 line 606 重复声明只设了 display/align-items, 覆盖了 line 250
+   * 的 overflow-wrap:anywhere, 让 agent_listing 的长 chip 不断行
+   * 现在合并到一处, 只在最后声明一次 */
+  max-width: 240px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .meta-tag-add {

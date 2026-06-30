@@ -79,13 +79,13 @@ function renderBody(
 ) {
   switch (name) {
     case "Edit":
-      return <EditToolBody input={input} />;
+      return <EditToolBody input={input} parentJsonlPath={parentJsonlPath} />;
     case "Bash":
       return <BashToolBody input={input} />;
     case "Read":
     case "Write":
     case "NotebookEdit":
-      return <ReadToolBody input={input} />;
+      return <ReadToolBody input={input} parentJsonlPath={parentJsonlPath} />;
     case "Task":
     case "Agent":
       // v0.5.0:Claude Code 用 name="Agent" 派生子代理,input schema
@@ -138,7 +138,13 @@ function summarize(name: string, input: Record<string, unknown>): string {
  * v0.4.2: Edit 工具 — line-level diff 视图
  * old_string / new_string 缺失时 fallback 到 JSON dump;超大输入走 fallback + 警告。
  */
-function EditToolBody({ input }: { input: Record<string, unknown> }) {
+function EditToolBody({
+  input,
+  parentJsonlPath: _parentJsonlPath,
+}: {
+  input: Record<string, unknown>;
+  parentJsonlPath?: string;
+}) {
   const oldStr = String(input.old_string ?? "");
   const newStr = String(input.new_string ?? "");
 
@@ -203,11 +209,19 @@ function BashToolBody({ input }: { input: Record<string, unknown> }) {
 }
 
 /** v0.4.2: Read / Write / NotebookEdit — file_path 粗体 + offset/limit 行号指示 */
-function ReadToolBody({ input }: { input: Record<string, unknown> }) {
+function ReadToolBody({
+  input,
+  parentJsonlPath,
+}: {
+  input: Record<string, unknown>;
+  parentJsonlPath?: string;
+}) {
   const filePath = String(input.file_path ?? input.notebook_path ?? input.path ?? "");
   const offset = typeof input.offset === "number" ? input.offset : null;
   const limit = typeof input.limit === "number" ? input.limit : null;
-  const { revealAndNotify } = useFileReveal();
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
 
   let rangeBadge: string | null = null;
   if (offset != null && limit != null) {

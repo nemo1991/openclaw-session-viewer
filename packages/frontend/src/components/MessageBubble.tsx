@@ -67,7 +67,9 @@ function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) 
           }
           // 已知 meta label → MetaBlock 专属样式
           if (isKnownMetaLabel(labelStr)) {
-            return <MetaBlock key={i} block={b} label={labelStr} />;
+            return (
+              <MetaBlock key={i} block={b} label={labelStr} parentJsonlPath={parentJsonlPath} />
+            );
           }
           // 有 payload 且字段丰富时使用完整 UnknownBlockCard
           if (
@@ -160,7 +162,7 @@ export function BlockRenderer({
         />
       );
     case "tool_result":
-      return <ToolResultBlock block={block} />;
+      return <ToolResultBlock block={block} parentJsonlPath={parentJsonlPath} />;
     case "image":
       return <ImageBlock block={block} />;
     default:

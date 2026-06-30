@@ -11,6 +11,7 @@ import {
   Trash2,
   Database,
   ExternalLink,
+  ShieldCheck,
 } from "lucide-react";
 
 import { useSettingsStore } from "../state/settingsStore";
@@ -68,6 +69,13 @@ export default function SettingsRoute() {
   const handleUpdateRootLabel = (idx: number, label: string) => {
     const next = (settings.customRoots ?? []).map((r, i) => (i === idx ? { ...r, label } : r));
     update({ customRoots: next });
+  };
+
+  // v0.6.x: 一键把 defaultExportDir 设到 ~/.claude (lock-down 模式下 plan 路径能 reveal)
+  // 这是 '一键开启允许越界' 的反向: 不放松安全, 而是设更宽的 workspaceRoot
+  const setWorkspaceRootToClaudeHome = () => {
+    // 没法直接获取 homedir, 让用户用 pickDir
+    handlePickDir();
   };
 
   return (
@@ -187,6 +195,45 @@ export default function SettingsRoute() {
               <option value="America/Los_Angeles">America/Los_Angeles</option>
             </select>
           </div>
+        </section>
+
+        {/* v0.6.x: 文件路径 reveal 安全策略 (用户报 '设置中并没有reveal的相关设置') */}
+        <section className="path-security-section">
+          <h2>
+            <ShieldCheck size={14} /> {t("settings.pathSecurity.title")}
+          </h2>
+          <p className="hint">{t("settings.pathSecurity.hint")}</p>
+
+          <div className="field">
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                data-testid="settings-allow-relaxed"
+                checked={settings.pathSecurity?.allowRelaxed ?? false}
+                onChange={(e) => update({ pathSecurity: { allowRelaxed: e.target.checked } })}
+              />
+              <span>{t("settings.pathSecurity.allowRelaxed")}</span>
+            </label>
+            <p className="hint">{t("settings.pathSecurity.allowRelaxedHint")}</p>
+          </div>
+
+          {!(settings.pathSecurity?.allowRelaxed ?? false) && (
+            <div className="field path-security-alternative">
+              <p className="hint">
+                提示: lock-down 模式下,路径必须在「默认导出目录」子树内。如果需要 reveal plan 文件 ({" "}
+                <code>~/.claude/plans/*.md</code> ), 请把下方「默认导出目录」设为
+                <code>~/.claude</code>。
+              </p>
+              <button
+                type="button"
+                onClick={setWorkspaceRootToClaudeHome}
+                className="secondary"
+                data-testid="settings-pick-claude-home"
+              >
+                <FolderOpen size={12} /> 选择 ~/.claude 作为默认导出目录
+              </button>
+            </div>
+          )}
         </section>
 
         {/* v0.2.5: 数据源管理 */}
