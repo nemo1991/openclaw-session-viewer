@@ -161,6 +161,10 @@
   margin: 4px 0;
   padding-left: 12px;
   border-left: 2px solid var(--color-border);
+  /* v0.6.x: 子元素 max-width:100% 起作用的前提 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .msg-meta-pill {
@@ -250,6 +254,13 @@
   background: var(--color-surface-2);
   font-family: monospace;
   font-size: 11px;
+  /* v0.6.x fix: 长 agent name 撑破父容器 (e.g. 'claude-code-guide')
+   * - max-width 限制单个 tag 最大占位, hover 时 title 显示完整
+   * - overflow-wrap: anywhere 在任何字符间断行, 中文/英文/连字符混合都安全 */
+  max-width: 240px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .meta-path {
@@ -558,6 +569,10 @@
 .meta-section {
   flex-basis: 100%;
   margin: 4px 0;
+  /* v0.6.x: 防止 flex-basis: 100% + 长子元素溢出父容器 */
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .meta-section-title {
   display: block;
@@ -568,11 +583,24 @@
   text-transform: uppercase;
 }
 
+/* v0.6.x: meta-list 必须受父容器宽度约束, 否则 flex-wrap 但子项 inline-block 仍溢出 */
+.meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
+  line-height: 1.5;
+  max-width: 100%;
+  min-width: 0;
+}
+
 .meta-list-inline {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 3px;
   padding: 2px 0;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .meta-tag {
@@ -616,9 +644,16 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* v0.6.x: 长 file path 不撑破容器 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .meta-file-item {
   padding: 2px 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* 路径可点击 (reveal in Finder) */
@@ -634,6 +669,9 @@
   word-break: break-all;
   transition: all 0.15s ease;
   border: 1px solid transparent;
+  /* v0.6.x fix: 长 file path 不撑破容器, 完整值通过 title 显示 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 .meta-path-clickable:hover {
   background: var(--color-primary-bg, rgba(91, 107, 255, 0.08));
@@ -647,12 +685,16 @@
 /* plan_mode 路径 reveal 行 */
 .meta-details-plan {
   flex-basis: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 .meta-plan-path-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 0;
+  max-width: 100%;
+  min-width: 0;
 }
 .meta-reveal-btn {
   display: inline-flex;
@@ -753,6 +795,11 @@
   align-items: flex-start;
   gap: 4px;
   padding: 8px 12px;
+  /* v0.6.x fix: 子元素溢出不超过父容器
+   * (默认 max-width: none, 长 tag 会撑到超容器外) */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .meta-block-flat > .meta-kind-badge {
   align-self: flex-start;
@@ -766,8 +813,10 @@
   max-height: 120px;
   overflow-y: auto;
   width: 100%;
+  max-width: 100%;
   padding: 4px 0;
   scrollbar-width: thin;
+  box-sizing: border-box;
 }
 
 /* === 路径 reveal 内联错误 === */
@@ -776,7 +825,14 @@
   flex-direction: column;
   gap: 2px;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
+/* v0.6.x fix: 长错误消息不撑破容器 (e.g. 'PathSecurity: 需提供 workspace_root (lock-down 模式)')
+ * - overflow-wrap: anywhere 在任意字符间断行
+ * - 中英混排都安全
+ * - 默认只显示一行, 鼠标 hover title 看完整错 */
 .meta-reveal-error {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -785,7 +841,16 @@
   border-left: 2px solid rgb(220, 38, 38);
   padding: 2px 6px;
   border-radius: 2px;
-  word-break: break-all;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  /* 一行截断, 完整错通过 title attr 看 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* === plan_mode 平面块 === */
@@ -812,6 +877,16 @@
 }
 
 /* === task_reminder 关联字段 === */
+.meta-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
 .meta-task-row {
   display: flex;
   flex-direction: column;
@@ -821,12 +896,16 @@
   background: var(--color-surface-2);
   border-radius: 4px;
   font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .meta-task-row-head {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  max-width: 100%;
 }
 .meta-task-id {
   font-family: var(--font-mono);
@@ -838,6 +917,13 @@
   color: var(--color-text-muted);
   font-weight: 600;
 }
+.meta-task-subject {
+  /* 长 subject (e.g. 'Phase 3: 全局/会话内搜索') 不撑破容器 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .meta-task-meta {
   display: flex;
   flex-direction: column;
@@ -845,11 +931,14 @@
   margin-left: 8px;
   padding-left: 8px;
   border-left: 2px solid var(--color-border);
+  max-width: 100%;
+  min-width: 0;
 }
 .meta-task-activeform {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--color-primary, #5b6bff);
+  overflow-wrap: anywhere;
 }
 .meta-task-activeform-label {
   display: inline-block;
@@ -863,6 +952,8 @@
   font-family: var(--font-mono);
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .meta-task-graph {
   display: flex;
@@ -870,12 +961,15 @@
   gap: 2px;
   font-family: var(--font-mono);
   font-size: 11px;
+  max-width: 100%;
+  min-width: 0;
 }
 .meta-task-graph-row {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-wrap: wrap;
+  max-width: 100%;
 }
 .meta-task-graph-label {
   color: var(--color-text-muted);
