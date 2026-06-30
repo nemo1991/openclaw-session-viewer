@@ -3,7 +3,14 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-elevated);
-  overflow: hidden;
+  /* v0.6.x: 不要 overflow: hidden, 让子元素 (meta agent 列表 / 长 code block) 撑满
+   * 之前 overflow:hidden 会让 agent_listing_delta 的 6 个 chip 行裁掉最后一个
+   * 现在依赖 border-radius + border 内部子元素不会跑出 */
+  /* overflow: hidden; */ /* 暂时禁用避免 agent meta 越界 */
+  /* 替代: 给 .msg 设 max-width: 100% 让它被父容器 (.transcript-scroll) 约束 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* v0.6.0: 子代理内部消息缩进
@@ -565,6 +572,7 @@
   /* v0.6.x: 防止 flex-basis: 100% + 长子元素溢出父容器 */
   min-width: 0;
   max-width: 100%;
+  width: 100%;
   box-sizing: border-box;
 }
 .meta-section-title {
@@ -576,7 +584,8 @@
   text-transform: uppercase;
 }
 
-/* v0.6.x: meta-list 必须受父容器宽度约束, 否则 flex-wrap 但子项 inline-block 仍溢出 */
+/* v0.6.x: meta-list 必须受父容器宽度约束, 否则 flex-wrap 但子项 inline-block 仍溢出
+ * v0.6.x (再修): 用 max-width:100% + min-width:0 + word-break 强制任何字符断行 */
 .meta-list {
   display: flex;
   flex-wrap: wrap;
@@ -585,6 +594,9 @@
   line-height: 1.5;
   max-width: 100%;
   min-width: 0;
+  /* 容器本身保证单 chip 宽度被 clamp 到父内 */
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .meta-list-inline {
@@ -602,11 +614,14 @@
   /* v0.6.x fix: 长 agent name 撑破父容器 (e.g. 'claude-code-guide') — 合并两处定义
    * 之前 .meta-tag 在 line 606 重复声明只设了 display/align-items, 覆盖了 line 250
    * 的 overflow-wrap:anywhere, 让 agent_listing 的长 chip 不断行
-   * 现在合并到一处, 只在最后声明一次 */
-  max-width: 240px;
+   * v0.6.x 再修: max-width 200px + overflow-wrap:anywhere + word-break:break-all
+   * 同时 max-width 缩到 200px, 让 5-6 个长 chip 在 ~700px 容器内能 wrap 到第二行 */
+  max-width: 200px;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: normal;
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 .meta-tag-add {
@@ -797,13 +812,18 @@
   gap: 4px;
   padding: 8px 12px;
   /* v0.6.x fix: 子元素溢出不超过父容器
-   * (默认 max-width: none, 长 tag 会撑到超容器外) */
+   * (默认 max-width: none, 长 tag 会撑到超容器外)
+   * v0.6.x 再修: width:100% 强制父容器宽度约束 (之前 max-width:100% 允许 100% 以上继承父) */
   max-width: 100%;
+  width: 100%;
   min-width: 0;
   box-sizing: border-box;
 }
 .meta-block-flat > .meta-kind-badge {
   align-self: flex-start;
+  max-width: 100%;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 /* 列表滚动 — 替代 <details> 折叠 */

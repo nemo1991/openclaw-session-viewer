@@ -67,7 +67,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
               <strong className="meta-section-title">新增 ({added.length}):</strong>
               <div className="meta-list">
                 {added.map((a) => (
-                  <span key={a} className="meta-tag meta-tag-add">
+                  <span key={a} className="meta-tag meta-tag-add" title={a}>
                     + {a}
                   </span>
                 ))}
@@ -79,7 +79,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
               <strong className="meta-section-title">移除 ({removed.length}):</strong>
               <div className="meta-list">
                 {removed.map((a) => (
-                  <span key={a} className="meta-tag meta-tag-remove">
+                  <span key={a} className="meta-tag meta-tag-remove" title={a}>
                     − {a}
                   </span>
                 ))}
