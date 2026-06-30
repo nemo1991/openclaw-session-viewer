@@ -13,10 +13,11 @@
  * 每个 case 用 snapshot 锁住 DOM 结构 + 关键文本断言
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { MessageBubble, BlockRenderer } from "./MessageBubble";
 import { useSettingsStore } from "../state/settingsStore";
+import { useTranscriptStore } from "../state/transcriptStore";
 import type { TranscriptEntryOut } from "../lib/api";
 
 function makeEntry(
@@ -47,6 +48,22 @@ describe("MessageBubble", () => {
       settings: { ...useSettingsStore.getState().settings, timezone: "UTC" },
       loaded: true,
     });
+    // 重置 transcriptStore (v0.6.0 highlight 状态)
+    useTranscriptStore.setState({
+      path: null,
+      entries: [],
+      loading: false,
+      totalCount: 0,
+      loadedCount: 0,
+      error: null,
+      jumpTarget: null,
+      lastJumpedId: null,
+      lastJumpedAt: 0,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   describe("role 头部", () => {
@@ -343,6 +360,68 @@ describe("MessageBubble", () => {
       expect(bubble).toBeInTheDocument();
       expect(bubble?.classList.contains("msg-subagent")).toBe(false);
       expect(bubble?.getAttribute("data-subagent-id")).toBeNull();
+    });
+  });
+
+  // v0.6.0: 跳转高亮 (last-prompt LeafJumpButton → useTranscriptScroll → store.markJumped)
+  describe("v0.6.0: 跳转高亮", () => {
+    function makeUserEntry(id: string): TranscriptEntryOut {
+      return {
+        index: 0,
+        byteOffset: 0,
+        raw: {},
+        normalized: {
+          id,
+          role: "user",
+          blocks: [{ kind: "text", text: "目标消息" }],
+          rawType: "user",
+        },
+      };
+    }
+
+    it("lastJumpedId 命中 + 在 1.5s 内 → 加 .msg-just-jumped class + data-just-jumped", () => {
+      vi.useFakeTimers();
+      const now = 1_700_000_000_000;
+      vi.setSystemTime(now);
+      useTranscriptStore.setState({
+        lastJumpedId: "uuid-target",
+        lastJumpedAt: now - 500, // 0.5s 前跳的
+      });
+      const { container } = render(<MessageBubble entry={makeUserEntry("uuid-target")} />);
+      const bubble = container.querySelector(".msg.msg-user");
+      expect(bubble?.classList.contains("msg-just-jumped")).toBe(true);
+      expect(bubble?.getAttribute("data-just-jumped")).toBe("true");
+    });
+
+    it("lastJumpedId 命中 + 超 1.5s → 不加 .msg-just-jumped (动画结束)", () => {
+      const now = 1_700_000_000_000;
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      useTranscriptStore.setState({
+        lastJumpedId: "uuid-target",
+        lastJumpedAt: now - 3000, // 3s 前跳的, 早已过期
+      });
+      const { container } = render(<MessageBubble entry={makeUserEntry("uuid-target")} />);
+      const bubble = container.querySelector(".msg.msg-user");
+      expect(bubble?.classList.contains("msg-just-jumped")).toBe(false);
+      expect(bubble?.getAttribute("data-just-jumped")).toBeNull();
+    });
+
+    it("lastJumpedId 不命中 (另一 uuid) → 不加 .msg-just-jumped", () => {
+      useTranscriptStore.setState({
+        lastJumpedId: "uuid-other",
+        lastJumpedAt: Date.now() - 100,
+      });
+      const { container } = render(<MessageBubble entry={makeUserEntry("uuid-target")} />);
+      const bubble = container.querySelector(".msg.msg-user");
+      expect(bubble?.classList.contains("msg-just-jumped")).toBe(false);
+    });
+
+    it("lastJumpedId = null → 不加 .msg-just-jumped", () => {
+      useTranscriptStore.setState({ lastJumpedId: null, lastJumpedAt: 0 });
+      const { container } = render(<MessageBubble entry={makeUserEntry("uuid-target")} />);
+      const bubble = container.querySelector(".msg.msg-user");
+      expect(bubble?.classList.contains("msg-just-jumped")).toBe(false);
     });
   });
 });

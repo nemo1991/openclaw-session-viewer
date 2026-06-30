@@ -16,10 +16,19 @@ interface TranscriptStore {
   error: string | null;
   /** v0.6.0: 跳转目标 entry.index — 任意组件可 set, TranscriptView 监听滚动 */
   jumpTarget: number | null;
+  /**
+   * v0.6.0: 最近一次跳到的 entry.id (uuid), 用于 MessageBubble 高亮闪烁 1.5s
+   * null = 无高亮; 其它 = 目标 entry 的 normalized.id
+   */
+  lastJumpedId: string | null;
+  /** 跳发生的时间戳(ms) — 配合 lastJumpedId 决定 1.5s 内是否还高亮 */
+  lastJumpedAt: number;
   start: (path: string) => Promise<void>;
   reset: () => void;
   /** v0.6.0: 触发跳到 entry.index(被 useTranscriptScroll 在 TranscriptView 监听) */
   jumpTo: (entryIndex: number) => void;
+  /** v0.6.0: 高亮跳到的 entry 1.5s */
+  markJumped: (entryId: string) => void;
 }
 
 export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
@@ -30,6 +39,8 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
   loadedCount: 0,
   error: null,
   jumpTarget: null,
+  lastJumpedId: null,
+  lastJumpedAt: 0,
   reset: () =>
     set({
       path: null,
@@ -39,8 +50,11 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
       loadedCount: 0,
       error: null,
       jumpTarget: null,
+      lastJumpedId: null,
+      lastJumpedAt: 0,
     }),
   jumpTo: (entryIndex: number) => set({ jumpTarget: entryIndex }),
+  markJumped: (entryId: string) => set({ lastJumpedId: entryId, lastJumpedAt: Date.now() }),
   start: async (path: string) => {
     if (get().path === path) return;
     get().reset();

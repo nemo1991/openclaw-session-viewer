@@ -145,20 +145,22 @@ function LeafJumpButton({ leafUuid }: { leafUuid: string }) {
     jumpTo(matchedIdx);
   };
 
+  const matched = matchedIdx >= 0;
   return (
     <button
       type="button"
-      className="subagent-meta-jump-btn"
+      className={`subagent-meta-jump-btn${matched ? "" : " subagent-meta-jump-btn-disabled"}`}
       data-testid="last-prompt-jump"
+      data-state={matched ? "ready" : "disabled"}
       onClick={handleClick}
       title={
-        matchedIdx >= 0
+        matched
           ? `跳到 uuid=${shortId}... 的消息 (entry #${matchedIdx})`
           : `uuid=${shortId}... 不在当前 transcript 范围`
       }
     >
       <ExternalLink size={10} />{" "}
-      {matchedIdx >= 0 ? `跳到 user message (${shortId}…)` : `目标不在范围 (${shortId}…)`}
+      {matched ? `跳到 user message (${shortId}…)` : `目标不在范围 (${shortId}…)`}
     </button>
   );
 }

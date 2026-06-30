@@ -17,6 +17,7 @@ import { memo } from "react";
 import { FileText } from "lucide-react";
 
 import type { NormalizedBlockFE, TranscriptEntryOut } from "../lib/api";
+import { useTranscriptStore } from "../state/transcriptStore";
 import { MessageHeader } from "./MessageHeader";
 import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { UnknownBlockCard } from "./UnknownBlockCard";
@@ -29,6 +30,9 @@ import { ImageBlock } from "./blocks/ImageBlock";
 import { UnknownBlock } from "./blocks/UnknownBlock";
 import "./MessageBubble.css";
 
+/** v0.6.0: 跳转后高亮持续时间 — 1.5s 后 class 自然失效, CSS 动画也只跑 1.5s */
+const JUMP_HIGHLIGHT_MS = 1500;
+
 interface Props {
   entry: TranscriptEntryOut;
   /** v0.5.0:主 session 的 jsonl 路径(透传到 ToolUseBlock → ToolUseCard → Agent 卡片定位子代理) */
@@ -39,6 +43,16 @@ interface Props {
 
 function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) {
   const msg = entry.normalized;
+
+  // v0.6.0: 跳到该 entry 时, 1.5s 内加 .msg-just-jumped class 触发高亮动画
+  // 选择 zustand selector 订阅: 跳转时 lastJumpedId 变化 → 所有 bubbles 重渲染
+  // (罕见操作, memo 优化在常态仍有效)
+  const lastJumpedId = useTranscriptStore((s) => s.lastJumpedId);
+  const lastJumpedAt = useTranscriptStore((s) => s.lastJumpedAt);
+  const isJustJumped =
+    lastJumpedId !== null &&
+    msg.id === lastJumpedId &&
+    Date.now() - lastJumpedAt < JUMP_HIGHLIGHT_MS;
 
   // meta 类消息:不渲染大卡片,渲染小标签
   if (msg.role === "meta") {
@@ -77,12 +91,15 @@ function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) 
   // v0.6.0: 子代理内部消息缩进 (子 session 视角下, 所有消息 isSidechain=true 且有 subagentId)
   // 用 msg.subagentId 触发 .msg-subagent class, CSS 加左侧 border + 缩进
   const isSubagent = Boolean(msg.subagentId);
-  const cls = `msg msg-${msg.role}${isSubagent ? " msg-subagent" : ""}`;
+  const cls = `msg msg-${msg.role}${isSubagent ? " msg-subagent" : ""}${
+    isJustJumped ? " msg-just-jumped" : ""
+  }`;
   return (
     <div
       className={cls}
       data-subagent-id={isSubagent ? msg.subagentId : undefined}
       data-is-sidechain={msg.isSidechain ? "true" : "false"}
+      data-just-jumped={isJustJumped ? "true" : undefined}
     >
       <MessageHeader
         role={msg.role}
