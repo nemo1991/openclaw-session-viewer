@@ -229,18 +229,136 @@ describe("SubagentMetaBlock", () => {
   });
 
   describe("其他 meta 类型 (mode / permission / title)", () => {
-    it("mode: plan → badge='mode'", async () => {
+    it("mode: plan → badge='mode' + chip 显示 value", async () => {
       const { container } = renderInRoute(
         <SubagentMetaBlock block={makeBlock("mode: plan", "plan")} />
       );
-      expect(container.textContent).toContain("mode: plan");
+      // badge="mode", chip 显示 "plan"
+      const badges = container.querySelectorAll(".subagent-meta-badge");
+      expect(badges.length).toBeGreaterThanOrEqual(1);
+      expect(badges[0]?.textContent).toContain("mode");
+      const chip = container.querySelector(".subagent-meta-value");
+      expect(chip?.textContent).toContain("plan");
     });
 
-    it("title → summary = payload 字符串", async () => {
+    it("v0.6.0: mode 'plan' → chip tone='plan' (蓝色)", async () => {
+      const { container } = renderInRoute(
+        <SubagentMetaBlock block={makeBlock("mode: plan", "plan")} />
+      );
+      const chip = container.querySelector(".subagent-meta-value")!;
+      expect(chip.getAttribute("data-tone")).toBe("plan");
+      expect(chip.className).toMatch(/subagent-meta-value-plan/);
+    });
+
+    it("v0.6.0: mode 'bypass-permissions' → chip tone='danger' (红色)", async () => {
+      const { container } = renderInRoute(
+        <SubagentMetaBlock block={makeBlock("mode: bypass-permissions", "bypass-permissions")} />
+      );
+      const chip = container.querySelector(".subagent-meta-value")!;
+      expect(chip.getAttribute("data-tone")).toBe("danger");
+    });
+
+    it("v0.6.0: mode 'normal' → chip tone='neutral' (灰色)", async () => {
+      const { container } = renderInRoute(
+        <SubagentMetaBlock block={makeBlock("mode: normal", "normal")} />
+      );
+      const chip = container.querySelector(".subagent-meta-value")!;
+      expect(chip.getAttribute("data-tone")).toBe("neutral");
+    });
+
+    it("title → summary = payload 字符串 + 复制按钮", async () => {
       const { container } = renderInRoute(
         <SubagentMetaBlock block={makeBlock("title", "我的会话标题")} />
       );
       expect(container.textContent).toContain("我的会话标题");
+      const copyBtn = container.querySelector("[data-testid='subagent-meta-copy']");
+      expect(copyBtn).toBeInTheDocument();
+      expect(copyBtn?.textContent).toContain("复制");
+    });
+  });
+
+  // v0.6.0 meta 增强
+  describe("v0.6.0 meta 增强", () => {
+    it("last-prompt 长 prompt → summary 显示截断 + '+N' 字符数", async () => {
+      const longPrompt = "x".repeat(80);
+      const { container } = renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", {
+            prompt: longPrompt,
+            leafUuid: "abc",
+          })}
+        />
+      );
+      // summary summary 上: prompt 前 60 字 + "… (+20)"
+      const summary = container.querySelector(".subagent-meta-summary")!;
+      expect(summary.textContent).toMatch(/x{60}/);
+      expect(summary.textContent).toContain("(+20)");
+    });
+
+    it("last-prompt detailLength > 100 → summary 显示 '长 N' tag", async () => {
+      const { container } = renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", {
+            prompt: "y".repeat(150),
+            leafUuid: "abc",
+          })}
+        />
+      );
+      const lengthTag = container.querySelector(".subagent-meta-tag-length");
+      expect(lengthTag).toBeInTheDocument();
+      expect(lengthTag?.textContent).toContain("长 150");
+    });
+
+    it("last-prompt short prompt → 不显示 length tag", async () => {
+      const { container } = renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", {
+            prompt: "短",
+            leafUuid: "abc",
+          })}
+        />
+      );
+      const lengthTag = container.querySelector(".subagent-meta-tag-length");
+      expect(lengthTag).toBeNull();
+    });
+
+    it("summary 上显示 last-prompt summary-jump 按钮", async () => {
+      const targetUuid = "abcdef00-1111-2222-3333-444455556666";
+      useTranscriptStore.setState({
+        entries: [makeEntry(0, targetUuid)],
+      });
+      renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", { prompt: "p", leafUuid: targetUuid })}
+        />
+      );
+      const summaryJump = screen.getByTestId("last-prompt-summary-jump");
+      expect(summaryJump).toBeInTheDocument();
+      expect(summaryJump.getAttribute("data-state")).toBe("ready");
+    });
+
+    it("summary 上 last-prompt-jump 命中 → 点击跳", async () => {
+      const targetUuid = "abcdef00-1111-2222-3333-444455556666";
+      useTranscriptStore.setState({
+        entries: [makeEntry(7, targetUuid)],
+      });
+      renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", { prompt: "p", leafUuid: targetUuid })}
+        />
+      );
+      // 直接点 summary 上的按钮 (无需先展开)
+      await userEvent.click(screen.getByTestId("last-prompt-summary-jump"));
+      expect(useTranscriptStore.getState().jumpTarget).toBe(7);
+    });
+
+    it("summary 上 last-prompt-jump 不命中 → disabled 状态", async () => {
+      renderInRoute(
+        <SubagentMetaBlock block={makeBlock("last-prompt", { prompt: "p", leafUuid: "missing" })} />
+      );
+      const summaryJump = screen.getByTestId("last-prompt-summary-jump");
+      expect(summaryJump.getAttribute("data-state")).toBe("disabled");
+      expect(summaryJump.className).toMatch(/subagent-meta-summary-jump-disabled/);
     });
   });
 });

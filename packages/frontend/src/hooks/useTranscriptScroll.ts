@@ -91,6 +91,7 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
       return;
     }
     const targetEntry = sortedEntries[idx];
+    if (!targetEntry) return;
     virtualizer.scrollToIndex(idx, { align: "center" });
     // v0.6.0: 跳到后高亮 1.5s — 视觉反馈
     useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");

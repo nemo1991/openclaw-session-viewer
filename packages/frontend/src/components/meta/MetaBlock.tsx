@@ -1,5 +1,5 @@
 /**
- * v0.4.1: 共享的 meta 块渲染器
+ * 共享的 meta 块渲染器 (v0.6.0 增强版)
  *
  * 同一份样式服务两个入口:
  * 1. BlockRenderer 里 `kind` 已经是 agent_listing / skill_listing 等具体类型
@@ -13,19 +13,20 @@
  * 支持的 label / kind:
  * - agent_listing / agent_listing_delta
  * - skill_listing
- * - plan_mode
- * - file_snapshot / file-history-snapshot
+ * - plan_mode(带 reveal 入口)
+ * - file_snapshot / file-history-snapshot(列出路径 + 可点击 reveal)
  * - pr_link / pr-link
  * - agent_name / agent-name
  * - task_reminder
  *
- * 从 MessageBubble.tsx 抽出后,该组件被两个调用点共用:
- * - MessageBubble 里 meta 分支直接渲染
- * - blocks/ 目录下的 MetaBlockBlock(若需要)走 BlockRenderer 入口
- *
- * 因此 `payload = block.payload ?? block` 这条 fallback 必须保留。
+ * v0.6.0 增强:
+ * - file_snapshot: 列出所有 trackedFileBackups 路径 + 可点击 reveal
+ * - skill_listing: >6 个默认折叠,带计数
+ * - plan_mode: 路径加 reveal 按钮 + reminderType 配色 (full/none)
+ * - agent_listing: 显示 totalDelta 详细列表
  */
 
+import { useFileReveal } from "../../hooks/useFileReveal";
 import type { NormalizedBlockFE } from "../../lib/api";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 
@@ -45,45 +46,80 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
       const added = (get("addedTypes") as string[]) ?? [];
       const removed = (get("removedTypes") as string[]) ?? [];
       const isInitial = Boolean(get("isInitial"));
+      const totalLabel = isInitial
+        ? `初始化 ${added.length} 个 agent`
+        : added.length > 0 && removed.length > 0
+          ? `+${added.length} / -${removed.length}`
+          : added.length > 0
+            ? `+${added.length} agent`
+            : removed.length > 0
+              ? `-${removed.length} agent`
+              : "无变化";
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🤖 agent</span>
-          {isInitial ? <span>初始化 {added.length} 个 agent</span> : null}
-          {!isInitial && added.length > 0 && <span>+{added.length} agent</span>}
-          {!isInitial && removed.length > 0 && <span>-{removed.length} agent</span>}
-          <details className="meta-details">
-            <summary>详情</summary>
-            {added.length > 0 && (
-              <div className="meta-list">
-                <strong>新增:</strong> {added.join(", ")}
-              </div>
-            )}
-            {removed.length > 0 && (
-              <div className="meta-list">
-                <strong>移除:</strong> {removed.join(", ")}
-              </div>
-            )}
-          </details>
+          <span className="meta-primary-text">{totalLabel}</span>
+          {(added.length > 0 || removed.length > 0) && (
+            <details className="meta-details">
+              <summary>查看 agent 列表</summary>
+              {added.length > 0 && (
+                <div className="meta-section">
+                  <strong className="meta-section-title">新增 ({added.length}):</strong>
+                  <div className="meta-list">
+                    {added.map((a) => (
+                      <span key={a} className="meta-tag meta-tag-add">
+                        + {a}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {removed.length > 0 && (
+                <div className="meta-section">
+                  <strong className="meta-section-title">移除 ({removed.length}):</strong>
+                  <div className="meta-list">
+                    {removed.map((a) => (
+                      <span key={a} className="meta-tag meta-tag-remove">
+                        − {a}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </details>
+          )}
         </div>
       );
     }
     case "skill_listing": {
       const names = (get("names") as string[]) ?? [];
       const count = Number(get("skillCount") ?? names.length);
+      // 大于 6 个 skill 默认折叠, 长列表不堆主时间线
+      const longList = names.length > 6;
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🛠 skill</span>
-          <span>{count} 个 skill</span>
-          <details className="meta-details">
-            <summary>查看列表</summary>
-            <div className="meta-list">
+          <span className="meta-primary-text">{count} 个 skill</span>
+          {longList ? (
+            <details className="meta-details">
+              <summary>查看全部 {count} 个</summary>
+              <div className="meta-list">
+                {names.map((s: string) => (
+                  <span key={s} className="meta-tag">
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </details>
+          ) : (
+            <div className="meta-list meta-list-inline">
               {names.map((s: string) => (
                 <span key={s} className="meta-tag">
                   {s}
                 </span>
               ))}
             </div>
-          </details>
+          )}
         </div>
       );
     }
@@ -91,17 +127,20 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
       const planFile = String(get("planFilePath") ?? "");
       const hasPlan = Boolean(get("planExists"));
       const reminder = String(get("reminderType") ?? "");
+      const isFull = reminder === "full";
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">📋 plan_mode</span>
-          <span>{hasPlan ? "有活动计划" : "无计划"}</span>
-          {reminder && <span>· {reminder}</span>}
-          {planFile && (
-            <details className="meta-details">
-              <summary>路径</summary>
-              <code className="meta-path">{planFile}</code>
-            </details>
+          <span className="meta-primary-text">{hasPlan ? "活动计划已存在" : "无活动计划"}</span>
+          {reminder && (
+            <span
+              className={`meta-reminder-pill meta-reminder-${isFull ? "full" : reminder || "none"}`}
+              title={isFull ? "完整计划提醒 (full)" : `提醒类型: ${reminder}`}
+            >
+              reminder: {reminder}
+            </span>
           )}
+          {planFile && <PlanFilePath path={planFile} />}
         </div>
       );
     }
@@ -109,13 +148,28 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
     case "file-history-snapshot": {
       // snapshot.trackedFileBackups 才是真正的文件数组
       const backups = (get("trackedFileBackups") as Record<string, unknown>) ?? {};
-      const fileCount = Object.keys(backups).length;
+      const paths = Object.keys(backups);
+      const fileCount = paths.length;
       const mid = String(get("messageId") ?? "");
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">📁 file_snapshot</span>
-          <span>{fileCount} 个跟踪文件</span>
+          <span className="meta-primary-text">
+            {fileCount > 0 ? `${fileCount} 个跟踪文件` : "空 snapshot (无文件)"}
+          </span>
           {mid && <span className="meta-sub">msg: {mid.slice(0, 8)}…</span>}
+          {fileCount > 0 && (
+            <details className="meta-details">
+              <summary>查看路径 ({fileCount})</summary>
+              <ul className="meta-file-list">
+                {paths.map((p) => (
+                  <li key={p} className="meta-file-item">
+                    <FilePathClickable path={p} />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       );
     }
@@ -144,7 +198,7 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">🏷 agent_name</span>
-          <span>{name || "(未命名)"}</span>
+          <span className="meta-primary-text">{name || "(未命名)"}</span>
         </div>
       );
     }
@@ -157,7 +211,7 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
       return (
         <div className="block-meta-info">
           <span className="meta-kind-badge">📝 task_reminder</span>
-          <span>
+          <span className="meta-primary-text">
             {pending} 待办 · {inProgress} 进行 · {completed} 完成
           </span>
           <details className="meta-details">
@@ -182,4 +236,49 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
     default:
       return <UnknownBlockCard block={block} />;
   }
+}
+
+/* v0.6.0: 内部子组件 — 路径点击 reveal, 复用 useFileReveal hook */
+function FilePathClickable({ path }: { path: string }) {
+  const { reveal } = useFileReveal();
+  return (
+    <span
+      className="meta-path-clickable"
+      data-testid="meta-file-path"
+      onClick={() => reveal(path)}
+      title={`在 Finder/Explorer 打开: ${path} (settings 安全沙箱)`}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          reveal(path);
+        }
+      }}
+    >
+      {path}
+    </span>
+  );
+}
+
+function PlanFilePath({ path }: { path: string }) {
+  const { reveal } = useFileReveal();
+  const fileName = path.split("/").pop() ?? path;
+  return (
+    <details className="meta-details meta-details-plan">
+      <summary>📄 {fileName}</summary>
+      <div className="meta-plan-path-row">
+        <code className="meta-path">{path}</code>
+        <button
+          type="button"
+          className="meta-reveal-btn"
+          data-testid="plan-mode-reveal"
+          onClick={() => reveal(path)}
+          title={`在 Finder/Explorer 打开: ${path}`}
+        >
+          reveal
+        </button>
+      </div>
+    </details>
+  );
 }
