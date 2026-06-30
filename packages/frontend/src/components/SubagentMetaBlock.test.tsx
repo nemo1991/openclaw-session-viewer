@@ -57,6 +57,8 @@ beforeEach(() => {
     loadedCount: 0,
     error: null,
     jumpTarget: null,
+    lastJumpedId: null,
+    lastJumpedAt: 0,
   });
 });
 
@@ -190,6 +192,39 @@ describe("SubagentMetaBlock", () => {
       await userEvent.click(screen.getByTestId("last-prompt-jump"));
       expect(useTranscriptStore.getState().jumpTarget).toBeNull();
       expect(consoleSpy).toHaveBeenCalled();
+    });
+
+    it("v0.6.0: 命中按钮 → data-state='ready', 无 disabled class", async () => {
+      const targetUuid = "a1b2c3d4-5e6f-7890-abcd-ef0123456789";
+      useTranscriptStore.setState({
+        entries: [makeEntry(0, targetUuid)],
+      });
+      const { container } = renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", { prompt: "p", leafUuid: targetUuid })}
+        />
+      );
+      const details = container.querySelector("details")!;
+      await userEvent.click(details.querySelector("summary")!);
+      const btn = screen.getByTestId("last-prompt-jump");
+      expect(btn.getAttribute("data-state")).toBe("ready");
+      expect(btn.className).not.toMatch(/subagent-meta-jump-btn-disabled/);
+    });
+
+    it("v0.6.0: 不命中按钮 → data-state='disabled' + disabled class", async () => {
+      useTranscriptStore.setState({
+        entries: [makeEntry(0, "unrelated")],
+      });
+      const { container } = renderInRoute(
+        <SubagentMetaBlock
+          block={makeBlock("last-prompt", { prompt: "p", leafUuid: "missing-uuid" })}
+        />
+      );
+      const details = container.querySelector("details")!;
+      await userEvent.click(details.querySelector("summary")!);
+      const btn = screen.getByTestId("last-prompt-jump");
+      expect(btn.getAttribute("data-state")).toBe("disabled");
+      expect(btn.className).toMatch(/subagent-meta-jump-btn-disabled/);
     });
   });
 

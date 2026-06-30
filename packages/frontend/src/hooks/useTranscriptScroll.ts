@@ -77,14 +77,26 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
 
   // v0.6.0: 监听 useTranscriptStore.jumpTarget — 任意组件 (SubagentMetaBlock LeafJumpButton)
   // 可触发跳到 entry.index (last-prompt.leafUuid 等场景)
+  //
+  // ⚠️ 之前 bug: useEffect deps 只有 [sortedEntries, virtualizer], 漏了 jumpTarget
+  // zustand state 改变不触发 effect 重跑, 按钮点了 effect 不响应。
+  // 修复: 用 zustand selector 订阅, 依赖 [target, sortedEntries, virtualizer]
+  const jumpTarget = useTranscriptStore((s) => s.jumpTarget);
   useEffect(() => {
-    const target = useTranscriptStore.getState().jumpTarget;
-    if (target == null) return;
-    const idx = sortedEntries.findIndex((e) => e.index === target);
-    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
-    // 触发后清空, 避免重复触发 (如 React strict mode 跑两次 effect)
+    if (jumpTarget == null) return;
+    const idx = sortedEntries.findIndex((e) => e.index === jumpTarget);
+    if (idx < 0) {
+      // entries 还没加载 / 目标不在范围 — 不清空, 等 entries 加载完再试
+      // (TranscriptView 会在 entries 变化时重新触发这个 effect)
+      return;
+    }
+    const targetEntry = sortedEntries[idx];
+    virtualizer.scrollToIndex(idx, { align: "center" });
+    // v0.6.0: 跳到后高亮 1.5s — 视觉反馈
+    useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");
+    // 触发后清空, 避免重复触发
     useTranscriptStore.setState({ jumpTarget: null });
-  }, [sortedEntries, virtualizer]);
+  }, [jumpTarget, sortedEntries, virtualizer]);
 
   return { parentRef, virtualizer, jumpToEntry };
 }
