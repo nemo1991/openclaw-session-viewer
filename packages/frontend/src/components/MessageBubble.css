@@ -819,7 +819,7 @@
   box-sizing: border-box;
 }
 
-/* === 路径 reveal 内联错误 === */
+/* === 路径 reveal 内联错误 + 可操作按钮 (v0.6.x) === */
 .meta-path-clickable-row {
   display: flex;
   flex-direction: column;
@@ -829,28 +829,192 @@
   min-width: 0;
   box-sizing: border-box;
 }
-/* v0.6.x fix: 长错误消息不撑破容器 (e.g. 'PathSecurity: 需提供 workspace_root (lock-down 模式)')
- * - overflow-wrap: anywhere 在任意字符间断行
- * - 中英混排都安全
- * - 默认只显示一行, 鼠标 hover title 看完整错 */
+
+/* v0.6.x: 错误块改 layout: 上 错误描述, 下 操作按钮组
+ * 之前 ellipsis 2-line 用户看不到修法, 现在加 [复制路径][去设置][一键开启] */
 .meta-reveal-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   color: rgb(220, 38, 38);
   background: rgba(220, 38, 38, 0.08);
   border-left: 2px solid rgb(220, 38, 38);
-  padding: 2px 6px;
+  padding: 6px 8px;
   border-radius: 2px;
   word-break: break-word;
   overflow-wrap: anywhere;
   max-width: 100%;
-  /* 一行截断, 完整错通过 title attr 看 */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-reveal-error-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.meta-reveal-error-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.meta-reveal-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.meta-reveal-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+.meta-reveal-error-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: rgba(220, 38, 38, 0.12);
+  color: rgb(220, 38, 38);
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.meta-reveal-error-btn:hover {
+  background: rgba(220, 38, 38, 0.2);
+  border-color: rgb(220, 38, 38);
+}
+.meta-reveal-error-btn:active {
+  transform: scale(0.96);
+}
+.meta-reveal-error-btn-primary {
+  background: var(--color-primary, #5b6bff);
+  color: white;
+  border-color: var(--color-primary, #5b6bff);
+}
+.meta-reveal-error-btn-primary:hover {
+  background: var(--color-primary-hover, #4a5be0);
+  border-color: var(--color-primary-hover, #4a5be0);
+}
+.meta-reveal-error-btn-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: rgb(180, 110, 0);
+  border-color: rgba(245, 158, 11, 0.5);
+}
+.meta-reveal-error-btn-warning:hover {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: rgb(245, 158, 11);
+}
+
+/* ===== RevealErrorToast 全局 toast 样式 ===== */
+.reveal-error-toast-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.reveal-error-toast {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--color-bg-elevated, #1f1f23);
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
+  animation: reveal-toast-in 0.2s ease-out;
+}
+@keyframes reveal-toast-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.reveal-error-toast-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgb(220, 38, 38);
+  font-weight: 600;
+  font-size: 12px;
+}
+.reveal-error-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.reveal-error-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.reveal-error-toast-msg {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.reveal-error-toast-path {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  background: var(--color-surface-1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.reveal-error-toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.reveal-error-toast-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.reveal-error-toast-btn:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.08));
+  border-color: var(--color-primary);
+}
+.reveal-error-toast-btn-primary {
+  background: var(--color-primary, #5b6bff);
+  color: white;
+  border-color: var(--color-primary, #5b6bff);
+}
+.reveal-error-toast-btn-primary:hover {
+  background: var(--color-primary-hover, #4a5be0);
+}
+.reveal-error-toast-btn-close {
+  padding: 4px 6px;
 }
 
 /* === plan_mode 平面块 === */

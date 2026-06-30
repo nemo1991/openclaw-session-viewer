@@ -7,6 +7,7 @@ import SessionDetailRoute from "./routes/SessionDetailRoute";
 import AnalyzeRoute from "./routes/AnalyzeRoute";
 import SettingsRoute from "./routes/SettingsRoute";
 import TrajectoryRoute from "./routes/TrajectoryRoute";
+import { RevealErrorToast } from "./components/RevealErrorToast";
 
 export default function App() {
   const settings = useSettingsStore((s) => s.settings);
@@ -21,13 +22,17 @@ export default function App() {
   }, [settings.theme]);
 
   return (
-    <Routes>
-      <Route path="/" element={<SessionsRoute />} />
-      <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
-      <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
-      <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
-      <Route path="/settings" element={<SettingsRoute />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<SessionsRoute />} />
+        <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+        <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
+        <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
+        <Route path="/settings" element={<SettingsRoute />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      {/* v0.6.x: 全局 reveal 错误 toast, 监听 REVEAL_ERROR_EVENT */}
+      <RevealErrorToast />
+    </>
   );
 }

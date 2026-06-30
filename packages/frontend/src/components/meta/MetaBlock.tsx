@@ -25,7 +25,9 @@
  */
 
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useFileReveal } from "../../hooks/useFileReveal";
+import { useSettingsStore } from "../../state/settingsStore";
 import type { NormalizedBlockFE } from "../../lib/api";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 
@@ -270,15 +272,28 @@ export function MetaBlock({ block, label }: MetaBlockProps) {
   }
 }
 
-/* v0.6.x: 路径点击 reveal — 用 revealAndNotify 拿错误, 内联红字提示 (用户报 'reveal 无效') */
+/* v0.6.x: 路径点击 reveal — 用 revealAndNotify 拿错误, 内联可操作错误 UI (用户报 'reveal 无效')
+ *
+ * UX 流程:
+ * 1. 用户点路径 → 调 revealAndNotify
+ * 2. 成功 → 清空错误, Finder 打开
+ * 3. 失败 → 显示内联错误 bar:
+ *    - ⚠ 人类能读的错误描述 (去掉 'PathSecurity:' 前缀)
+ *    - [复制路径] 按钮 (用户至少能把路径手动复制)
+ *    - [去设置] 按钮 (跳到 /settings, 用户能配置 workspaceRoot)
+ *    - [一键开启允许越界] 按钮 (确认后 toggle settings.pathSecurity.allowRelaxed=true + 重试)
+ */
 function FilePathClickable({ path }: { path: string }) {
-  const { revealAndNotify } = useFileReveal();
+  const { revealAndNotify, reveal } = useFileReveal();
   const [error, setError] = useState<string | null>(null);
+  const allowRelaxed = useSettingsStore((s) => s.settings.pathSecurity?.allowRelaxed ?? false);
+
   const onClick = async () => {
     setError(null);
     const result = await revealAndNotify(path);
     if (!result.ok) setError(result.error);
   };
+
   return (
     <span className="meta-path-clickable-row">
       <span
@@ -298,9 +313,12 @@ function FilePathClickable({ path }: { path: string }) {
         {path}
       </span>
       {error && (
-        <span className="meta-reveal-error" data-testid="meta-file-path-error" title={error}>
-          ⚠ {error}
-        </span>
+        <RevealErrorActions
+          path={path}
+          error={error}
+          allowRelaxed={allowRelaxed}
+          onRetried={() => setError(null)}
+        />
       )}
     </span>
   );
@@ -309,6 +327,8 @@ function FilePathClickable({ path }: { path: string }) {
 function PlanFilePath({ path }: { path: string }) {
   const { revealAndNotify } = useFileReveal();
   const [error, setError] = useState<string | null>(null);
+  const allowRelaxed = useSettingsStore((s) => s.settings.pathSecurity?.allowRelaxed ?? false);
+
   const onReveal = async () => {
     setError(null);
     const result = await revealAndNotify(path);
@@ -333,10 +353,124 @@ function PlanFilePath({ path }: { path: string }) {
       </div>
       <code className="meta-path">{path}</code>
       {error && (
-        <span className="meta-reveal-error" data-testid="plan-mode-reveal-error" title={error}>
-          ⚠ reveal 失败: {error}
-        </span>
+        <RevealErrorActions
+          path={path}
+          error={error}
+          allowRelaxed={allowRelaxed}
+          onRetried={() => setError(null)}
+        />
       )}
+    </div>
+  );
+}
+
+/**
+ * v0.6.x: reveal 失败时的可操作错误 UI
+ * - 错误描述 (去掉 PathSecurity: 前缀)
+ * - [复制路径] — 至少让用户能手动复制到 Finder
+ * - [去设置] — 跳到 settings 页改默认 workspace 目录
+ * - [一键开启允许越界] — 弹 confirm, 确认后 toggle allowRelaxed=true + 重试
+ *
+ * (PlanFilePath 和 FilePathClickable 复用, 区别只在前后 slot)
+ */
+function RevealErrorActions({
+  path,
+  error,
+  allowRelaxed,
+  onRetried,
+}: {
+  path: string;
+  error: string;
+  allowRelaxed: boolean;
+  onRetried: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const navigate = useNavigate();
+  const updateSettings = useSettingsStore((s) => s.update);
+  const saveSettings = useSettingsStore((s) => s.save);
+  const { revealAndNotify } = useFileReveal();
+
+  // 把 PathSecurity 错转成人类语言
+  const humanError = (() => {
+    if (error.startsWith("PathSecurity: 需提供 workspace_root")) {
+      return "请在「设置 → 数据源」中配置默认导出目录, 或开启「允许 reveal 越界」";
+    }
+    if (error.includes("不在 workspace") || error.includes("不在任一已知 root 下")) {
+      return "路径不在允许范围内, 开启「允许 reveal 越界」或选择更宽的 root";
+    }
+    return error.replace(/^PathSecurity:\s*/, "");
+  })();
+
+  const copyPath = async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch (e) {
+      console.warn("copy 失败:", e);
+    }
+  };
+
+  const goSettings = () => navigate("/settings");
+
+  const unlockAndRetry = async () => {
+    // ⚠️ 安全确认 (用户已确认)
+    const ok = window.confirm(
+      "开启「允许 reveal 越界」会让任意已知 root 下的文件可被 reveal。\n\n" +
+        "受 assert_within_any_root 兜底, 不会触碰 ~/.ssh 等敏感路径。\n\n确认开启?"
+    );
+    if (!ok) return;
+    updateSettings({ pathSecurity: { allowRelaxed: true } });
+    await saveSettings({
+      ...useSettingsStore.getState().settings,
+      pathSecurity: { allowRelaxed: true },
+    });
+    // 重试 reveal
+    const result = await revealAndNotify(path);
+    if (result.ok) {
+      onRetried();
+    } else {
+      console.warn("[unlock] 重试仍失败:", result.error);
+    }
+  };
+
+  return (
+    <div className="meta-reveal-error" data-testid="meta-reveal-error-block" title={error}>
+      <span className="meta-reveal-error-msg">
+        <span className="meta-reveal-error-icon">⚠</span>
+        <span className="meta-reveal-error-text">{humanError}</span>
+      </span>
+      <span className="meta-reveal-error-actions">
+        <button
+          type="button"
+          className="meta-reveal-error-btn"
+          data-testid="meta-reveal-error-copy"
+          onClick={copyPath}
+          title="复制路径到剪贴板"
+        >
+          {copied ? "✓ 已复制" : "复制路径"}
+        </button>
+        <button
+          type="button"
+          className="meta-reveal-error-btn meta-reveal-error-btn-primary"
+          data-testid="meta-reveal-error-settings"
+          onClick={goSettings}
+          title="跳到设置页"
+        >
+          去设置
+        </button>
+        {!allowRelaxed && (
+          <button
+            type="button"
+            className="meta-reveal-error-btn meta-reveal-error-btn-warning"
+            data-testid="meta-reveal-error-unlock"
+            onClick={unlockAndRetry}
+            title="一键开启 (弹确认) 后重试 reveal"
+          >
+            一键开启允许越界
+          </button>
+        )}
+      </span>
     </div>
   );
 }
