@@ -25,6 +25,8 @@ export interface SessionNode {
   is_subagent_root: boolean;
   parent_session_id: string | null;
   message_count: number;
+  /** v0.6.1 (S3 RAG): top 3 assistant 文本块 (≤200 chars),给 hash-embedding 提供语料 */
+  assistant_text_snippets?: string[];
 }
 
 export type Edge =
