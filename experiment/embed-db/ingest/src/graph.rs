@@ -56,6 +56,14 @@ pub struct SessionNode {
     pub last_timestamp_ms: Option<i64>,
     /// 累计 token 用量(input + output)
     pub token_total: u64,
+    /// thinking 块数(across assistant messages)
+    pub thinking_count: u32,
+    /// 最常用的 model (e.g. "claude-sonnet-4-6")
+    pub primary_model: Option<String>,
+    /// top 工具前三 (e.g. ["Bash", "Read", "Edit"])
+    pub top_tools: Vec<String>,
+    /// error_count(从 is_error=true 的 tool_result 累计)
+    pub error_count: u64,
     /// subagent 数量(Claude `subagents/` 子目录下 agent-*.jsonl)
     pub subagent_count: u32,
     /// subagent_ids (e.g. `agent-a1d92`)
@@ -77,8 +85,10 @@ pub enum Edge {
         from_session: String, // SessionNode.node_id
         to_subagent_id: String, // e.g. "agent-a1d92"
         to_subagent_path: String,
+        /// subagent 的描述 (来自 .meta.json.description)
+        description: Option<String>,
     },
-    /// 单 session 内 message-parent 链
+    /// 单 session 内 message-parent 链 (只在 main session 有意义; S1 demo 暂不画 message-level edges)
     ParentUuid {
         session: String,
         from_uuid: String,
@@ -100,6 +110,27 @@ pub enum Edge {
         parent: String,
         child: String,
     },
+}
+
+impl Edge {
+    /// 返回 edge 主要涉及的 session 节点 id (for surreal-relate `in`/`out`)
+    pub fn session_ref(&self) -> &str {
+        match self {
+            Edge::Spawned { from_session, .. } => from_session,
+            Edge::ParentUuid { session, .. } => session,
+            Edge::UsedTool { session, .. } => session,
+            Edge::AttemptedFix { session, .. } => session,
+            Edge::CrossSession { parent, .. } => parent,
+        }
+    }
+
+    /// 对于 Spawned 边,返 subagent 的稳定 id
+    pub fn target_subagent_id(&self) -> Option<&str> {
+        match self {
+            Edge::Spawned { to_subagent_id, .. } => Some(to_subagent_id),
+            _ => None,
+        }
+    }
 }
 
 /// 一个 session 的完整物化输出(node + 该 session 的所有 edge)
