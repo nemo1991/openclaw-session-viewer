@@ -109,15 +109,11 @@
 
 ## 下一步 (S1 启动前)
 
-1. **push 当前代码到 origin**:
-   ```bash
-   git add experiment/ docs/experiments/
-   git commit -m "experiment(embed-db): S0 ingest skeleton + stdout sink"
-   git push origin experimental/embed-db
-   ```
+1. ~~新建 surreal sink~~ **PIVOT**: S1 PoC 阶段先做**纯前端 graph view**(react-force-graph 直接读 NDJSON),S2 再考虑 backend DB
+   - **理由**: 35 sessions × ~200B = 7MB,完全在浏览器内存里跑
+   - 保留 SurrealDB 作为 S5+(如果跨进程共享 + 持久化 layer 才需要)
 2. **新建 web 子项目** — Vite + React + TypeScript 用 pnpm workspace 化
-3. **新建 surreal sink** — `cargo add surrealdb` 在 ingest/Cargo.toml
-4. **加更多 SessionNode 字段**(`primary_model` / `thinking_count` / `top_tools[0..3]`)供 G1 graph view 节点着色
+3. **加更多 SessionNode 字段**(`primary_model` / `thinking_count` / `top_tools[0..3]`)供 G1 graph view 节点着色
 
 ---
 

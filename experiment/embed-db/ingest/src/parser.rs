@@ -53,8 +53,11 @@ pub fn parse_session(jsonl_path: &Path) -> Result<SessionGraph> {
     // 所以要从 jsonl_path 推:
     //   parent.jsonl_path = `projects/<encoded-cwd>/<uuid>.jsonl`
     //   sibling_dir       = `projects/<encoded-cwd>/<uuid>`
-    // 实现:用 stem 当作 dir 名拼 sibling
-    if let Some(stem) = jsonl_path.file_stem().and_then(|s| s.to_str()) {
+    let stem = jsonl_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(String::from);
+    if let Some(stem) = &stem {
         if let Some(grand_parent) = jsonl_path.parent() {
             let sibling_dir = grand_parent.join(stem).join("subagents");
             if sibling_dir.is_dir() {
@@ -102,6 +105,14 @@ pub fn parse_session(jsonl_path: &Path) -> Result<SessionGraph> {
         first_timestamp_ms: state.first_timestamp_ms,
         last_timestamp_ms: state.last_timestamp_ms,
         token_total: state.token_total,
+        thinking_count: state.thinking_count,
+        primary_model: state
+            .model_counts
+            .into_iter()
+            .max_by_key(|(_, c)| *c)
+            .map(|(m, _)| m),
+        top_tools: sorted_top_tools(&state.tool_counts, 3),
+        error_count: state.error_count as u64,
         subagent_count: state.subagent_ids.len() as u32,
         subagent_ids: state.subagent_ids.clone(),
         is_subagent_root: state.is_sidechain_seen.unwrap_or(false),
@@ -112,18 +123,39 @@ pub fn parse_session(jsonl_path: &Path) -> Result<SessionGraph> {
     let mut edges: Vec<Edge> = vec![];
 
     // Spawned 边:对每个 subagent_id
-    for sa_id in &state.subagent_ids {
-        edges.push(Edge::Spawned {
-            from_session: node.node_id.clone(),
-            to_subagent_id: sa_id.clone(),
-            to_subagent_path: jsonl_path
+    // 优先看 .meta.json 拿 description
+    if let Some(stem_str) = stem.as_deref() {
+        for sa_id in &state.subagent_ids {
+            let meta_path = jsonl_path
                 .parent()
-                .map(|p| p.join("subagents").join(format!("{sa_id}.jsonl")).to_string_lossy().to_string())
-                .unwrap_or_default(),
-        });
+                .map(|p| p.join(stem_str).join("subagents").join(format!("{sa_id}.meta.json")));
+            let description = meta_path
+                .as_ref()
+                .and_then(|p| fs::read_to_string(p).ok())
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+                .and_then(|v| v.get("description").and_then(|x| x.as_str()).map(String::from));
+            let to_subagent_path = jsonl_path
+                .parent()
+                .map(|p| {
+                    p.join(stem_str)
+                        .join("subagents")
+                        .join(format!("{sa_id}.jsonl"))
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .unwrap_or_default();
+            edges.push(Edge::Spawned {
+                from_session: node.node_id.clone(),
+                to_subagent_id: sa_id.clone(),
+                to_subagent_path,
+                description,
+            });
+        }
     }
-    // UsedTool 边:把 tool_counts 摊开
-    for (name, count) in &state.tool_counts {
+    // UsedTool 边:把 tool_counts 摊开(按 count 倒序)
+    let mut sorted_tools: Vec<_> = state.tool_counts.iter().collect();
+    sorted_tools.sort_by(|a, b| b.1.cmp(a.1));
+    for (name, count) in sorted_tools {
         edges.push(Edge::UsedTool {
             session: node.node_id.clone(),
             tool_name: name.clone(),
@@ -134,10 +166,10 @@ pub fn parse_session(jsonl_path: &Path) -> Result<SessionGraph> {
     if state.error_count > 0 {
         edges.push(Edge::AttemptedFix {
             session: node.node_id.clone(),
-            error_count: state.error_count,
+            error_count: state.error_count as u64,
         });
     }
-    // CrossSession 边 — 在 node 里已经 move 过 parent_session_id,这里从局部 mirror 读
+    // CrossSession 边
     if let Some(parent) = node.parent_session_id.clone() {
         edges.push(Edge::CrossSession {
             parent,
@@ -180,11 +212,20 @@ struct SessionState {
     first_timestamp_ms: Option<i64>,
     last_timestamp_ms: Option<i64>,
     token_total: u64,
+    thinking_count: u32,
+    model_counts: HashMap<String, u32>,
     subagent_ids: Vec<String>,
     is_sidechain_seen: Option<bool>,
     parent_session_id: Option<String>,
     tool_counts: HashMap<String, u64>,
-    error_count: u64,
+    error_count: u32,
+}
+
+/// 取 tool_counts 里 count 排序的前 N 名 name
+fn sorted_top_tools(counts: &HashMap<String, u64>, n: usize) -> Vec<String> {
+    let mut v: Vec<_> = counts.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1));
+    v.into_iter().take(n).map(|(k, _)| k.clone()).collect()
 }
 
 impl SessionState {
@@ -254,25 +295,35 @@ impl SessionState {
                 }
             }
         }
-        // tool_use counts
+        // tool_use counts + thinking 计数 + model 计数
         if let Some(arr) = v
             .get("message")
             .and_then(|m| m.get("content"))
             .and_then(|c| c.as_array())
         {
             for item in arr {
-                if item.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
-                        *self.tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                match item_type {
+                    "tool_use" => {
+                        if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
+                            *self.tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                        }
                     }
-                }
-                // tool_result is_error
-                if item.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
-                    if item.get("is_error").and_then(|x| x.as_bool()).unwrap_or(false) {
-                        self.error_count += 1;
+                    "tool_result" => {
+                        if item.get("is_error").and_then(|x| x.as_bool()).unwrap_or(false) {
+                            self.error_count = self.error_count.saturating_add(1);
+                        }
                     }
+                    "thinking" | "redacted_thinking" => {
+                        self.thinking_count = self.thinking_count.saturating_add(1);
+                    }
+                    _ => {}
                 }
             }
+        }
+        // 模型统计 (assistant message.message.model)
+        if let Some(model) = v.get("message").and_then(|m| m.get("model")).and_then(|x| x.as_str()) {
+            *self.model_counts.entry(model.to_string()).or_insert(0) += 1;
         }
         // subagent dir parse (Claude 把 subagents/ 子目录写入)
         if let Some(subagents) = v.get("subagents").and_then(|x| x.as_array()) {
