@@ -1,0 +1,131 @@
+/* Analytics view styles */
+.analytics-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.analytics-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #1e293b;
+  padding-bottom: 12px;
+}
+.analytics-header h2 {
+  font-size: 14px;
+  color: #f8fafc;
+  font-weight: 500;
+}
+
+.range-buttons {
+  display: flex;
+  gap: 6px;
+}
+.range-btn {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.range-btn.active {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.kpi {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kpi-label {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.kpi-value {
+  font-size: 16px;
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.chart-card {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+  padding: 12px 14px;
+  height: 240px;
+  display: flex;
+  flex-direction: column;
+}
+.chart-card.wide {
+  height: auto;
+}
+.chart-card h3 {
+  font-size: 12px;
+  color: #cbd5e1;
+  font-weight: 500;
+  margin-bottom: 8px;
+  letter-spacing: 0.2px;
+}
+.chart-canvas {
+  flex: 1;
+  min-height: 180px;
+}
+
+.token-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.token-table th,
+.token-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid #1e293b;
+  color: #cbd5e1;
+}
+.token-table th {
+  font-weight: 600;
+  color: #f8fafc;
+  background: #020617;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.token-table td.num {
+  text-align: right;
+  font-family: ui-monospace, monospace;
+  color: #f8fafc;
+  font-weight: 600;
+}
+.token-table tr:hover td {
+  background: rgba(59, 130, 246, 0.08);
+}

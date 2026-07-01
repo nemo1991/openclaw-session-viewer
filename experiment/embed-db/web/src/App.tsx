@@ -11,13 +11,14 @@
 
 import { useState } from "react";
 import { GraphView } from "./views/GraphView";
+import { AnalyticsView } from "./views/AnalyticsView";
 import "./App.css";
 
 type Tab = "graph" | "analytics" | "rag";
 
 const TABS: { key: Tab; label: string; sprint: string }[] = [
   { key: "graph", label: "G1 Graph", sprint: "S1" },
-  { key: "analytics", label: "G2 Analytics", sprint: "S2 (planned)" },
+  { key: "analytics", label: "G2 Analytics", sprint: "S2" },
   { key: "rag", label: "G3 RAG Chat", sprint: "S3 (planned)" },
 ];
 
@@ -43,7 +44,7 @@ function App() {
       </header>
       <main className="app-body">
         {tab === "graph" && <GraphView />}
-        {tab === "analytics" && <div className="placeholder">Analytics view planned for S2</div>}
+        {tab === "analytics" && <AnalyticsView />}
         {tab === "rag" && <div className="placeholder">RAG chat planned for S3</div>}
       </main>
     </div>
