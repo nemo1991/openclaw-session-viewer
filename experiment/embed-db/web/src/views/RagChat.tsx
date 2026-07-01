@@ -22,6 +22,7 @@ import type { GraphEntry, SessionNode } from "../types";
 import { loadNdjson } from "../loader";
 import { formatNum } from "../analytics";
 import { indexCorpus, topK, highlightHtml, type IndexedItem, type RetrievalHit } from "../rag";
+import { useTitles } from "../titleStore";
 import "./RagChat.css";
 
 const NDJSON_URL = "/sessions.ndjson";
@@ -51,6 +52,28 @@ export function RagChat() {
   const [hits, setHits] = useState<RetrievalHit<SessionNode>[] | null>(null);
   const [engineMs, setEngineMs] = useState<number | null>(null);
   const [topN, setTopN] = useState(8);
+  const titles = useTitles();
+  /** localStorage 自定义标题计数 — 跨视图共享,G1 改完这里立刻显示 */
+  const [overrideCount, setOverrideCount] = useState(0);
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const raw = localStorage.getItem("openclaw.titleOverrides.v1");
+        const m = raw ? (JSON.parse(raw)?.m ?? {}) : {};
+        setOverrideCount(Object.keys(m).length);
+      } catch {
+        setOverrideCount(0);
+      }
+    };
+    sync();
+    window.addEventListener("storage", sync);
+    // 自定义事件 — 详情面板 set/clear 时主动触发,让当前 view 也重渲染
+    window.addEventListener("openclaw:titlesChanged", sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("openclaw:titlesChanged", sync);
+    };
+  }, [titles]);
 
   useEffect(() => {
     loadNdjson(NDJSON_URL)
@@ -103,6 +126,7 @@ export function RagChat() {
         <h2>G3 RAG (lite) — 跨 session 召回</h2>
         <p className="hint">
           hash-embedding + cosine top-{topN} · 索引 {index.length} sessions · 32-dim 词袋 · 0 deps
+          {overrideCount > 0 && ` · ✏️ ${overrideCount} 个自定义名已应用到 G1/G2/G3`}
         </p>
       </header>
 
@@ -153,6 +177,7 @@ export function RagChat() {
           {hits ? `${hits.length} 条命中` : ""}
           {hits ? " · " : ""}耗时 {engineMs.toFixed(2)}ms (embed 索引 {index.length} 个 session
           一次性算完)
+          {" · "}卡片标题 = display_title(在 G1 详情面板可重命名)
         </p>
       )}
 
@@ -170,12 +195,16 @@ export function RagChat() {
 function HitCard({ hit, rank }: { hit: RetrievalHit<SessionNode>; rank: number; query: string }) {
   const n = hit.item;
   const matched = hit.matched_tokens;
+  const titles = useTitles();
+  const title = titles.get(n.node_id, titles.auto(n));
   return (
     <div className="hit-card">
       <div className="hit-rank">{rank}</div>
       <div className="hit-body">
         <div className="hit-header">
-          <span className="hit-session">{n.session_id.slice(0, 12)}…</span>
+          <span className="hit-session" title={n.session_id}>
+            {title}
+          </span>
           <span className="hit-source">{n.source}</span>
           {n.workspace && <span className="hit-workspace">{n.workspace}</span>}
           <span className="hit-score">cosine: {hit.score.toFixed(3)}</span>

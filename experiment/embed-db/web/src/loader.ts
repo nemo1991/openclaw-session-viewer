@@ -6,6 +6,7 @@
  */
 
 import type { GraphEntry, SessionNode } from "./types";
+import type { GNode, GLink, SubagentRole } from "./graph-types";
 
 /**
  * 解析 NDJSON — ingest crate stdout sink 输出是 **flat**:
@@ -42,6 +43,41 @@ export async function loadNdjson(url: string): Promise<GraphEntry[]> {
 }
 
 /**
+ * 从 subagent description 前缀启发式分类角色
+ *
+ * 优先级:Implement > Validate > Design > Explore > Other
+ * (具体动词优先,避免 "fix something after explore" 误分类)
+ *
+ * 中文 / 英文都支持;首字切到空白。
+ */
+export function classifyRole(desc: string | null | undefined): SubagentRole {
+  if (!desc) return "Other";
+  const d = desc.trim().toLowerCase();
+  // Implement 最具体(动词直接动对象)
+  if (/^(implement|fix|build|ship|修复|实施|修改|实现|修复|改动|执行|run|execute)/.test(d))
+    return "Implement";
+  // Validate
+  if (/^(validate|verify|test|check|audit|验证|测试|核查)/.test(d)) return "Validate";
+  // Design
+  if (/^(design|map|plan|architect|outline|规划|设计|制定|构思|起草|set up)/.test(d))
+    return "Design";
+  // Explore (默认 subagent 行为)
+  if (
+    /^(explore|research|investigate|survey|look ?into|调研|探索|研究|查找|调查|分析|了解|理解)/.test(
+      d
+    )
+  )
+    return "Explore";
+  return "Other";
+}
+
+/** main 节点半径 ∝ sqrt(token_total / 1e6),clamp [4, 14] */
+function tokenRadius(tokenTotal: number | undefined | null): number {
+  const t = Math.max(0, tokenTotal ?? 0);
+  return Math.min(14, Math.max(4, Math.sqrt(t / 1e6)));
+}
+
+/**
  * 把 GraphEntry[] 转为 react-force-graph 期望的 { nodes, links } 结构
  *
  * 节点:
@@ -53,29 +89,6 @@ export async function loadNdjson(url: string): Promise<GraphEntry[]> {
  * - UsedTool: session → tool(label)
  */
 export function buildForceGraph(entries: GraphEntry[]) {
-  type GNode = {
-    id: string;
-    type: "main" | "subagent" | "tool";
-    label: string;
-    session_id?: string;
-    workspace?: string | null;
-    token_total?: number;
-    primary_model?: string | null;
-    thinking_count?: number;
-    error_count?: number;
-    subagent_count?: number;
-    top_tools?: string[];
-    description?: string | null;
-    parent_session_id?: string | null;
-  };
-  type GLink = {
-    source: string;
-    target: string;
-    label?: string;
-    weight?: number;
-    edgeType: "Spawned" | "UsedTool" | "AttemptedFix" | "CrossSession";
-  };
-
   const nodes = new Map<string, GNode>();
   const links: GLink[] = [];
 
@@ -87,6 +100,8 @@ export function buildForceGraph(entries: GraphEntry[]) {
       id: n.node_id,
       type: n.is_subagent_root ? "subagent" : "main",
       label: n.first_prompt?.slice(0, 60) || n.session_id.slice(0, 8),
+      radius: tokenRadius(n.token_total),
+      first_timestamp_ms: n.first_timestamp_ms ?? undefined,
       session_id: n.session_id,
       workspace: n.workspace,
       token_total: n.token_total,
@@ -101,7 +116,7 @@ export function buildForceGraph(entries: GraphEntry[]) {
     for (const sa_id of n.subagent_ids) {
       const sa_node_id = `subagent:${sa_id}`;
       if (!nodes.has(sa_node_id)) {
-        // 拉 description
+        // 拉 description (从 Spawned edge)
         let desc: string | null = null;
         for (const e2 of e.edges) {
           if (e2.type === "Spawned" && e2.to_subagent_id === sa_id) {
@@ -109,10 +124,17 @@ export function buildForceGraph(entries: GraphEntry[]) {
             break;
           }
         }
+        // 试着找 subagent 自己 entry 的 first_timestamp(若有)
+        const saEntry = entries.find(
+          (x) => x.node.session_id === sa_id || x.node.node_id === sa_id
+        );
         nodes.set(sa_node_id, {
           id: sa_node_id,
           type: "subagent",
-          label: sa_id,
+          label: desc?.slice(0, 36) || sa_id,
+          radius: 4,
+          first_timestamp_ms: saEntry?.node.first_timestamp_ms ?? n.first_timestamp_ms ?? undefined,
+          role: classifyRole(desc),
           description: desc,
         });
       }
@@ -128,4 +150,4 @@ export function buildForceGraph(entries: GraphEntry[]) {
   return { nodes: Array.from(nodes.values()), links };
 }
 
-export type { GNode, GLink } from "./graph-types";
+export type { GNode, GLink, SubagentRole } from "./graph-types";

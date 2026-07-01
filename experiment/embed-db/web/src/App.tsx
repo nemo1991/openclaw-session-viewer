@@ -13,8 +13,11 @@ import { useState } from "react";
 import { GraphView } from "./views/GraphView";
 import { AnalyticsView } from "./views/AnalyticsView";
 import { RagChat } from "./views/RagChat";
+import { TitleProvider } from "./titleStore";
 import "./App.css";
+import "./Analytics.css";
 import "./views/RagChat.css";
+import "./views/GraphDetailPanel.css";
 
 type Tab = "graph" | "analytics" | "rag";
 
@@ -27,29 +30,31 @@ const TABS: { key: Tab; label: string; sprint: string }[] = [
 function App() {
   const [tab, setTab] = useState<Tab>("graph");
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>experimental embed-db · graph explorer</h1>
-        <nav className="tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              className={`tab ${tab === t.key ? "active" : ""} ${t.sprint.includes("planned") ? "planned" : ""}`}
-              onClick={() => !t.sprint.includes("planned") && setTab(t.key)}
-              disabled={t.sprint.includes("planned")}
-              title={t.sprint.includes("planned") ? `计划在 ${t.sprint}` : ""}
-            >
-              {t.label}
-            </button>
-          ))}
-        </nav>
-      </header>
-      <main className="app-body">
-        {tab === "graph" && <GraphView />}
-        {tab === "analytics" && <AnalyticsView />}
-        {tab === "rag" && <RagChat />}
-      </main>
-    </div>
+    <TitleProvider>
+      <div className="app">
+        <header className="app-header">
+          <h1>experimental embed-db · graph explorer</h1>
+          <nav className="tabs">
+            {TABS.map((t) => (
+              <button
+                key={t.key}
+                className={`tab ${tab === t.key ? "active" : ""} ${t.sprint.includes("planned") ? "planned" : ""}`}
+                onClick={() => !t.sprint.includes("planned") && setTab(t.key)}
+                disabled={t.sprint.includes("planned")}
+                title={t.sprint.includes("planned") ? `计划在 ${t.sprint}` : ""}
+              >
+                {t.label}
+              </button>
+            ))}
+          </nav>
+        </header>
+        <main className="app-body">
+          {tab === "graph" && <GraphView />}
+          {tab === "analytics" && <AnalyticsView />}
+          {tab === "rag" && <RagChat />}
+        </main>
+      </div>
+    </TitleProvider>
   );
 }
 

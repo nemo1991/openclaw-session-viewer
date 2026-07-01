@@ -129,3 +129,11 @@
 .token-table tr:hover td {
   background: rgba(59, 130, 246, 0.08);
 }
+
+.title-override-badge {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  color: #facc15;
+  opacity: 0.85;
+}
