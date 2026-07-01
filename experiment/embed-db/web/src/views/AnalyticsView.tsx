@@ -20,7 +20,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { GraphEntry } from "../types";
+import type { GraphEntry, SessionNode } from "../types";
 import { loadNdjson } from "../loader";
 import {
   formatDate,
@@ -34,6 +34,7 @@ import {
   topToolsBar,
   type Range,
 } from "../analytics";
+import { useTitles } from "../titleStore";
 
 const NDJSON_URL = "/sessions.ndjson";
 const RANGES: { key: Range; label: string }[] = [
@@ -49,6 +50,7 @@ export function AnalyticsView() {
   const [entries, setEntries] = useState<GraphEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<Range>("all");
+  const titles = useTitles();
 
   useEffect(() => {
     loadNdjson(NDJSON_URL)
@@ -84,6 +86,26 @@ export function AnalyticsView() {
   const modelRows = useMemo(() => modelAvgThinking(inRange), [inRange]);
   const retryRows = useMemo(() => retryRateDistribution(inRange), [inRange]);
   const chainRows = useMemo(() => subagentChainDist(inRange), [inRange]);
+
+  /** session_id → SessionNode 索引,供 titles.get 用(node_id 在 types.ts 里就是 session_id 不可逆的话要另想) */
+  const nodeById = useMemo(() => {
+    const m = new Map<string, SessionNode>();
+    for (const n of nodes) m.set(n.node_id, n);
+    return m;
+  }, [nodes]);
+
+  /** 给 tokenTop 加 display_title (override > auto) */
+  const tokenTopTitled = useMemo(() => {
+    return tokenTop.map((r) => {
+      const n = nodeById.get(r.session_id);
+      return {
+        ...r,
+        display_title: n
+          ? titles.get(n.node_id, titles.auto(n))
+          : r.label || r.session_id.slice(0, 8),
+      };
+    });
+  }, [tokenTop, nodeById, titles]);
 
   if (error) return <div className="error">❌ {error}</div>;
   if (!entries) return <div className="loading">加载 sessions.ndjson ...</div>;
@@ -144,16 +166,22 @@ export function AnalyticsView() {
 
         <Chart title="2. token_top_10 session (horizontal bar)">
           <BarChart
-            data={tokenTop.slice().reverse()}
+            data={tokenTopTitled.slice().reverse()}
             layout="vertical"
             margin={{ top: 10, right: 16, bottom: 0, left: 96 }}
           >
             <CartesianGrid stroke="#1e293b" />
             <XAxis type="number" stroke="#94a3b8" fontSize={10} tickFormatter={formatNum} />
-            <YAxis type="category" dataKey="label" stroke="#94a3b8" fontSize={10} width={92} />
+            <YAxis
+              type="category"
+              dataKey="display_title"
+              stroke="#94a3b8"
+              fontSize={10}
+              width={92}
+            />
             <Tooltip contentStyle={tooltipStyle} formatter={(v: any) => formatNum(Number(v))} />
             <Bar dataKey="tokens" fill="#3b82f6">
-              {tokenTop.map((_, i) => (
+              {tokenTopTitled.map((_, i) => (
                 <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
               ))}
             </Bar>
@@ -215,7 +243,7 @@ export function AnalyticsView() {
         </Chart>
       </div>
 
-      <Chart title={`Token Top 10 (${tokenTop.length} sessions)`} wide>
+      <Chart title={`Token Top ${tokenTopTitled.length} sessions · ✏️ = 已自定义名`} wide>
         <table className="token-table">
           <thead>
             <tr>
@@ -228,9 +256,16 @@ export function AnalyticsView() {
             </tr>
           </thead>
           <tbody>
-            {tokenTop.map((r) => (
+            {tokenTopTitled.map((r) => (
               <tr key={r.session_id}>
-                <td title={r.session_id}>{r.label}</td>
+                <td title={r.session_id}>
+                  {r.display_title}
+                  {titles.hasOverride(r.session_id) && (
+                    <span className="title-override-badge" title="已自定义">
+                      ✏️
+                    </span>
+                  )}
+                </td>
                 <td>{r.workspace ?? "—"}</td>
                 <td>{r.source}</td>
                 <td>{r.primary_model ?? "—"}</td>

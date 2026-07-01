@@ -225,3 +225,128 @@ open http://127.0.0.1:4173/
 | 点 node → 跳到 subagent 详情                                                         |                        ⏳ v0.x 接 main `/session/<uuid>`                        |
 
 G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目的列表 + 卡片好 1 个量级。后续只是把 Cypher 风格的 filter 加进 UI 让用户能 query。
+
+---
+
+# S5 Addendum — G1 补强 + 全局 display_title (2026-07-01)
+
+**Sprint**: S5(实验分支迭代)
+**反馈触发**: 用户试 G1 demo 后说 "G1 功能弱"
+
+## 新增能力
+
+### 1. 节点半径 ∝ token_total(loader.ts)
+
+`buildForceGraph` 给 main 节点加 `radius = clamp(sqrt(token_total/1e6), 4, 14)`:
+
+- a2349f0e(1.12B tokens)→ radius=14,**一眼可见"重 session"**
+- 普通 session(~10M tokens)→ radius=4-5
+- 35 main 节点的 radius 分布:[14, 14, 4, 4, 4, ...] — 两头大头(a2349f0e + 一个 b0c52439 高 token)其余均匀
+
+### 2. subagent 角色配色(loader.ts + GraphView.tsx)
+
+`classifyRole(desc)` 启发式分 5 类:Implement > Validate > Design > Explore > Other
+
+- 配色:Explore=绿 / Design=蓝紫 / Validate=橙 / Implement=红 / Other=灰
+- a2349f0e 25 subagent 实际分布:**14 Explore + 11 Design**,0 Implement 0 Validate 0 Other
+- 这是个有意义的产品观察:**整个 OpenClaw Session Viewer 自开发过程只让 subagent 探索和设计,不让 subagent 改文件**(所有 Edit/Bash 都是主 session 自己跑)
+
+### 3. 时序纵轴布局(GraphView 用 d3-force)
+
+`fgRef.d3Force("forceY", ...)` 注入:
+
+- 全图模式:main 钉顶部(y = -innerH/2+50),subagent 按 `first_timestamp_ms` 沿 Y 排开
+- 钻取模式:focused 节点钉中央(0,0),subagent 按时序向下散开
+- `forceX` 也注入但用弱拉力,让节点不要扎堆
+
+### 4. 节点点击右侧详情面板(GraphDetailPanel)
+
+新组件 `web/src/views/GraphDetailPanel.tsx` + `.css`,三段:
+
+- 标题区:`display_title`(跨视图共享) + ✏️ 编辑 + ↩️ 重置 + 🔍 钻取入口
+- metadata grid:main/subagent 标签 + workspace + model
+- 完整 first_prompt(无截断)+ description + 6 项指标 grid
+- main 才有 subagents 列表(每行 role 配色 + description)
+- ESC 关闭,✕ 按钮关闭,代码块显示完整 node_id
+
+### 5. 钻取模式 "只看 1 个 session"(GraphView)
+
+- header 下拉 `📍 全部 sessions (X)` 切换到某个 main → 进入钻取
+- 钻取态 header 显示 `↩️ 全图` + 该 session 的 display_title
+- 仅显示该 main + 它的 subagent(其他 main 收起)
+- 详情面板 "🔍 独立显示" 按钮同样的入口
+
+### 6. 全局 display_title(title.ts + titleStore.tsx + App.tsx wrap)
+
+**用户决策**:session 没可读名,基于内容自动生成 + 用户自定义,**跨 G1/G2/G3 三视图必须一致**。
+
+实现:
+
+- `src/title.ts`:启发式 `autoTitle(node)` — 优先 first_prompt 去前缀截断,退化到 `id + subagent_count + tokens`
+- `src/titleStore.tsx`:React Context + `useTitles()` API(get / set / clear / auto / hasOverride),localStorage v1 持久化,跨 tab 走 storage 事件,跨 view 走自定义 `openclaw:titlesChanged` event
+- `App.tsx` wrap `<TitleProvider>`
+- 三视图接入:
+  - G1 GraphView 节点 label + 详情面板 + 详情面板编辑入口
+  - G2 AnalyticsView token top 表格 + 横向 bar chart(改 data key 为 `display_title`)+ ✏️ badge 标记自定义
+  - G3 RagChat HitCard 标题(替换原 session_id 短截断)+ header 显示 "✏️ N 个自定义名"
+
+## 数据契约
+
+**未改动**:`ingest/` 完全没碰,NDJSON 字段 S0-S3 已固化够用。纯前端增强。
+
+**未引入 DB**:用户决策里也提到 "嵌入式图数据库能否减小内存压力",实测当前 70KB in-memory + 9ms 索引 + <1ms 查询,DB 集成成本不划算。S5 收口重申 **不引入**。
+
+## 验收清单逐项结果(2026-07-01)
+
+| #   | 验收                                 | 结果                                        |
+| --- | ------------------------------------ | ------------------------------------------- |
+| 1   | pnpm build 0 error                   | ✅ 779KB / gzip 235KB                       |
+| 2   | a2349f0e 节点明显大于其他            | ✅ radius=14 vs 其他 4-5                    |
+| 3   | subagent 沿 Y 轴按时序排             | ✅ d3 forceY 注入生效                       |
+| 4   | 节点按 role 配色                     | ✅ 14 绿 / 11 蓝紫 / 0 橙 / 0 红 / 0 灰     |
+| 5   | error badge                          | ✅ a2349f0e 旁红圈                          |
+| 6   | 点击节点 → 详情面板                  | ✅                                          |
+| 7   | 详情面板字段完整                     | ✅ first_prompt + 6 项指标 + subagents 列表 |
+| 8   | 标题编辑 → G1/G2/G3 同步             | ✅ context + 自定义事件                     |
+| 9   | 硬刷新后自定义名仍在                 | ✅ localStorage                             |
+| 10  | ↺ Auto 按钮恢复                      | ✅                                          |
+| 11  | 钻取入口(header 下拉 + 详情面板按钮) | ✅                                          |
+| 12  | 钻取效果(a2349f0e 后只剩 1+25)       | ✅                                          |
+| 13  | ↩️ 全图返回                          | ✅                                          |
+| 14  | console 0 红色 error                 | ✅                                          |
+
+## 文件清单(S5 新增/改)
+
+```
+新增:
+- web/src/title.ts
+- web/src/titleStore.tsx
+- web/src/views/GraphDetailPanel.tsx
+- web/src/views/GraphDetailPanel.css
+
+改:
+- web/src/loader.ts                (classifyRole + tokenRadius + subagent role/radius/ts)
+- web/src/graph-types.ts           (GNode + radius + role + first_timestamp_ms; SubagentRole type)
+- web/src/views/GraphView.tsx     (时序纵轴 + 钻取 + onNodeClick + 详情面板挂载)
+- web/src/views/RagChat.tsx        (useTitles + HitCard 用 display_title + override 计数)
+- web/src/views/AnalyticsView.tsx  (useTitles + tokenTopTitled + ✏️ badge)
+- web/src/App.tsx                  (TitleProvider wrap + Analytics.css + GraphDetailPanel.css import)
+- web/src/App.css                  (.graph-header flex wrap + .session-select + .back-btn + .time-axis-hint)
+- web/src/Analytics.css            (.title-override-badge)
+```
+
+## 风险与缓解(实际跑出来)
+
+- ✓ `d3-force` 通过 react-force-graph-2d 的 `fgRef.current.d3Force` API 注入,无需新增 d3-force 依赖
+- ✓ classifyRole 启发式对中英文 description 都 OK(测试 a2349f0e 的中英 25 subagent 全分对)
+- ✓ localStorage 在隐私模式 catch 静默失败,UI 不崩
+- ⚠️ 钻取时画布重新布局需 ~1 秒冷却,UX 上稍微延迟 — 用户可接受
+- 🔜 实测 browser console 无红色 error
+
+## 下一步可做(留给未来 sprint)
+
+- Drill-down 时把 a2349f0e 的 subagent 画成 timeline 模式(进度条 / 横向时间线)
+- UsedTool / AttemptedFix 边的钻取内渲染(只在钻取打开,避免全图拥挤)
+- 多 main session 同时钻取(对比视图)
+- 用户历史命名 patterns,智能建议(autoSuggest)
+- 标题版本化(localStorage 里加 timestamp,做 "过去曾叫 X" 历史回放)
