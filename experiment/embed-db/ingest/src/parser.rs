@@ -118,6 +118,7 @@ pub fn parse_session(jsonl_path: &Path) -> Result<SessionGraph> {
         is_subagent_root: state.is_sidechain_seen.unwrap_or(false),
         parent_session_id: state.parent_session_id,
         message_count,
+        assistant_text_snippets: state.assistant_texts,
     };
 
     let mut edges: Vec<Edge> = vec![];
@@ -219,7 +220,12 @@ struct SessionState {
     parent_session_id: Option<String>,
     tool_counts: HashMap<String, u64>,
     error_count: u32,
+    /// S3 RAG: top 3 assistant 文本片段,每个 200 字符
+    assistant_texts: Vec<String>,
 }
+
+const SNIPPET_LEN: usize = 200;
+const MAX_SNIPPETS: usize = 3;
 
 /// 取 tool_counts 里 count 排序的前 N 名 name
 fn sorted_top_tools(counts: &HashMap<String, u64>, n: usize) -> Vec<String> {
@@ -324,6 +330,43 @@ impl SessionState {
         // 模型统计 (assistant message.message.model)
         if let Some(model) = v.get("message").and_then(|m| m.get("model")).and_then(|x| x.as_str()) {
             *self.model_counts.entry(model.to_string()).or_insert(0) += 1;
+        }
+        // S3 RAG: 抓 assistant 文本片段(给 hash-embedding 提供语料)
+        // first 3 文本块(不重复 first_prompt)
+        if self.assistant_texts.len() < MAX_SNIPPETS {
+            let is_assistant = v
+                .get("message")
+                .and_then(|m| m.get("role"))
+                .and_then(|r| r.as_str())
+                .map(|r| r == "assistant")
+                .unwrap_or(false);
+            if is_assistant {
+                let arr = v
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array());
+                if let Some(arr) = arr {
+                    for item in arr {
+                        if item.get("type").and_then(|t| t.as_str()) == Some("text") {
+                            if let Some(t) = item.get("text").and_then(|x| x.as_str()) {
+                                let snippet = if t.chars().count() > SNIPPET_LEN {
+                                    let mut s: String = t.chars().take(SNIPPET_LEN).collect();
+                                    s.push('…');
+                                    s
+                                } else {
+                                    t.to_string()
+                                };
+                                if !self.assistant_texts.contains(&snippet) {
+                                    self.assistant_texts.push(snippet);
+                                    if self.assistant_texts.len() >= MAX_SNIPPETS {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         // subagent dir parse (Claude 把 subagents/ 子目录写入)
         if let Some(subagents) = v.get("subagents").and_then(|x| x.as_array()) {

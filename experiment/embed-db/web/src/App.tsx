@@ -12,14 +12,16 @@
 import { useState } from "react";
 import { GraphView } from "./views/GraphView";
 import { AnalyticsView } from "./views/AnalyticsView";
+import { RagChat } from "./views/RagChat";
 import "./App.css";
+import "./views/RagChat.css";
 
 type Tab = "graph" | "analytics" | "rag";
 
 const TABS: { key: Tab; label: string; sprint: string }[] = [
   { key: "graph", label: "G1 Graph", sprint: "S1" },
   { key: "analytics", label: "G2 Analytics", sprint: "S2" },
-  { key: "rag", label: "G3 RAG Chat", sprint: "S3 (planned)" },
+  { key: "rag", label: "G3 RAG", sprint: "S3" },
 ];
 
 function App() {
@@ -45,7 +47,7 @@ function App() {
       <main className="app-body">
         {tab === "graph" && <GraphView />}
         {tab === "analytics" && <AnalyticsView />}
-        {tab === "rag" && <div className="placeholder">RAG chat planned for S3</div>}
+        {tab === "rag" && <RagChat />}
       </main>
     </div>
   );

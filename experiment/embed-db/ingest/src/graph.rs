@@ -74,6 +74,10 @@ pub struct SessionNode {
     pub parent_session_id: Option<String>,
     /// JSONL 行数
     pub message_count: u64,
+    /// v0.6.1: RAG 搜索源数据 — top 3 assistant 文本 snippet(每个 ≤200 字符)
+    /// 给 RAG (S3) hash-embedding 提供语料;不被 graph view 用
+    #[serde(default)]
+    pub assistant_text_snippets: Vec<String>,
 }
 
 /// 所有 cross-node / cross-message 的关联边
