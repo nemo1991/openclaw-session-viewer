@@ -9,6 +9,10 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/WixTools/
 
+# Experiment sub-crates (S0+)
+experiment/**/target/
+experiment/**/Cargo.lock
+
 # Claude Code 自身的工作目录(避免污染项目)
 .claude/
 
