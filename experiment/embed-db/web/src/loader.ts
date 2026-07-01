@@ -8,7 +8,13 @@
 import type { GraphEntry, SessionNode } from "./types";
 
 /**
- * 解析 NDJSON (每行一个 JSON object: { ...SessionNode, edges: Edge[] })
+ * 解析 NDJSON — ingest crate stdout sink 输出是 **flat**:
+ *   { node_id, session_id, ..., edges: Edge[] }
+ *
+ * 上层 GraphEntry 类型契约是 nested:
+ *   { node: SessionNode, edges: Edge[] }
+ *
+ * 这里在 loader 边界把 flat 适配成 nested,让 views 一致用 e.node。
  */
 export async function loadNdjson(url: string): Promise<GraphEntry[]> {
   const resp = await fetch(url);
@@ -23,7 +29,11 @@ export async function loadNdjson(url: string): Promise<GraphEntry[]> {
       const d = JSON.parse(line);
       // 验证必要字段
       if (!d.node_id || !d.session_id) continue;
-      out.push(d as GraphEntry);
+      const { edges, ...nodeFields } = d;
+      out.push({
+        node: nodeFields as SessionNode,
+        edges: Array.isArray(edges) ? edges : [],
+      });
     } catch (e) {
       console.warn("skip malformed NDJSON line:", e);
     }

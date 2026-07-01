@@ -58,26 +58,27 @@ export function RagChat() {
       .catch((e) => setError(String(e)));
   }, []);
 
+  // 索引 corpus (一次);计算与计时分离:setState 不允许在 useMemo 里跑
   const index: IndexedItem<SessionNode>[] = useMemo(() => {
     if (!entries) return [];
-    return indexCorpus(
-      entries.map((e) => e.node),
-      corpusText
-    );
+    const nodes = entries
+      .map((e) => e?.node)
+      .filter((n): n is SessionNode => Boolean(n && n.node_id));
+    return indexCorpus(nodes, corpusText);
   }, [entries]);
 
-  // 副作用单独放 useEffect,不允许在 useMemo 里 setState (会触发 re-render)
   const lastIndexedCount = useMemo(() => (entries ? entries.length : 0), [entries]);
+
+  // 仅 entries 数变时才重测索引构建耗时
   useEffect(() => {
     if (!entries) return;
+    const nodes = entries
+      .map((e) => e?.node)
+      .filter((n): n is SessionNode => Boolean(n && n.node_id));
     const t0 = performance.now();
-    indexCorpus(
-      entries.map((e) => e.node),
-      corpusText
-    );
+    indexCorpus(nodes, corpusText);
     const t1 = performance.now();
     setEngineMs(t1 - t0);
-    // 仅 entries 数变才重测耗时(避免 query 重新算)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastIndexedCount]);
 
