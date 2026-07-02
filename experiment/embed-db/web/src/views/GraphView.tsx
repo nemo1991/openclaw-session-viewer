@@ -108,7 +108,7 @@ export function GraphView() {
       id: `tool:${focusedNodeId}:${tool}`,
       type: "tool" as any,
       label: `${tool} · ${count}`,
-      radius: Math.min(8, 3 + Math.log(count + 1)),
+      radius: Math.min(6, 2 + Math.log(count + 1)),
       role: "Other" as any,
       // Tool 节点用 first_timestamp_ms = focused session 的结束时间(排序到子 agent 之后)
       first_timestamp_ms: focusedEntry?.node.last_timestamp_ms ?? undefined,
@@ -314,7 +314,7 @@ export function GraphView() {
             }
             // tool 节点画圆角矩形,其他画圆
             if (node.type === "tool") {
-              const sz = r * 2.4;
+              const sz = r * 1.8;
               ctx.beginPath();
               ctx.roundRect?.(node.x - sz / 2, node.y - sz / 2, sz, sz, 4);
               if (!ctx.roundRect) ctx.rect(node.x - sz / 2, node.y - sz / 2, sz, sz);
@@ -334,14 +334,21 @@ export function GraphView() {
               ctx.stroke();
 
               // error badge — 只对 main,error_count > 0 才画
+              // 位置:右下偏 (x + r*0.75, y + r*0.85),避开右上 label
+              // 大小:clamp 到 [1.5, 5] — 比 main 小一档,作为"标记"而非"装饰圈"
+              // 透明度按 error_count 渐变让肉眼快速感知量级
               if (node.type === "main" && (node.error_count ?? 0) > 0) {
-                const errR = Math.min(8, 2 + Math.sqrt((node.error_count ?? 0) / 4));
+                const ec = node.error_count ?? 0;
+                const errR = Math.min(5, 1.5 + Math.sqrt(ec / 8));
+                const bx = node.x + r * 0.75;
+                const by = node.y + r * 0.85;
                 ctx.beginPath();
-                ctx.arc(node.x + r, node.y - r, errR, 0, 2 * Math.PI);
+                ctx.arc(bx, by, errR, 0, 2 * Math.PI);
                 ctx.fillStyle = "#ef4444";
                 ctx.fill();
-                ctx.strokeStyle = "rgba(255,255,255,0.7)";
-                ctx.lineWidth = 1;
+                // 1.5px 白边让 badge 在 main 蓝圆上"凸"出来
+                ctx.strokeStyle = "rgba(255,255,255,0.95)";
+                ctx.lineWidth = 1.5;
                 ctx.stroke();
               }
             }
@@ -355,7 +362,13 @@ export function GraphView() {
             }
           }}
           nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
-            const r = (node.radius ?? 6) + 2;
+            // main 含 error 时,扩大 hit-area 包住右下角的 badge(让 badge 也响应 onNodeClick)
+            let r = (node.radius ?? 6) + 2;
+            if (node.type === "main" && (node.error_count ?? 0) > 0) {
+              const errR = Math.min(5, 1.5 + Math.sqrt((node.error_count ?? 0) / 8));
+              const badgeDist = Math.hypot(r * 0.75, r * 0.85); // badge 中心距主圆心
+              r = Math.max(r, badgeDist + errR + 2);
+            }
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
