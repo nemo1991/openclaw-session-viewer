@@ -119,6 +119,8 @@ pub fn parse_session(jsonl_path: &Path) -> Result<SessionGraph> {
         parent_session_id: state.parent_session_id,
         message_count,
         assistant_text_snippets: state.assistant_texts,
+        // S6: 路径 subagents/agent-XXX.jsonl → agent_id = XXX;否则 None
+        agent_id: extract_agent_id_from_path(jsonl_path),
     };
 
     let mut edges: Vec<Edge> = vec![];
@@ -201,6 +203,18 @@ fn truncate(s: &str, n: usize) -> String {
         let mut out: String = s.chars().take(n).collect();
         out.push('…');
         out
+    }
+}
+
+/// S6: 从 JSONL 路径抽 agent-id(若位于 `<uuid>/subagents/agent-XXX.jsonl` 形式)。
+/// main session (路径 `<uuid>.jsonl`) 返 None。
+fn extract_agent_id_from_path(jsonl_path: &Path) -> Option<String> {
+    let stem = jsonl_path.file_stem().and_then(|s| s.to_str())?;
+    // subagent JSONL 文件名总是以 "agent-" 开头
+    if stem.starts_with("agent-") {
+        Some(stem.to_string())
+    } else {
+        None
     }
 }
 

@@ -11,6 +11,8 @@ export interface GNode {
   first_timestamp_ms?: number;
   /** subagent 角色分类 — Explore/Design/Validate/Implement/Other */
   role?: SubagentRole;
+  /** S6: subagent 的 agent-id (e.g. "agent-a4aa77"),用于关联自己的 JSONL entry */
+  agent_id?: string;
   session_id?: string;
   workspace?: string | null;
   token_total?: number;
