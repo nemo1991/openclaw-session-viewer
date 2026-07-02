@@ -125,9 +125,9 @@ export function buildForceGraph(entries: GraphEntry[]) {
           }
         }
         // 试着找 subagent 自己 entry 的 first_timestamp(若有)
-        const saEntry = entries.find(
-          (x) => x.node.session_id === sa_id || x.node.node_id === sa_id
-        );
+        // S6: 用 agent_id (e.g. "agent-a4aa77") 找;subagent JSONL 自己的 session_id
+        //     是 parent 的 uuid,所以用 session_id 找会失败。
+        const saEntry = entries.find((x) => x.node.agent_id === sa_id);
         nodes.set(sa_node_id, {
           id: sa_node_id,
           type: "subagent",
@@ -136,6 +136,8 @@ export function buildForceGraph(entries: GraphEntry[]) {
           first_timestamp_ms: saEntry?.node.first_timestamp_ms ?? n.first_timestamp_ms ?? undefined,
           role: classifyRole(desc),
           description: desc,
+          // S6: 让 view 能区分两个 subagent 节点属于同一个 agent-id (撞名/重复 spawn)
+          agent_id: sa_id,
         });
       }
       links.push({

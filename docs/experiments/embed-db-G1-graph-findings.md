@@ -424,3 +424,76 @@ top-5 tools:
 - 给 tool 节点也加点击 → 右侧面板显示工具详情(count / 占该 session 百分比 / 跨 session 排行)
 - 横轴时间线加显式刻度(每小时一格 + 标签)
 - 加"全图 vs 当前聚焦 session 的工具用量对比"mini chart
+
+---
+
+# S6 Bugfix — subagent JSONL 关联丢失 (2026-07-02)
+
+**触发**: 用户反馈 "G1 数据关联的展示的应该有问题"
+
+## 根因
+
+`is_subagent_root=true` 的 subagent JSONL 自己的 SessionNode 里**没有任何字段**指明 "我是 agent-XXX"。 `subagent_ids` 列表里存的是 `agent-XXX`(从文件名抽),但 subagent JSONL 自己的 `session_id` 字段是 **parent 的 uuid**(main session 的 session_id)。
+
+所以 loader 的 buildForceGraph 第 128 行:
+
+```ts
+const saEntry = entries.find((x) => x.node.session_id === sa_id || x.node.node_id === sa_id);
+```
+
+永远找不到匹配的 entry → subagent 节点 `first_timestamp_ms` 全部 fallback 到 parent → 钻取时 25/25 subagent 节点 X 坐标完全重叠成一团。
+
+## 修法
+
+### 1. ingest 加 `agent_id` 字段 (graph.rs / parser.rs)
+
+`SessionNode` 加 `agent_id: Option<String>`:
+
+- 路径是 `<uuid>/subagents/agent-XXX.jsonl` → `agent_id = "agent-XXX"`
+- main session 路径是 `<uuid>.jsonl` → `agent_id = null`
+
+`parser.rs` 加 `extract_agent_id_from_path()` helper,从 file_stem 抽(若以 "agent-" 开头)。
+
+### 2. loader 改查找逻辑 (loader.ts)
+
+```ts
+// 改前
+const saEntry = entries.find((x) => x.node.session_id === sa_id || x.node.node_id === sa_id);
+// 改后
+const saEntry = entries.find((x) => x.node.agent_id === sa_id);
+```
+
+`GNode` 也加 `agent_id?: string` 字段(可选,subagent 节点才有)。
+
+### 3. 重新 ingest
+
+```
+cargo run --manifest-path experiment/embed-db/Cargo.toml --release -- ingest -p ~/.claude/projects --out stdout > web/public/sessions.ndjson
+```
+
+## 验证
+
+| 检查                            | 修复前                  | 修复后        |
+| ------------------------------- | ----------------------- | ------------- |
+| subagent entries 有 agent_id    | 0/26                    | 26/26         |
+| a2349f0e drill subagent ts 关联 | 0/25 fallback 到 parent | 25/25 真实 ts |
+| unique subagent timestamps      | 1 (全同)                | 25            |
+| span (h)                        | 0                       | 285.9         |
+
+25 个 subagent 节点现在沿 X 轴真展开(从 09:47 到 07:39,横跨 12 天),不再重叠成一团。
+
+## 文件清单
+
+```
+改:
+- experiment/embed-db/ingest/src/graph.rs   (SessionNode.agent_id)
+- experiment/embed-db/ingest/src/parser.rs  (extract_agent_id_from_path helper)
+- experiment/embed-db/web/src/loader.ts     (saEntry 查找改用 agent_id)
+- experiment/embed-db/web/src/graph-types.ts (GNode.agent_id?)
+- experiment/embed-db/web/src/types.ts      (SessionNode.agent_id?)
+- experiment/embed-db/web/public/sessions.ndjson (重新 ingest)
+```
+
+## 数据契约版本
+
+SessionNode 字段顺序 + 新字段,前向兼容(老 NDJSON 仍可解析,只是 subagent 节点的 first_timestamp 缺失)。

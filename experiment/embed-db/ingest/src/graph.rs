@@ -72,6 +72,12 @@ pub struct SessionNode {
     pub is_subagent_root: bool,
     /// OpenClaw sessions.json 里指向的 parent_session_id (来自 OpenClaw session_info.parent)
     pub parent_session_id: Option<String>,
+    /// S6: subagent 的 agent-id (e.g. "agent-a1d92"). 仅 is_subagent_root=true 的 entry 有值。
+    /// 来源:文件路径的 stem(若是 `subagents/agent-XXX.jsonl`)。让 frontend 能把 subagent
+    /// JSONL 自己的物化数据(first_timestamp_ms / token_total / 等等)关联回主 session
+    /// Spawned edge 的 to_subagent_id。
+    #[serde(default)]
+    pub agent_id: Option<String>,
     /// JSONL 行数
     pub message_count: u64,
     /// v0.6.1: RAG 搜索源数据 — top 3 assistant 文本 snippet(每个 ≤200 字符)

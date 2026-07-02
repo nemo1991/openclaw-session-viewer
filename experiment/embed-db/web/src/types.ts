@@ -27,6 +27,8 @@ export interface SessionNode {
   message_count: number;
   /** v0.6.1 (S3 RAG): top 3 assistant 文本块 (≤200 chars),给 hash-embedding 提供语料 */
   assistant_text_snippets?: string[];
+  /** S6: subagent 的 agent-id (e.g. "agent-a4aa77")。main session 永远为 null */
+  agent_id?: string | null;
 }
 
 export type Edge =
