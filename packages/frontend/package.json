@@ -23,6 +23,7 @@
     "react-i18next": "^15.1.1",
     "react-markdown": "^9.0.1",
     "react-router-dom": "^6.27.0",
+    "recharts": "^2.15.4",
     "rehype-shiki": "^0.0.9",
     "remark-gfm": "^4.0.0",
     "shiki": "^1.22.0",
