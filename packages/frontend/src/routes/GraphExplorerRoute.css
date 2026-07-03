@@ -1,0 +1,72 @@
+.graph-explorer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.explorer-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-bg-elevated, #f8fafc);
+  flex-shrink: 0;
+}
+
+.explorer-tabs .tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-fg-muted, #64748b);
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.12s ease;
+}
+
+.explorer-tabs .tab:hover:not(.disabled) {
+  background: var(--color-bg-hover, #f1f5f9);
+  color: var(--color-fg, #0f172a);
+}
+
+.explorer-tabs .tab.active {
+  background: var(--color-primary-bg, #eff6ff);
+  color: var(--color-primary, #2563eb);
+  border-color: var(--color-primary, #2563eb);
+  font-weight: 500;
+}
+
+.explorer-tabs .tab.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.badge-soon {
+  font-size: 10px;
+  background: var(--color-bg-elevated, #e2e8f0);
+  color: var(--color-fg-muted, #64748b);
+  padding: 1px 5px;
+  border-radius: 8px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.explorer-content {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.coming-soon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--color-fg-muted, #94a3b8);
+  font-size: 16px;
+}
