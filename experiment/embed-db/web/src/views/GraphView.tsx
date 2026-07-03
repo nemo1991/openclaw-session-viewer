@@ -66,13 +66,24 @@ export function GraphView() {
     });
   }, [fullGraph, entries, titles]);
 
-  /** 钻取过滤:聚焦一个 main → 只显示该 main + 它的 subagent + 工具节点 */
+  /** 钻取过滤:聚焦一个 main → 只显示该 main + 它的 subagent + 工具节点
+   *  全图模式:只画 main session(subagent 折叠进 main 详情面板,不占 G1 视觉)
+   */
   const visible = useMemo(() => {
     if (!titledNodes || !fullGraph) return null;
     if (!focusedNodeId) {
+      // 全图:过滤掉 type==="subagent" 节点 + 它们连的 Spawned 边
+      const mainOnly = titledNodes.filter((n) => n.type !== "subagent");
+      const mainIds = new Set(mainOnly.map((n) => n.id));
+      const mainLinks = fullGraph.links.filter((l) => {
+        const srcId = typeof l.source === "object" ? (l.source as any).id : l.source;
+        const tgtId = typeof l.target === "object" ? (l.target as any).id : l.target;
+        // 只保留 source/target 都在 mainIds 内 的边
+        return mainIds.has(srcId) && mainIds.has(tgtId);
+      });
       return {
-        nodes: titledNodes,
-        links: fullGraph.links,
+        nodes: mainOnly,
+        links: mainLinks,
         drillTime: null as null | { minTs: number; maxTs: number },
       };
     }
@@ -254,25 +265,28 @@ export function GraphView() {
         </div>
         <div className="legend">
           <span className="lg lg-main">● main session</span>
-          <span className="lg" style={{ color: ROLE_COLORS.Explore }}>
-            ● Explore
-          </span>
-          <span className="lg" style={{ color: ROLE_COLORS.Design }}>
-            ● Design
-          </span>
-          <span className="lg" style={{ color: ROLE_COLORS.Validate }}>
-            ● Validate
-          </span>
-          <span className="lg" style={{ color: ROLE_COLORS.Implement }}>
-            ● Implement
-          </span>
-          <span className="lg" style={{ color: ROLE_COLORS.Other }}>
-            ● Other
-          </span>
+          <span className="lg lg-error">● ∝ token·err</span>
           {focusedNodeId && (
-            <span className="lg" style={{ color: "#facc15" }}>
-              ■ tool (钻取内)
-            </span>
+            <>
+              <span className="lg" style={{ color: ROLE_COLORS.Explore }}>
+                ● Explore
+              </span>
+              <span className="lg" style={{ color: ROLE_COLORS.Design }}>
+                ● Design
+              </span>
+              <span className="lg" style={{ color: ROLE_COLORS.Validate }}>
+                ● Validate
+              </span>
+              <span className="lg" style={{ color: ROLE_COLORS.Implement }}>
+                ● Implement
+              </span>
+              <span className="lg" style={{ color: ROLE_COLORS.Other }}>
+                ● Other
+              </span>
+              <span className="lg" style={{ color: "#facc15" }}>
+                ■ tool (钻取内)
+              </span>
+            </>
           )}
           <span className="lg lg-error">● ∝ token·err</span>
         </div>
@@ -395,7 +409,9 @@ export function GraphView() {
           {focusedNodeId ? (
             <span>⏱ main 在左上 · subagent 沿 X 轴按时序展开 · 工具节点(amber)在底部</span>
           ) : (
-            <span>⏱ main 在顶部 · subagent 沿 Y 轴按时序展开</span>
+            <span>
+              📦 全图模式只显示 main session · subagent 折叠进详情面板 · 点节点 → 钻取查看子图
+            </span>
           )}
         </div>
       </div>
