@@ -7,6 +7,7 @@ import SessionDetailRoute from "./routes/SessionDetailRoute";
 import AnalyzeRoute from "./routes/AnalyzeRoute";
 import SettingsRoute from "./routes/SettingsRoute";
 import TrajectoryRoute from "./routes/TrajectoryRoute";
+import GraphExplorerRoute from "./routes/GraphExplorerRoute";
 import { RevealErrorToast } from "./components/RevealErrorToast";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
     <>
       <Routes>
         <Route path="/" element={<SessionsRoute />} />
+        <Route path="/graph/*" element={<GraphExplorerRoute />} />
         <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
         <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
         <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
