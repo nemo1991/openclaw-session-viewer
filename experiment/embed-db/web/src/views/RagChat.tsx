@@ -45,7 +45,13 @@ function corpusText(n: SessionNode): string {
   return parts.join("\n");
 }
 
-export function RagChat() {
+export function RagChat({
+  initialQuery = null,
+  onConsumed = () => {},
+}: {
+  initialQuery?: string | null;
+  onConsumed?: () => void;
+} = {}) {
   const [entries, setEntries] = useState<GraphEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -89,6 +95,18 @@ export function RagChat() {
       .filter((n): n is SessionNode => Boolean(n && n.node_id));
     return indexCorpus(nodes, corpusText);
   }, [entries]);
+
+  // G1 详情面板跳转过来时,接收 prefill query 并自动跑 topK
+  // (index 准备好后才能跑,这里同时等 entries / index 都 ready)
+  const [prefillArmed, setPrefillArmed] = useState<string | null>(null);
+  useEffect(() => {
+    if (initialQuery && initialQuery !== prefillArmed && index.length > 0) {
+      setQuery(initialQuery);
+      runQuery(initialQuery);
+      setPrefillArmed(initialQuery);
+      onConsumed();
+    }
+  }, [initialQuery, prefillArmed, index.length, onConsumed]);
 
   const lastIndexedCount = useMemo(() => (entries ? entries.length : 0), [entries]);
 

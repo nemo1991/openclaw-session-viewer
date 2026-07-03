@@ -29,7 +29,7 @@ const ROLE_COLORS: Record<SubagentRole, string> = {
   Other: "#94a3b8",
 };
 
-export function GraphView() {
+export function GraphView({ onJumpToRag }: { onJumpToRag?: (query: string) => void } = {}) {
   const [entries, setEntries] = useState<GraphEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -417,7 +417,8 @@ export function GraphView() {
       </div>
 
       <footer className="graph-footer">
-        👆 点击节点 → 右侧面板 · ✏️ 可重命名(跨 G1/G2/G3 同步) · 🔍 可独立显示该 session
+        👆 点击节点 → 右侧面板 · ✏️ 可重命名(跨 G1/G2/G3 同步) · 🔍 可独立显示该 session · 💬 可跳
+        G3 RAG 查相关上下文
       </footer>
 
       {selectedNode && (
@@ -427,6 +428,7 @@ export function GraphView() {
           onClose={() => setSelectedId(null)}
           onDrillDown={(id) => setFocusedNodeId(id)}
           isDrilledIntoThis={focusedNodeId === selectedNode.id}
+          onJumpToRag={onJumpToRag}
         />
       )}
     </div>

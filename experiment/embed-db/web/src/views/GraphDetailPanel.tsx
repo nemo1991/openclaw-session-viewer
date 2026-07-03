@@ -31,6 +31,7 @@ interface Props {
   onClose: () => void;
   onDrillDown?: (nodeId: string) => void;
   isDrilledIntoThis?: boolean;
+  onJumpToRag?: (query: string) => void;
 }
 
 const ROLE_COLORS: Record<SubagentRole, string> = {
@@ -55,6 +56,7 @@ export function GraphDetailPanel({
   onClose,
   onDrillDown,
   isDrilledIntoThis,
+  onJumpToRag,
 }: Props) {
   const titles = useTitles();
   const entry = entries.find((e) => e.node.node_id === node.id);
@@ -141,6 +143,19 @@ export function GraphDetailPanel({
                   title={isDrilledIntoThis ? "当前已聚焦这个 session" : "进入该 session 钻取视图"}
                 >
                   🔍 {isDrilledIntoThis ? "已聚焦" : "独立显示"}
+                </button>
+              )}
+              {node.type === "main" && onJumpToRag && session?.first_prompt && (
+                <button
+                  className="icon-btn"
+                  onClick={() => {
+                    // 用 first_prompt 截前 80 字符作 query — RAG 32-dim hash 期望短而具体的查询
+                    const q = session.first_prompt!.slice(0, 80).replace(/\s+/g, " ").trim();
+                    onJumpToRag(q);
+                  }}
+                  title="跳到 G3 RAG,以此 session 的首问作为 query 召回相关上下文"
+                >
+                  💬 G3 RAG
                 </button>
               )}
             </>
