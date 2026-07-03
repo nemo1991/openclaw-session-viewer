@@ -4,17 +4,17 @@
 **Sprint**: S3 (下周)
 **方向**: G3 RAG (M1 简化档:语义召回,无 LLM)
 **分支**: `experimental/embed-db`
-**PoC 状态**: ✅ **demo 跑通 (无 embedding 模型,零网络,纯 JS)**
+**PoC 状态**: **demo 跑通 (无 embedding 模型,零网络,纯 JS)**
 
 ---
 
-## ✅ 完成清单
+## 完成清单
 
 - [x] ingest 加 `assistant_text_snippets` (top 3 assistant 文本块 ≤200 chars) 到 SessionNode
 - [x] web/src/rag.ts:hash-embedding (32-dim, sign-coded HSH trick) + cosine + topK + 高亮 helpers
 - [x] web/src/views/RagChat.tsx:6 个预设 query 按钮 + topN 滑 + 召回卡片(图 + matched tokens 高亮 + metadata)
 - [x] web/src/views/RagChat.css:暗色匹配高亮样式
-- [x] App.tsx 启用 RagChat tab (`"S3 (planned)"` → `"S3"`)
+- [x] App.tsx 启用 RagChat tab (`"S3 (planned)"` `"S3"`)
 - [x] 重新生成 sessions.ndjson (90KB) 包含 35 sessions × ~2.9 snippets avg
 - [x] pnpm build 768KB / gzip 231KB, 0 errors
 - [x] Node.js 模拟 RAG 流程, 4 个 query × top3 召回 全部命中预期
@@ -22,7 +22,7 @@
 
 ---
 
-## ⚠️ 同样策略 — 不上 embedding 模型 / SQLite
+## 同样策略 — 不上 embedding 模型 / SQLite
 
 **计划里** G3 上 `sqlite-vec + sqlite-fts5` + 本地 `fastembed-rs`;**实际** 跟 G1/G2 同步策略 — **纯前端 hash-embedding**:
 
@@ -33,8 +33,8 @@
 
 **何时升级**:
 
-- 1000+ sessions → 改 BM25 (轻量) 或 sqlite-fts5 (标准)
-- 用户真实想用 "语义相似" 搜索 → 上真 embedding 模型 (`fastembed-rs` WASM 或 OpenAI API)
+- 1000+ sessions 改 BM25 (轻量) 或 sqlite-fts5 (标准)
+- 用户真实想用 "语义相似" 搜索 上真 embedding 模型 (`fastembed-rs` WASM 或 OpenAI API)
 
 ---
 
@@ -42,12 +42,12 @@
 
 ```
 文本 (workspace + first_prompt + 3 assistant snippets)
-   ↓ tokenize() (1-字符 + 2-字符 substrings,中文友好)
-   ↓ tokenDim() hash → 32-dim bucket
-   ↓ sign-coded HSH: (count % 2 ? -1 : 1) * sqrt(count)
-   ↓ L2-normalize
+    tokenize() (1-字符 + 2-字符 substrings,中文友好)
+    tokenDim() hash  32-dim bucket
+    sign-coded HSH: (count % 2 ? -1 : 1) * sqrt(count)
+    L2-normalize
 [32-dim Float32 vector]
-   ↓ cosine = dot(a, b) since both L2-normalized
+    cosine = dot(a, b) since both L2-normalized
 [score -1..1]
 ```
 
@@ -55,7 +55,7 @@
 
 - 共享 hash 函数 = 同 query 在 corpus 上命中相同 token = 找到 "包含同类词的 session"
 - 中英混合 OK(不做 tokenizer,字符级)
-- 文本短小(35 sessions 平均 corpus ~600 chars) → 4 个 query 测下来都有强信号召回
+- 文本短小(35 sessions 平均 corpus ~600 chars) 4 个 query 测下来都有强信号召回
 
 ---
 
@@ -78,7 +78,7 @@
 
 ## 决策与发现
 
-### ✅ 好
+### 好
 
 1. **零网络 + 零模型** — pure JS + 32-dim hash trick + cosine,deterministic,无 API key
 2. **召回速度惊人** — 35 sessions 9ms 索引、< 1ms per query。可以规模到 500 sessions 还轻松(9ms × 15 = 130ms 索引)
@@ -86,7 +86,7 @@
 4. **预设 query 按钮** — 6 个常用 query 一键 click,降低演示摩擦
 5. **可替换 embedding 函数** — 如果未来真要上 transformer,只需替换 `embed(text)` 实现,topK 部分不变
 
-### ⚠️ 限制 (在 demo 里已知)
+### 限制 (在 demo 里已知)
 
 1. **hash embedding ≠ 真语义** — "sleepiness" 和 "tired" 哈希后不同向量;不能跨字面召回类似话题
 2. **cosine 0.6+ 算强,但 0.2-0.4 之间是糊的** — 中文 subtokens 多噪音,排序可靠但分数阈值要场景化
@@ -103,19 +103,19 @@ experiment/embed-db/
 │   ├── graph.rs                       # +assistant_text_snippets field
 │   └── parser.rs                      # 抓 top 3 assistant 文本 snippet
 └── web/src/
-    ├── rag.ts                         # ⭐ hash-embedding + cosine + topK + highlight
+    ├── rag.ts                         #  hash-embedding + cosine + topK + highlight
     ├── types.ts                       # +assistant_text_snippets field
     └── views/
-        ├── RagChat.tsx                # ⭐ 检索 UI
-        └── RagChat.css                # ⭐ highlight / matched style
+        ├── RagChat.tsx                #  检索 UI
+        └── RagChat.css                #  highlight / matched style
 
 docs/experiments/
-└── embed-db-G3-rag-findings.md        # ⭐ 本文件
+└── embed-db-G3-rag-findings.md        #  本文件
 ```
 
 ### 修改
 
-- `experiment/embed-db/web/src/App.tsx` — RagChat tab 从 "S3 (planned)" → enabled
+- `experiment/embed-db/web/src/App.tsx` — RagChat tab 从 "S3 (planned)" enabled
 - `experiment/embed-db/web/public/sessions.ndjson` — 90KB(重新 ingest 含 snippets 字段)
 
 ---
@@ -135,7 +135,7 @@ pnpm preview &                 # :4173
 
 NO_PROXY='*' open http://127.0.0.1:4173/
 # 点 "G3 RAG" tab
-# 输入 "openclaw session" 检索 → a2349f0e cosine 0.752 第一名
+# 输入 "openclaw session" 检索  a2349f0e cosine 0.752 第一名
 # 点预设 query 探索
 # 看 matched token <mark> 高亮
 ```
@@ -149,7 +149,7 @@ NO_PROXY='*' open http://127.0.0.1:4173/
 - **前端 embed 索引 35 sessions**: ~9ms
 - **前端 single query**: < 1ms
 - **前端 highlight render**: ~5ms
-- **Total flow query → display**: < 50ms
+- **Total flow query display**: < 50ms
 
 ---
 
@@ -157,11 +157,11 @@ NO_PROXY='*' open http://127.0.0.1:4173/
 
 | Sprint | 任务                          | Status |
 | ------ | ----------------------------- | :----: |
-| S0     | ingest skeleton + stdout sink |   ✅   |
-| S1     | G1 Graph view (PoC)           |   ✅   |
-| S2     | G2 OLAP (analytics 视图)      |   ✅   |
-| S3     | G3 RAG (聊天 UI, M1 简化档)   |   ✅   |
-| S4     | 三 PoC findings + 决策        |   ⏳   |
+| S0     | ingest skeleton + stdout sink |        |
+| S1     | G1 Graph view (PoC)           |        |
+| S2     | G2 OLAP (analytics 视图)      |        |
+| S3     | G3 RAG (聊天 UI, M1 简化档)   |        |
+| S4     | 三 PoC findings + 决策        |        |
 
 下一步 = **S4 写总 findings + 决策文档**。
 
@@ -180,10 +180,10 @@ NO_PROXY='*' open http://127.0.0.1:4173/
 
 ## 决策对照 (plan 里的 G3 验收标准)
 
-| 标准                                               |        状态        |
-| -------------------------------------------------- | :----------------: |
-| ingest --out sqlite --path ~/.claude/projects 跑完 | ⚠️ 改 stdout sink  |
-| web 搜索输入 5 种典型问题,召回 ≥ 5 + LLM 流式非空  | ⚠️ 跳过 LLM,只召回 |
-| 失败回退 — LLM 说 "没找到"                         |  ⚠️ 改 UI "empty"  |
+| 标准                                               |      状态       |
+| -------------------------------------------------- | :-------------: |
+| ingest --out sqlite --path ~/.claude/projects 跑完 | 改 stdout sink  |
+| web 搜索输入 5 种典型问题,召回 ≥ 5 + LLM 流式非空  | 跳过 LLM,只召回 |
+| 失败回退 — LLM 说 "没找到"                         |  改 UI "empty"  |
 
 G3 lite 的"实质"(跨 session 召回)已验证。一句话:**这是第一个让用户**用自然语言**跨 session 探索的实验**。LLM 流式生成留给后续(S4+ 看是否要加),hash-embedding + 召回卡片对 35 sessions 完全够用。

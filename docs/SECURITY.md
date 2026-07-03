@@ -12,8 +12,8 @@
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | 谁能调 `reveal_in_finder`?                            | 所有 `Read` / `Edit` / `Write` 工具结果 / `.plan` 文件 / tracked file snapshot 的 `reveal` 按钮;用户**主动**点 "打开" 目录按钮 |
 | 默认安全模型?                                         | **Lock-down**:目标路径必须严格在 `workspaceRoot` (本次会话 `workspaceGuess`) 子树内,**词法**检查                               |
-| 我可以放开吗?                                         | `Settings → 文件路径安全 → 允许 reveal 到任一已知会话主目录` (默认关闭) — 仍受 `assert_within_any_root` 兜底                   |
-| 失败怎么办?                                           | 行内 `⚠ 路径不在 workspace 内` + 「复制路径」/ 「去设置」/ 「一键开启允许越界」三按钮                                          |
+| 我可以放开吗?                                         | `Settings  文件路径安全  允许 reveal 到任一已知会话主目录` (默认关闭) — 仍受 `assert_within_any_root` 兜底                     |
+| 失败怎么办?                                           | 行内 ` 路径不在 workspace 内` + 「复制路径」/ 「去设置」/ 「一键开启允许越界」三按钮                                           |
 | 我想 reveal `~/.claude/plans/...md` 又不想放开全局锁? | Settings 页面有「选择 `~/.claude` 作为默认导出目录」按钮 — 不放松安全,但放宽 root 到 `~/.claude/` 整目录                       |
 
 ---
@@ -23,7 +23,7 @@
 ### 攻击面
 
 ```
-用户输入 → 不可信
+用户输入  不可信
    ├─ search 框输入 (字符串)
    ├─ JSONL 文件名 (本地 read)
    └─ 工具结果 filePath (来自大模型产出,可被 prompt injection)
@@ -33,14 +33,14 @@
 
 ### 我们防什么 / 不防什么
 
-| 攻击                                   |      防?       | 怎么防                                                                                                          |
-| -------------------------------------- | :------------: | --------------------------------------------------------------------------------------------------------------- |
-| 工具结果 filePath 指向 `~/.ssh/id_rsa` |       ✅       | `assert_within_any_root` 兜底 → 返回 `Err PathSecurity`                                                         |
-| 词法 bypass `path/../etc/passwd`       |       ⚠️       | 已知限制;lock-down 模式下 `workspaceRoot` 通常在 `/Users/.../<project>`,`..` 倒回父目录会落在 workspace 外 → 拒 |
-| Tauri shell 命令注入                   |       ✅       | 路径直接走 `args([..])`,不拼字符串;跨平台 spawn,不走 `/bin/sh -c`                                               |
-| 用户主动改设置打开 relaxed             | ✅(白名单方式) | 显式用户操作 + 文档化 + 仍受 `assert_within_any_root` 兜底                                                      |
-| 浏览器跨域脚本调 reveal                |       ✅       | Tauri IPC 边界隔离,JS 沙箱不可触达                                                                              |
-| 文件被改 / 删 / 写                     |    ✅(无关)    | 无任何 fs 写命令,只能 read metadata + shell reveal                                                              |
+| 攻击                                   |     防?      | 怎么防                                                                                                        |
+| -------------------------------------- | :----------: | ------------------------------------------------------------------------------------------------------------- |
+| 工具结果 filePath 指向 `~/.ssh/id_rsa` |              | `assert_within_any_root` 兜底 返回 `Err PathSecurity`                                                         |
+| 词法 bypass `path/../etc/passwd`       |              | 已知限制;lock-down 模式下 `workspaceRoot` 通常在 `/Users/.../<project>`,`..` 倒回父目录会落在 workspace 外 拒 |
+| Tauri shell 命令注入                   |              | 路径直接走 `args([..])`,不拼字符串;跨平台 spawn,不走 `/bin/sh -c`                                             |
+| 用户主动改设置打开 relaxed             | (白名单方式) | 显式用户操作 + 文档化 + 仍受 `assert_within_any_root` 兜底                                                    |
+| 浏览器跨域脚本调 reveal                |              | Tauri IPC 边界隔离,JS 沙箱不可触达                                                                            |
+| 文件被改 / 删 / 写                     |    (无关)    | 无任何 fs 写命令,只能 read metadata + shell reveal                                                            |
 
 ---
 
@@ -62,8 +62,8 @@ opts.workspaceRoot           (显式)
   > deriveWorkspaceRootFromSession(sessionJsonlPath)
       = parent dir of jsonl
       例如 /Users/foo/.claude/projects/<encoded>/<uuid>.jsonl
-        → /Users/foo/.claude/projects/<encoded>/
-  > null → 锁死失败
+         /Users/foo/.claude/projects/<encoded>/
+  > null  锁死失败
 ```
 
 ---
@@ -72,14 +72,14 @@ opts.workspaceRoot           (显式)
 
 ```
 allowRelaxed = false
-  ↓
+
 需要 workspaceRoot (上面优先级链)
-  ↓
+
 path_within(target, root) 词法检查
-  ↓
-  true  → shell reveal
-  false → Err "PathSecurity: 路径不在 workspace 内"
-  null  → Err "PathSecurity: 需提供 workspace_root (lock-down 模式)"
+
+  true   shell reveal
+  false  Err "PathSecurity: 路径不在 workspace 内"
+  null   Err "PathSecurity: 需提供 workspace_root (lock-down 模式)"
 ```
 
 **保护范围**:目标路径必须严格在 `workspaceRoot` 子树内(词法,不解析 `..` 实际路径)。
@@ -92,7 +92,7 @@ path_within(target, root) 词法检查
 
 **两种解决方案** (都不破坏安全):
 
-1. **放宽 defaultExportDir** (推荐):Settings → 默认导出目录 → 选 `~/.claude/`,使 `path_within` 在 `~/.claude/` 子树下全 accept
+1. **放宽 defaultExportDir** (推荐):Settings 默认导出目录 选 `~/.claude/`,使 `path_within` 在 `~/.claude/` 子树下全 accept
 2. **临时开关** relaxed (一次性):meta 块「一键开启允许越界」按钮(确认弹窗后生效)
 
 设置页还有第三选项:**「选择 `~/.claude` 作为默认导出目录」按钮** — 跟方案 1 相同操作但 UX 更直接。
@@ -103,13 +103,13 @@ path_within(target, root) 词法检查
 
 ```
 allowRelaxed = true
-  ↓
+
 仍执行 assert_within_any_root(state.paths.read(), p)
-  ↓
+
   路径在任一已知 root 下 (default + customRoots)
-  → shell reveal
+   shell reveal
   不在任何 root 下
-  → Err "PathSecurity: 路径不在任一已知 root 下"
+   Err "PathSecurity: 路径不在任一已知 root 下"
 ```
 
 **保护范围**:仍兜底防 `~/.ssh/id_rsa` 等敏感路径 — 这些不在 `~/.claude` / `~/.openclaw` / 任何 custom root 下。
@@ -124,11 +124,11 @@ allowRelaxed = true
 
 ```
 行内三按钮 (用户报 'reveal 无效')
-  ├─ [复制路径]           → navigator.clipboard.writeText(path)
-  ├─ [去设置]             → navigate('/settings')
-  └─ [一键开启允许越界]   → confirm()
+  ├─ [复制路径]            navigator.clipboard.writeText(path)
+  ├─ [去设置]              navigate('/settings')
+  └─ [一键开启允许越界]    confirm()
         弹窗告诉用户「会让任意已知 root 下文件 reveal, 仍防 ~/.ssh」
-        用户确认 →
+        用户确认
           updateSettings({ pathSecurity: { allowRelaxed: true },
                            defaultExportDir: <推断的 ~/.claude>/path.to.claude })
           saveSettings(...)
@@ -140,7 +140,7 @@ allowRelaxed = true
 ```ts
 const claudeMatch = path.match(/^(.*?\.claude)(\/|$)/);
 if (claudeMatch) inferredExportDir = claudeMatch[1];
-// 例如 '/Users/x/.claude/plans/y.md' → '/Users/x/.claude'
+// 例如 '/Users/x/.claude/plans/y.md'  '/Users/x/.claude'
 ```
 
 ---

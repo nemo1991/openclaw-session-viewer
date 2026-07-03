@@ -4,9 +4,9 @@
 
 ---
 
-## 🚨 关键问题(必修)
+## 关键问题(必修)
 
-### 1. macOS: 直接运行裸二进制 → 窗口空白
+### 1. macOS: 直接运行裸二进制 窗口空白
 
 **症状**: 应用启动,标题栏正确显示,但内部完全空白。
 
@@ -15,10 +15,10 @@
 **复现**:
 
 ```bash
-# ❌ 不工作 — 窗口出现但内容空白
+#  不工作 — 窗口出现但内容空白
 ./src-tauri/target/release/openclaw-session-viewer
 
-# ✅ 工作
+#  工作
 open src-tauri/target/release/bundle/macos/OpenClaw*.app
 ```
 
@@ -35,14 +35,14 @@ ps -ef | awk '/openclaw-session-viewer/ && !/awk/ {print $2, $3}'
 
 ---
 
-### 2. Zustand: 整个 store 对象作为 useEffect 依赖 → 死循环
+### 2. Zustand: 整个 store 对象作为 useEffect 依赖 死循环
 
 **症状**: 点击搜索按钮后 1-2 秒崩溃,控制台报 `Maximum update depth exceeded`。
 
 **根因**:
 
 ```tsx
-// ❌ 错的写法
+//  错的写法
 const search = useSearchInSessionStore(); // 返回整个 state 对象
 useEffect(() => {
   search.search(entries); // 调用 action,触发 setState
@@ -52,14 +52,14 @@ useEffect(() => {
 死循环:
 
 ```
-state 变化 → search 引用变化 → useEffect 重跑 → search.search() 又 setState
-→ search 引用再变 → useEffect 再跑 → ... → React 抛错
+state 变化  search 引用变化  useEffect 重跑  search.search() 又 setState
+ search 引用再变  useEffect 再跑  ...  React 抛错
 ```
 
 **解决**: Zustand 的 selector 模式
 
 ```tsx
-// ✅ 正确
+//  正确
 const search = useSearchInSessionStore((s) => s.search);
 const open = useSearchInSessionStore((s) => s.open);
 useEffect(() => {
@@ -78,15 +78,15 @@ useEffect(() => {
 
 **根因**: 用 `key.replace(/-/g, "/")` 反推,但中文/数字混淆:
 
-- `/Users/alice/test` → `-Users-alice-test` ✓
-- `/Users/alice-projects/test` → `-Users-alice-projects-test` (看起来一样)
+- `/Users/alice/test` `-Users-alice-test`
+- `/Users/alice-projects/test` `-Users-alice-projects-test` (看起来一样)
 - 但反推: `-Users-alice-projects-test` 可能是 `/Users/alice/projects/test` 或 `/Users/alice-projects/test`
 
 **解决**: 接受不确定性,标记 `workspaceGuess` 为推测值。在 UI 上加 "(推测)" 提示,不要假装是真实路径。
 
 ---
 
-## 🐛 数据/Schema 相关
+## 数据/Schema 相关
 
 ### 4. OpenClaw content 块使用 camelCase
 
@@ -96,7 +96,7 @@ useEffect(() => {
 
 **修复**: 在 `ToolUseBlockHandler::matches()` 同时识别 5 个 alias (`tool_use`/`toolUse`/`tool_call`/`function_call`/`toolCall`),`ToolResultBlockHandler` 同理覆盖 `tool_result`/`toolResult`。
 
-**测试**: `parser/blocks/tool_use.rs` 每个 alias 各一个测试 + `arguments → input` 重命名测试。
+**测试**: `parser/blocks/tool_use.rs` 每个 alias 各一个测试 + `arguments  input` 重命名测试。
 
 ### 5. OpenClaw tool 结果 role 错误
 
@@ -139,7 +139,7 @@ export function normalizeClaudeRecord(
 
 ---
 
-## 🛠 开发/构建
+## 开发/构建
 
 ### 8. pnpm install 报 503
 
@@ -218,7 +218,7 @@ sudo apt install libwebkit2gtk-4.1-dev
 **解决**:
 
 - 选项 A:把版本号改到单独的 release commit(不带 `[skip ci]`)
-- 选项 B:已在 README/CHANGELOG 改完 → commit 不带 `[skip ci]` → 重新打 tag
+- 选项 B:已在 README/CHANGELOG 改完 commit 不带 `[skip ci]` 重新打 tag
 - 选项 C:`gh workflow run Release --ref v0.3.1` 手动触发(本次采用)
 
 **教训**:**任何触发发布/部署的关键 commit 都不要带 `[skip ci]`**。docs-only 改用 paths-ignore 即可,不要靠 commit message 标记。
@@ -235,13 +235,13 @@ sudo apt install libwebkit2gtk-4.1-dev
 sudo xattr -rd com.apple.quarantine "/Applications/OpenClaw Session Viewer.app"
 ```
 
-或右键 App → 打开 → 对话框点「打开」。
+或右键 App 打开 对话框点「打开」。
 
 **长期解决**: 接入 Apple Developer ID + notarization(未在路线图优先级内)。
 
 ---
 
-## 🔐 v0.6.x 文件路径 reveal & 子代理 UI
+## v0.6.x 文件路径 reveal & 子代理 UI
 
 ### 14. `reveal in Finder` 没反应 / 静默失败 (v0.6.0)
 
@@ -289,7 +289,7 @@ sudo xattr -rd com.apple.quarantine "/Applications/OpenClaw Session Viewer.app"
   box-sizing: border-box;
 }
 .meta-tag {
-  max-width: 200px; /* 240 → 200 */
+  max-width: 200px; /* 240  200 */
   min-width: 0;
   flex-shrink: 1;
   overflow-wrap: anywhere;
@@ -299,9 +299,9 @@ sudo xattr -rd com.apple.quarantine "/Applications/OpenClaw Session Viewer.app"
 
 同时 `MetaBlock.tsx` 加 `title={a}` 让 chip hover 显示完整名(即便 wrap 后字短)。
 
-### 16. `~/.claude/plans/*.md` reveal 被 PathSecurity 拒 (v0.6.0 → v0.6.1)
+### 16. `~/.claude/plans/*.md` reveal 被 PathSecurity 拒 (v0.6.0 v0.6.1)
 
-**现象**: 用户点 `.plan` 文件 reveal 按钮,看到 `⚠ PathSecurity: 需提供 workspace_root (lock-down 模式)`。
+**现象**: 用户点 `.plan` 文件 reveal 按钮,看到 ` PathSecurity: 需提供 workspace_root (lock-down 模式)`。
 
 **根因**: `paths::assert_within_any_root` v0.6.0 实现只允许 `~/.claude/projects/` 子树,但 `.plan` 文件在 `~/.claude/plans/`,必然 fail。
 
@@ -326,7 +326,7 @@ return <MetaBlock block={block} label={...} />;
 return <MetaBlock block={block} label={...} parentJsonlPath={parentJsonlPath} />;
 ```
 
-教训:**任何透传到 hook 的 prop,新加 entry point 时一定要继续透传**(hooks 依赖 prop → prop 缺失 → 静默 fallback 到 null)。
+教训:**任何透传到 hook 的 prop,新加 entry point 时一定要继续透传**(hooks 依赖 prop prop 缺失 静默 fallback 到 null)。
 
 ### 18. 设置页没有 reveal 相关设置 (v0.6.1)
 
@@ -342,7 +342,7 @@ return <MetaBlock block={block} label={...} parentJsonlPath={parentJsonlPath} />
 
 ---
 
-## 🧪 测试经验
+## 测试经验
 
 ### 12. 测试覆盖度低时漏掉实际 bug
 
@@ -365,7 +365,7 @@ await page.addInitScript(() => {
     invoke: async (cmd, args) => {
       /* mock */
     },
-    transformCallback: (cb) => cb, // ← 必须 mock,否则 listen() 报错
+    transformCallback: (cb) => cb, //  必须 mock,否则 listen() 报错
   };
 });
 ```
@@ -374,7 +374,7 @@ await page.addInitScript(() => {
 
 ---
 
-## 📝 总结
+## 总结
 
 按修复成本排序的高频错误类型:
 

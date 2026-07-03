@@ -4,11 +4,11 @@
 **Sprint**: S1 (下周)
 **方向**: G1 Graph — 关联遍历 + 力导向图
 **分支**: `experimental/embed-db` (commit ddc7be4 + S1 commit)
-**PoC 状态**: ✅ **demo 跑通**
+**PoC 状态**: **demo 跑通**
 
 ---
 
-## ✅ 完成清单
+## 完成清单
 
 - [x] SessionNode 扩展:加 `thinking_count` / `primary_model` / `top_tools[]` / `error_count`
 - [x] Edge::Spawned 加 `description` 字段(从 `.meta.json` 读)
@@ -16,23 +16,23 @@
 - [x] Vite + React 19 + TS 脚手架(`pnpm create vite@latest`)
 - [x] 安装 `react-force-graph-2d` + `d3`
 - [x] `src/types.ts` — 前端类型镜像 ingester
-- [x] `src/loader.ts::buildForceGraph` — NDJSON → react-force-graph 的 `nodes/links`
+- [x] `src/loader.ts::buildForceGraph` — NDJSON react-force-graph 的 `nodes/links`
 - [x] `src/views/GraphView.tsx` — ForceGraph2D 渲染 + 节点配色
 - [x] `src/App.tsx` — 3 个 tab (Graph / Analytics / RAG),S1 只 enabled Graph
-- [x] `pnpm build` 零错误 → dist/ 382KB JS (gzip 122KB)
+- [x] `pnpm build` 零错误 dist/ 382KB JS (gzip 122KB)
 - [x] `vite preview` 启动:`HTTP=200` 验证前端 + sessions.ndjson 都能 serve
-- [x] 跑 ingest --out stdout → 35 sessions 实数据 → 写到 `web/public/sessions.ndjson`
+- [x] 跑 ingest --out stdout 35 sessions 实数据 写到 `web/public/sessions.ndjson`
 
 ---
 
-## ⚠️ 重大策略调整 — 不做 SurrealDB
+## 重大策略调整 — 不做 SurrealDB
 
 **原计划**: S1 用 `surrealdb = { version = "2", features = ["kv-rocksdb"] }`,写入嵌入式 RocksDB,再启动 surrealdb HTTP server 给 React fetch
 
 **实际**: **改成纯前端 graph rendering**
 
-- 数据 ingest → NDJSON stdout → 直接写 `web/public/sessions.ndjson`
-- 前端 fetch → buildForceGraph(完全在浏览器内存) → react-force-graph
+- 数据 ingest NDJSON stdout 直接写 `web/public/sessions.ndjson`
+- 前端 fetch buildForceGraph(完全在浏览器内存) react-force-graph
 
 **理由**:
 
@@ -55,7 +55,7 @@ session=OpenClaw Session Viewer 主 session (a2349f0e-...)
   error_count=118
   token_total=1,098,252,806 (1.1B!)
   subagents=25
-  spawned agent-a4aa771a37b9e06bf → 'Explore time and timezone handling'
+  spawned agent-a4aa771a37b9e06bf  'Explore time and timezone handling'
   spawned agent-a42e236e77fe4606c
   ... 25 Spawned 边全连通
 ```
@@ -78,7 +78,7 @@ session `bdb2a44a-...` (carrier-BPM) 也有 1 个 subagent,`description='查找 
 
 边:
 
-- `Spawned` 紫实线(主→子,主色)
+- `Spawned` 紫实线(主子,主色)
 - 其他边(S1 暂不画)
 
 hover 显示 `first_prompt / model / token_total / subagent_count / workspace / description`。
@@ -89,7 +89,7 @@ hover 显示 `first_prompt / model / token_total / subagent_count / workspace / 
 
 ```
 ┌──────────────┐                                  ┌──────────────────────────┐
-│ Rust ingest  │  --out stdout → sessions.ndjson  │ React/Vite App           │
+│ Rust ingest  │  --out stdout  sessions.ndjson  │ React/Vite App           │
 │              │ ─────────────────────────────────▶│                          │
 │ ~/.claude/   │                                  │  fetch NDJSON            │
 │  projects/   │                                  │  buildForceGraph (in-mem)│
@@ -104,15 +104,15 @@ hover 显示 `first_prompt / model / token_total / subagent_count / workspace / 
 
 ## 决策与发现
 
-### ✅ 好
+### 好
 
 1. **frontend-only graph rendering 显著简化**:无需 SurrealDB / Rust HTTP server / 嵌入式数据库,前端直接吃 NDJSON
 2. **react-force-graph-2d 渲染 35 节点 = 流畅 60fps**,加 25 个 subagent 节点 = 60 节点总数,也跑得动
 3. **ts 类型 ↔ Rust 字段完全镜像**,零转换成本,只是 JSON parse
-4. **G1 价值已现**:点开 web 后用户能**一眼看见**「openclaw-session-lookup 那个长会话有 25 个 subagent 在 Explore → Plan → general-purpose 之间穿梭」,比 main 的列表 + 卡片展开更直观
+4. **G1 价值已现**:点开 web 后用户能**一眼看见**「openclaw-session-lookup 那个长会话有 25 个 subagent 在 Explore Plan general-purpose 之间穿梭」,比 main 的列表 + 卡片展开更直观
 5. **CI 零开销**:web 不打 main bundle,只在 `experimental/embed-db` 分支跑
 
-### ⚠️ 限制 (在 demo 里已知)
+### 限制 (在 demo 里已知)
 
 1. **没画 message-level edges (ParentUuid)** — Claude envelope `parentUuid` 都还没展开成边;G1 主要看 session-level 关联,这个延后
 2. **edge 类型没分颜色视觉化** — Spawned 是紫色实线,UsedTool/AttemptedFix/CrossSession 现在还没画出来
@@ -129,8 +129,8 @@ experiment/embed-db/
 ├── ingest/Cargo.toml                   # +chrono
 ├── ingest/src/
 │   ├── graph.rs                        # SessionNode +5 字段,Edge 加 session_ref/target_subagent_id
-│   └── parser.rs                       # +description / +tool_counts→top_tools / +thinking / +model
-└── web/                                # ⭐ 新增整个 Vite 项目
+│   └── parser.rs                       # +description / +tool_countstop_tools / +thinking / +model
+└── web/                                #  新增整个 Vite 项目
     ├── package.json
     ├── vite.config.ts
     ├── tsconfig.json
@@ -195,11 +195,11 @@ open http://127.0.0.1:4173/
 
 | Sprint | 任务                          | Status |
 | ------ | ----------------------------- | :----: |
-| S0     | ingest skeleton + stdout sink |   ✅   |
-| S1     | G1 Graph view (PoC)           |   ✅   |
-| S2     | G2 OLAP (analytics 视图)      |   ⏳   |
-| S3     | G3 RAG (聊天 UI)              |   ⏳   |
-| S4     | 三 PoC findings + 决策        |   ⏳   |
+| S0     | ingest skeleton + stdout sink |        |
+| S1     | G1 Graph view (PoC)           |        |
+| S2     | G2 OLAP (analytics 视图)      |        |
+| S3     | G3 RAG (聊天 UI)              |        |
+| S4     | 三 PoC findings + 决策        |        |
 
 下一步 = **S2 G2 OLAP**。
 
@@ -217,12 +217,12 @@ open http://127.0.0.1:4173/
 
 ## 决策对照 (plan 里的 G1 验收标准)
 
-| 标准                                                                                 |                                      状态                                       |
-| ------------------------------------------------------------------------------------ | :-----------------------------------------------------------------------------: |
-| `cargo run -- ingest --out surreal --path ~/.claude/projects` 5 分钟跑完             |                         ⚠️ 改用 stdout sink,< 1 秒跑完                          |
-| 启动 web → graph view 默认展示「最近 7 天 token 最多的 session + 它的所有 subagent」 |                    ✅ 启动直接展示全图,鼠标 hover 能看 token                    |
-| 5 个示例 Cypher 查询都能返回结果(< 1s)                                               | ⚠️ 改成 5 个示例 graph filter(改 `loader.ts::buildForceGraph` 加 query builder) |
-| 点 node → 跳到 subagent 详情                                                         |                        ⏳ v0.x 接 main `/session/<uuid>`                        |
+| 标准                                                                               |                                     状态                                     |
+| ---------------------------------------------------------------------------------- | :--------------------------------------------------------------------------: |
+| `cargo run -- ingest --out surreal --path ~/.claude/projects` 5 分钟跑完           |                         改用 stdout sink,< 1 秒跑完                          |
+| 启动 web graph view 默认展示「最近 7 天 token 最多的 session + 它的所有 subagent」 |                    启动直接展示全图,鼠标 hover 能看 token                    |
+| 5 个示例 Cypher 查询都能返回结果(< 1s)                                             | 改成 5 个示例 graph filter(改 `loader.ts::buildForceGraph` 加 query builder) |
+| 点 node 跳到 subagent 详情                                                         |                        v0.x 接 main `/session/<uuid>`                        |
 
 G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目的列表 + 卡片好 1 个量级。后续只是把 Cypher 风格的 filter 加进 UI 让用户能 query。
 
@@ -239,8 +239,8 @@ G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目�
 
 `buildForceGraph` 给 main 节点加 `radius = clamp(sqrt(token_total/1e6), 4, 14)`:
 
-- a2349f0e(1.12B tokens)→ radius=14,**一眼可见"重 session"**
-- 普通 session(~10M tokens)→ radius=4-5
+- a2349f0e(1.12B tokens) radius=14,**一眼可见"重 session"**
+- 普通 session(~10M tokens) radius=4-5
 - 35 main 节点的 radius 分布:[14, 14, 4, 4, 4, ...] — 两头大头(a2349f0e + 一个 b0c52439 高 token)其余均匀
 
 ### 2. subagent 角色配色(loader.ts + GraphView.tsx)
@@ -263,18 +263,18 @@ G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目�
 
 新组件 `web/src/views/GraphDetailPanel.tsx` + `.css`,三段:
 
-- 标题区:`display_title`(跨视图共享) + ✏️ 编辑 + ↩️ 重置 + 🔍 钻取入口
+- 标题区:`display_title`(跨视图共享) + 编辑 + ↩ 重置 + 钻取入口
 - metadata grid:main/subagent 标签 + workspace + model
 - 完整 first_prompt(无截断)+ description + 6 项指标 grid
 - main 才有 subagents 列表(每行 role 配色 + description)
-- ESC 关闭,✕ 按钮关闭,代码块显示完整 node_id
+- ESC 关闭, 按钮关闭,代码块显示完整 node_id
 
 ### 5. 钻取模式 "只看 1 个 session"(GraphView)
 
-- header 下拉 `📍 全部 sessions (X)` 切换到某个 main → 进入钻取
-- 钻取态 header 显示 `↩️ 全图` + 该 session 的 display_title
+- header 下拉 ` 全部 sessions (X)` 切换到某个 main 进入钻取
+- 钻取态 header 显示 `↩ 全图` + 该 session 的 display_title
 - 仅显示该 main + 它的 subagent(其他 main 收起)
-- 详情面板 "🔍 独立显示" 按钮同样的入口
+- 详情面板 " 独立显示" 按钮同样的入口
 
 ### 6. 全局 display_title(title.ts + titleStore.tsx + App.tsx wrap)
 
@@ -287,8 +287,8 @@ G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目�
 - `App.tsx` wrap `<TitleProvider>`
 - 三视图接入:
   - G1 GraphView 节点 label + 详情面板 + 详情面板编辑入口
-  - G2 AnalyticsView token top 表格 + 横向 bar chart(改 data key 为 `display_title`)+ ✏️ badge 标记自定义
-  - G3 RagChat HitCard 标题(替换原 session_id 短截断)+ header 显示 "✏️ N 个自定义名"
+  - G2 AnalyticsView token top 表格 + 横向 bar chart(改 data key 为 `display_title`)+ badge 标记自定义
+  - G3 RagChat HitCard 标题(替换原 session_id 短截断)+ header 显示 " N 个自定义名"
 
 ## 数据契约
 
@@ -298,22 +298,22 @@ G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目�
 
 ## 验收清单逐项结果(2026-07-01)
 
-| #   | 验收                                 | 结果                                        |
-| --- | ------------------------------------ | ------------------------------------------- |
-| 1   | pnpm build 0 error                   | ✅ 779KB / gzip 235KB                       |
-| 2   | a2349f0e 节点明显大于其他            | ✅ radius=14 vs 其他 4-5                    |
-| 3   | subagent 沿 Y 轴按时序排             | ✅ d3 forceY 注入生效                       |
-| 4   | 节点按 role 配色                     | ✅ 14 绿 / 11 蓝紫 / 0 橙 / 0 红 / 0 灰     |
-| 5   | error badge                          | ✅ a2349f0e 旁红圈                          |
-| 6   | 点击节点 → 详情面板                  | ✅                                          |
-| 7   | 详情面板字段完整                     | ✅ first_prompt + 6 项指标 + subagents 列表 |
-| 8   | 标题编辑 → G1/G2/G3 同步             | ✅ context + 自定义事件                     |
-| 9   | 硬刷新后自定义名仍在                 | ✅ localStorage                             |
-| 10  | ↺ Auto 按钮恢复                      | ✅                                          |
-| 11  | 钻取入口(header 下拉 + 详情面板按钮) | ✅                                          |
-| 12  | 钻取效果(a2349f0e 后只剩 1+25)       | ✅                                          |
-| 13  | ↩️ 全图返回                          | ✅                                          |
-| 14  | console 0 红色 error                 | ✅                                          |
+| #   | 验收                                 | 结果                                     |
+| --- | ------------------------------------ | ---------------------------------------- |
+| 1   | pnpm build 0 error                   | 779KB / gzip 235KB                       |
+| 2   | a2349f0e 节点明显大于其他            | radius=14 vs 其他 4-5                    |
+| 3   | subagent 沿 Y 轴按时序排             | d3 forceY 注入生效                       |
+| 4   | 节点按 role 配色                     | 14 绿 / 11 蓝紫 / 0 橙 / 0 红 / 0 灰     |
+| 5   | error badge                          | a2349f0e 旁红圈                          |
+| 6   | 点击节点 详情面板                    |                                          |
+| 7   | 详情面板字段完整                     | first_prompt + 6 项指标 + subagents 列表 |
+| 8   | 标题编辑 G1/G2/G3 同步               | context + 自定义事件                     |
+| 9   | 硬刷新后自定义名仍在                 | localStorage                             |
+| 10  | ↺ Auto 按钮恢复                      |                                          |
+| 11  | 钻取入口(header 下拉 + 详情面板按钮) |                                          |
+| 12  | 钻取效果(a2349f0e 后只剩 1+25)       |                                          |
+| 13  | ↩ 全图返回                           |                                          |
+| 14  | console 0 红色 error                 |                                          |
 
 ## 文件清单(S5 新增/改)
 
@@ -329,7 +329,7 @@ G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目�
 - web/src/graph-types.ts           (GNode + radius + role + first_timestamp_ms; SubagentRole type)
 - web/src/views/GraphView.tsx     (时序纵轴 + 钻取 + onNodeClick + 详情面板挂载)
 - web/src/views/RagChat.tsx        (useTitles + HitCard 用 display_title + override 计数)
-- web/src/views/AnalyticsView.tsx  (useTitles + tokenTopTitled + ✏️ badge)
+- web/src/views/AnalyticsView.tsx  (useTitles + tokenTopTitled +  badge)
 - web/src/App.tsx                  (TitleProvider wrap + Analytics.css + GraphDetailPanel.css import)
 - web/src/App.css                  (.graph-header flex wrap + .session-select + .back-btn + .time-axis-hint)
 - web/src/Analytics.css            (.title-override-badge)
@@ -337,11 +337,11 @@ G1 demo 的"实质"已经验证 — 看 subagent 拓扑的体验比 main 项目�
 
 ## 风险与缓解(实际跑出来)
 
-- ✓ `d3-force` 通过 react-force-graph-2d 的 `fgRef.current.d3Force` API 注入,无需新增 d3-force 依赖
-- ✓ classifyRole 启发式对中英文 description 都 OK(测试 a2349f0e 的中英 25 subagent 全分对)
-- ✓ localStorage 在隐私模式 catch 静默失败,UI 不崩
-- ⚠️ 钻取时画布重新布局需 ~1 秒冷却,UX 上稍微延迟 — 用户可接受
-- 🔜 实测 browser console 无红色 error
+- `d3-force` 通过 react-force-graph-2d 的 `fgRef.current.d3Force` API 注入,无需新增 d3-force 依赖
+- classifyRole 启发式对中英文 description 都 OK(测试 a2349f0e 的中英 25 subagent 全分对)
+- localStorage 在隐私模式 catch 静默失败,UI 不崩
+- 钻取时画布重新布局需 ~1 秒冷却,UX 上稍微延迟 — 用户可接受
+- 实测 browser console 无红色 error
 
 ## 下一步可做(留给未来 sprint)
 
@@ -407,21 +407,21 @@ top-5 tools:
 
 ## 验收(2026-07-01)
 
-| 检查                        | 结果                                                                   |
-| --------------------------- | ---------------------------------------------------------------------- |
-| pnpm build                  | ✅ 781KB / gzip 236KB (+2KB)                                           |
-| a2349f0e 钻取 visible.nodes | ✅ 1 main + 25 subagent + 5 tool = 31 节点                             |
-| a2349f0e 钻取 visible.links | ✅ 25 Spawned + 5 UsedTool = 30 边                                     |
-| UsedTool 数据               | ✅ top-5: Bash 1727 / Edit 826 / Read 593 / TaskUpdate 370 / Write 289 |
+| 检查                        | 结果                                                                |
+| --------------------------- | ------------------------------------------------------------------- |
+| pnpm build                  | 781KB / gzip 236KB (+2KB)                                           |
+| a2349f0e 钻取 visible.nodes | 1 main + 25 subagent + 5 tool = 31 节点                             |
+| a2349f0e 钻取 visible.links | 25 Spawned + 5 UsedTool = 30 边                                     |
+| UsedTool 数据               | top-5: Bash 1727 / Edit 826 / Read 593 / TaskUpdate 370 / Write 289 |
 
 ## 风险
 
-- ⚠️ tool 节点的 forceLink 拉力可能让 subagent 不按时序排列 — 实测没出现,但若用户报告 subagent 位置异常需调 linkDistance
-- ⚠️ 钻取 / 全图切换时 d3 force 切换需要 ~1 秒冷却 — 用户能感知但可接受
+- tool 节点的 forceLink 拉力可能让 subagent 不按时序排列 — 实测没出现,但若用户报告 subagent 位置异常需调 linkDistance
+- 钻取 / 全图切换时 d3 force 切换需要 ~1 秒冷却 — 用户能感知但可接受
 
 ## 下一步可做
 
-- 给 tool 节点也加点击 → 右侧面板显示工具详情(count / 占该 session 百分比 / 跨 session 排行)
+- 给 tool 节点也加点击 右侧面板显示工具详情(count / 占该 session 百分比 / 跨 session 排行)
 - 横轴时间线加显式刻度(每小时一格 + 标签)
 - 加"全图 vs 当前聚焦 session 的工具用量对比"mini chart
 
@@ -441,7 +441,7 @@ top-5 tools:
 const saEntry = entries.find((x) => x.node.session_id === sa_id || x.node.node_id === sa_id);
 ```
 
-永远找不到匹配的 entry → subagent 节点 `first_timestamp_ms` 全部 fallback 到 parent → 钻取时 25/25 subagent 节点 X 坐标完全重叠成一团。
+永远找不到匹配的 entry subagent 节点 `first_timestamp_ms` 全部 fallback 到 parent 钻取时 25/25 subagent 节点 X 坐标完全重叠成一团。
 
 ## 修法
 
@@ -449,8 +449,8 @@ const saEntry = entries.find((x) => x.node.session_id === sa_id || x.node.node_i
 
 `SessionNode` 加 `agent_id: Option<String>`:
 
-- 路径是 `<uuid>/subagents/agent-XXX.jsonl` → `agent_id = "agent-XXX"`
-- main session 路径是 `<uuid>.jsonl` → `agent_id = null`
+- 路径是 `<uuid>/subagents/agent-XXX.jsonl` `agent_id = "agent-XXX"`
+- main session 路径是 `<uuid>.jsonl` `agent_id = null`
 
 `parser.rs` 加 `extract_agent_id_from_path()` helper,从 file_stem 抽(若以 "agent-" 开头)。
 
@@ -497,3 +497,82 @@ cargo run --manifest-path experiment/embed-db/Cargo.toml --release -- ingest -p 
 ## 数据契约版本
 
 SessionNode 字段顺序 + 新字段,前向兼容(老 NDJSON 仍可解析,只是 subagent 节点的 first_timestamp 缺失)。
+
+---
+
+# 合并 addendum (M1 + M2, 2026-07-03)
+
+G1 PoC 推进到 S6 后,跟 G2/G3 一起合并到主项目 `packages/frontend/`。
+
+## 状态
+
+| 阶段              | commit                                                      | 状态                                            |
+| ----------------- | ----------------------------------------------------------- | ----------------------------------------------- |
+| S0-S6 实验 web    | `experiment/embed-db/` (4d4ea18, f41d555, 50443fa, f995d30) | 完整保留作双源对照                              |
+| M1 合并 G1        | `bc24a08`                                                   | /graph?view=graph 跑通                          |
+| M2 合并 G2+G3     | `683e61d`                                                   | /graph?view=analytics\|rag 跑通, 跨 tab prefill |
+| M3 数据源切 Tauri | 待启动                                                      | ingest crate 合并 src-tauri,删 experiment/      |
+
+## 合并后变更 (vs 实验 web 原版)
+
+- **路由**: `useState<Tab>` 切 view 改 `useSearchParams('?view=...')` (主项目 react-router-dom v6)
+- **数据源**: 直接 fetch 改 `useGraphStore` (zustand, G1/G2/G3 共享)
+- **标题存储**: `TitleProvider` (React Context) 改 `useTitleStore` (zustand + 跨 tab sync)
+- **跳会话详情**: G1 详情面板新增 `📄 会话详情` 按钮
+  - main 节点 → `/session/<sessionId>` (主项目原生 TranscriptView)
+  - subagent 节点 → `/session/<agentId>?path=<jsonlPath>` + `subagentContext` (主项目原生 + "返回父会话" 按钮)
+  - 复用 `SubagentPanel.tsx:79-110` 模板
+- **依赖装到主项目**: `react-force-graph-2d@^1.29` + `d3@^7.9` + `recharts@^2.15`
+- **CSS token 化**: 实验 web hardcoded hex → `tokens.css` 新增 7 个 role/tool/error token
+
+## 关键设计决策 (合并后)
+
+1. **`/graph` 顶 tab (跟 `/` 并列)** — 不塞 SessionsRoute 内部(避免 header 视觉冲突 + 列表 filter 状态污染)
+2. **数据源** M1/M2 走 fetch /sessions.ndjson(临时);M3 切 Tauri invoke(`list_graph()` 新命令)
+3. **titleStore 跨 tab 同步**: 监听 `window.storage` + 自定义 `openclaw:titlesChanged` 事件;`GraphExplorerRoute` 挂桥
+4. **G1 ↔ G2/G3 跨 view state** 全靠 URL (`?view=`, `?q=`, `?range=`) — 主项目 router 已有,顺路
+5. **实验 web 仍跑 4173** — 双源对照,任何时候可回退
+
+## 文件映射 (实验 web → 主项目)
+
+| 实验 web                                                 | 主项目                                                   |
+| -------------------------------------------------------- | -------------------------------------------------------- |
+| `experiment/embed-db/web/src/App.tsx`                    | `packages/frontend/src/routes/GraphExplorerRoute.tsx`    |
+| `experiment/embed-db/web/src/views/GraphView.tsx`        | `packages/frontend/src/views/graph/GraphView.tsx`        |
+| `experiment/embed-db/web/src/views/GraphDetailPanel.tsx` | `packages/frontend/src/views/graph/GraphDetailPanel.tsx` |
+| `experiment/embed-db/web/src/views/AnalyticsView.tsx`    | `packages/frontend/src/views/graph/AnalyticsView.tsx`    |
+| `experiment/embed-db/web/src/views/RagChat.tsx`          | `packages/frontend/src/views/graph/RagChat.tsx`          |
+| `experiment/embed-db/web/src/loader.ts`                  | `packages/frontend/src/views/graph/loader.ts`            |
+| `experiment/embed-db/web/src/types.ts`                   | `packages/frontend/src/views/graph/types.ts`             |
+| `experiment/embed-db/web/src/graph-types.ts`             | `packages/frontend/src/views/graph/graph-types.ts`       |
+| `experiment/embed-db/web/src/title.ts`                   | `packages/frontend/src/views/graph/title.ts`             |
+| `experiment/embed-db/web/src/titleStore.tsx`             | `packages/frontend/src/views/graph/titleStore.ts`        |
+| `experiment/embed-db/web/src/analytics.ts`               | `packages/frontend/src/views/graph/analytics.ts`         |
+| `experiment/embed-db/web/src/rag.ts`                     | `packages/frontend/src/views/graph/rag.ts`               |
+| `experiment/embed-db/web/public/sessions.ndjson`         | `packages/frontend/public/sessions.ndjson`               |
+
+## 验收 (主项目 1420)
+
+| 验收                | 命令                                                                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TS check 0 错       | `cd packages/frontend && pnpm typecheck` (注:主项目原有 18 个 lucide-react / react-router-dom / react-force-graph-2d 的 React 18 类型错是 pre-existing, 不影响构建/运行) |
+| Vite build OK       | `cd packages/frontend && pnpm exec vite build`                                                                                                                           |
+| Dev 1420 起来       | `cd packages/frontend && pnpm dev`                                                                                                                                       |
+| G1 10 main 节点渲染 | http://localhost:1420/graph?view=graph                                                                                                                                   |
+| G2 6 chart 渲染     | http://localhost:1420/graph?view=analytics                                                                                                                               |
+| G3 RAG prefill      | http://localhost:1420/graph?view=rag&q=retry                                                                                                                             |
+| 跳主项目会话详情    | G1 详情面板 "📄 会话详情" → /session/<id>                                                                                                                                |
+
+## 双源对照
+
+- 主项目 1420: 合并后 + Graph Explorer + 主项目原有 5 路由
+- 实验 web 4173: 原型 (Pnpm dev 在 experiment/embed-db/web) — 仍可跑,作双源对照
+- ingest crate: `cargo run --manifest-path experiment/embed-db/Cargo.toml -- ingest --out experiment/embed-db/web/public/sessions.ndjson` → 拷到 `packages/frontend/public/sessions.ndjson` (M3 自动化)
+
+## 后续 (M3)
+
+- `ingest/` crate 合并到 `src-tauri/src/commands/graph.rs`
+- 新 `list_graph()` Tauri command 注册到 `lib.rs`
+- `graphStore.load()` 切到 `invoke("list_graph")`
+- `git rm -r experiment/embed-db/web/` + ingest crate
+- 用户决定时机合并 `experimental/embed-db` → `main`

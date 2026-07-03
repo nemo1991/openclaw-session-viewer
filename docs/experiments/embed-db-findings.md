@@ -2,18 +2,18 @@
 
 **日期**: 2026-07-01
 **Sprint**: S4 (决赛) — 收口
-**状态**: ✅ **三个 PoC 全部跑通**
+**状态**: **三个 PoC 全部跑通**
 **分支**: `experimental/embed-db` (commit 885adf7 + S4 commit)
 
 ---
 
 ## TL;DR
 
-| PoC               | 价值                        | 成本 | 推荐                                       |
-| ----------------- | --------------------------- | ---- | ------------------------------------------ |
-| **G1 Graph**      | ⭐⭐⭐⭐⭐                  | 中   | **✅ 主推** — 升主线首选                   |
-| **G2 Analytics**  | ⭐⭐⭐⭐                    | 低   | **✅ 保留** — dashboard 模式               |
-| **G3 RAG (lite)** | ⭐⭐⭐ (M1) / ⭐⭐⭐⭐ (M2) | 低   | **🟡 保留 lite 作为入口** — 真 LLM 留 v0.8 |
+| PoC               | 价值        | 成本 | 推荐                                     |
+| ----------------- | ----------- | ---- | ---------------------------------------- |
+| **G1 Graph**      |             | 中   | ** 主推** — 升主线首选                   |
+| **G2 Analytics**  |             | 低   | ** 保留** — dashboard 模式               |
+| **G3 RAG (lite)** | (M1) / (M2) | 低   | ** 保留 lite 作为入口** — 真 LLM 留 v0.8 |
 
 **本轮出 demo 给所有 3 个方向,但**G1 Graph 显著胜出\*\*:
 
@@ -94,7 +94,7 @@ main 项目 /session/<uuid> 详情页也能看到 SubagentPanel + SubagentInline
 
 ## 推荐:三阶段收口
 
-### 阶段 1 (本周完成 ✅):三个 PoC 都跑通
+### 阶段 1 (本周完成 ):三个 PoC 都跑通
 
 三个 demo 都能开浏览器看到效果,信息密度对比明显。
 
@@ -109,8 +109,8 @@ main 项目 /session/<uuid> 详情页也能看到 SubagentPanel + SubagentInline
 
 代码量:
 
-- `web/src/views/GraphView.tsx` → `packages/frontend/src/views/`
-- `web/src/loader.ts` (NDJSON 加载) → 等价改成调 Tauri command 拉 SessionMeta
+- `web/src/views/GraphView.tsx` `packages/frontend/src/views/`
+- `web/src/loader.ts` (NDJSON 加载) 等价改成调 Tauri command 拉 SessionMeta
 - 节点颜色 + hover + 渲染逻辑保留
 - 实验分支的 `ingest/` **完全不动**(用 main 项目自己的 list_sessions 流)
 
@@ -133,19 +133,19 @@ Analytics 作为"Advanced" tab 进 main,跟 Settings 并列:
 
 ## 决策记录
 
-### ✅ 已决定:继续在实验分支开发,定期 rebase main
+### 已决定:继续在实验分支开发,定期 rebase main
 
 参考 main commit list:实验分支 4 个 commit 全部在 `experimental/embed-db` 上,跟 main 解耦良好。
 
-### ✅ 已决定:不上任何后端数据库
+### 已决定:不上任何后端数据库
 
 理由:35 sessions × 2KB 在浏览器内存里 9ms 索引,< 1ms 查询。DuckDB / SurrealDB / SQLite-vec 全部**没**增加价值。后续如果 sessions 突破 1 万,再考虑 SQLite-vec + FTS5(那个是 BM25 / FTS 的真正用场)。
 
-### ✅ 已决定:实验分支不并回 main
+### 已决定:实验分支不并回 main
 
 写这份 findings 后,**实验分支保持 active**,等用户在 main 里推进 Graph v0.7.x 时 — 那个 PR 才会"消化"实验分支的代码。
 
-### 🟡 待用户决定:G1 是否升 main?
+### 待用户决定:G1 是否升 main?
 
 - 选项 A:**立即升 main** — 写 PR,带 G1 GraphView 进 main
 - 选项 B:**暂时搁置实验** — v0.6.1 已 ship,主项目先固化,实验分支冷藏
@@ -173,11 +173,11 @@ docs/experiments/
 ├── embed-db-G1-graph-findings.md          # S1 findings
 ├── embed-db-G2-olap-findings.md           # S2 findings
 ├── embed-db-G3-rag-findings.md            # S3 findings
-└── embed-db-findings.md                   # ⭐ S4 (本文件)
+└── embed-db-findings.md                   #  S4 (本文件)
 
 experiment/embed-db/
 ├── Cargo.toml                             # workspace
-├── ingest/                                # ⭐ Rust 子 crate (~660 行)
+├── ingest/                                #  Rust 子 crate (~660 行)
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs
@@ -186,7 +186,7 @@ experiment/embed-db/
 │       ├── scanner.rs
 │       ├── parser.rs                      # 6 step 提取
 │       └── sinks/stdout.rs                # NDJSON output
-└── web/                                   # ⭐ Vite + React + TS (~1700 行)
+└── web/                                   #  Vite + React + TS (~1700 行)
     ├── package.json
     ├── vite.config.ts
     ├── public/sessions.ndjson             # 35 sessions × ~2.9 snippets = 90KB
@@ -195,14 +195,14 @@ experiment/embed-db/
         ├── App.tsx                        # 3-tab 路由
         ├── App.css / Analytics.css / RagChat.css
         ├── types.ts
-        ├── loader.ts                      # NDJSON → graph nodes/links
+        ├── loader.ts                      # NDJSON  graph nodes/links
         ├── graph-types.ts
         ├── analytics.ts                   # 6 聚合函数
         ├── rag.ts                         # hash embedding + cosine
         └── views/
-            ├── GraphView.tsx               # ⭐ G1 (react-force-graph-2d)
-            ├── AnalyticsView.tsx           # ⭐ G2 (recharts × 6)
-            └── RagChat.tsx                 # ⭐ G3 (cosine topK 召回)
+            ├── GraphView.tsx               #  G1 (react-force-graph-2d)
+            ├── AnalyticsView.tsx           #  G2 (recharts × 6)
+            └── RagChat.tsx                 #  G3 (cosine topK 召回)
 ```
 
 ---
@@ -224,16 +224,16 @@ OpenClaw Session Viewer 分支 `feature/subagent-parent-link` 上的真实会话
   - top 3 工具: Bash / Edit / Read
   - **G1**:25 个紫点 subagent 节点,每点都有 description
   - **G2**:token top 1,该 session 占总 token 79%
-  - **G3**:`openclaw session` query → cosine 0.752 **第一名**
+  - **G3**:`openclaw session` query cosine 0.752 **第一名**
 
 ---
 
 ## 三 PoC 价值排序 (从用户视角)
 
 ```
-★  G1 Graph           ← 视觉冲击第一 / 立刻给 insight
-★★  G2 Analytics      ← 数据清点 / 看到模型漂移 / top sessions
-★★★  G3 RAG (lite)    ← 跨 session 自然语言探索的雏形
+  G1 Graph            视觉冲击第一 / 立刻给 insight
+  G2 Analytics       数据清点 / 看到模型漂移 / top sessions
+  G3 RAG (lite)     跨 session 自然语言探索的雏形
                        但需要真 embedding 才能 replace 关键词搜索
 ```
 
