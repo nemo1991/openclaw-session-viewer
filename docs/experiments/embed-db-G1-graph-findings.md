@@ -518,7 +518,7 @@ G1 PoC 推进到 S6 后,跟 G2/G3 一起合并到主项目 `packages/frontend/`�
 - **路由**: `useState<Tab>` 切 view 改 `useSearchParams('?view=...')` (主项目 react-router-dom v6)
 - **数据源**: 直接 fetch 改 `useGraphStore` (zustand, G1/G2/G3 共享)
 - **标题存储**: `TitleProvider` (React Context) 改 `useTitleStore` (zustand + 跨 tab sync)
-- **跳会话详情**: G1 详情面板新增 `📄 会话详情` 按钮
+- **跳会话详情**: G1 详情面板新增 ` 会话详情` 按钮
   - main 节点 → `/session/<sessionId>` (主项目原生 TranscriptView)
   - subagent 节点 → `/session/<agentId>?path=<jsonlPath>` + `subagentContext` (主项目原生 + "返回父会话" 按钮)
   - 复用 `SubagentPanel.tsx:79-110` 模板
@@ -561,7 +561,7 @@ G1 PoC 推进到 S6 后,跟 G2/G3 一起合并到主项目 `packages/frontend/`�
 | G1 10 main 节点渲染 | http://localhost:1420/graph?view=graph                                                                                                                                   |
 | G2 6 chart 渲染     | http://localhost:1420/graph?view=analytics                                                                                                                               |
 | G3 RAG prefill      | http://localhost:1420/graph?view=rag&q=retry                                                                                                                             |
-| 跳主项目会话详情    | G1 详情面板 "📄 会话详情" → /session/<id>                                                                                                                                |
+| 跳主项目会话详情    | G1 详情面板 " 会话详情" → /session/<id>                                                                                                                                  |
 
 ## 双源对照
 
