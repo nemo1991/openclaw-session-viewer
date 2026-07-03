@@ -14,13 +14,14 @@ OpenClaw 在 `~/.openclaw/agents/<agentId>/sessions/` 下为每个 session 写 *
 
 ```
 ~/.openclaw/agents/<agentId>/sessions/
-├── sessions.json                          ← per-agent 索引(所有 session 的元数据)
-├── <sessionId>.jsonl                      ← 主转录(对话内容)
-├── <sessionId>.trajectory.jsonl           ← 观测/trace 副产物
-└── <sessionId>.trajectory-path.json       ← 指向 trajectory 的指针
+├── sessions.json                           per-agent 索引(所有 session 的元数据)
+├── <sessionId>.jsonl                       主转录(对话内容)
+├── <sessionId>.trajectory.jsonl            观测/trace 副产物
+└── <sessionId>.trajectory-path.json        指向 trajectory 的指针
 ```
 
 证据:
+
 - 文件命名规则:`openclaw/src/trajectory/paths.ts:42-64`
   ```ts
   // resolveTrajectoryFilePath
@@ -51,6 +52,7 @@ OpenClaw 在 `~/.openclaw/agents/<agentId>/sessions/` 下为每个 session 写 *
 ```
 
 证据:
+
 - 实际文件首行(`head -1 ~/.openclaw/agents/main/sessions/<id>.jsonl`)
 - header 由 `openclaw/src/agents/pi-embedded-runner/compaction-successor-transcript.ts:268-280` 的
   `buildSuccessorSessionHeader` 构造,字段完全对应
@@ -59,40 +61,40 @@ OpenClaw 在 `~/.openclaw/agents/<agentId>/sessions/` 下为每个 session 写 *
 
 字段含义:
 
-| 字段 | 类型 | 含义 |
-|---|---|---|
-| `type` | `"session"` | 必填,header marker |
-| `version` | `number` | schema 版本(当前观察到 `3`,由 `CURRENT_SESSION_VERSION` 控制) |
-| `id` | `string` | session UUID,等于文件名 `<sessionId>` |
-| `timestamp` | `string` | ISO 8601,header 写入时刻 |
-| `cwd` | `string` | session 起始工作目录 |
+| 字段        | 类型        | 含义                                                          |
+| ----------- | ----------- | ------------------------------------------------------------- |
+| `type`      | `"session"` | 必填,header marker                                            |
+| `version`   | `number`    | schema 版本(当前观察到 `3`,由 `CURRENT_SESSION_VERSION` 控制) |
+| `id`        | `string`    | session UUID,等于文件名 `<sessionId>`                         |
+| `timestamp` | `string`    | ISO 8601,header 写入时刻                                      |
+| `cwd`       | `string`    | session 起始工作目录                                          |
 
 ### 1.2 Entry 类型
 
 非 header 行都是 `type: <EntryType>` 的 entry,共享 `id` + `parentId` + `timestamp` 三个字段(树形链表):
 
-| `id` | `string` | 8 字符 hex,全文件唯一 |
-|---|---|---|
-| `parentId` | `string \| null` | 父 entry 的 `id`;根为 `null` |
-| `timestamp` | `string` | ISO 8601 |
+| `id`        | `string`         | 8 字符 hex,全文件唯一        |
+| ----------- | ---------------- | ---------------------------- |
+| `parentId`  | `string \| null` | 父 entry 的 `id`;根为 `null` |
+| `timestamp` | `string`         | ISO 8601                     |
 
 (以上由 `openclaw/src/agents/pi-embedded-runner/transcript-file-state.ts` 各 `appendXxx` 方法统一写入,
 通过 `generateEntryId` 生成 id。)
 
 #### 类型清单(共 10 种)
 
-| `type` | 关键字段 | 用途 | 证据 |
-|---|---|---|---|
-| `message` | `message: { role, content }` | user/assistant/tool 消息 | `transcript-file-state.ts:139-147` |
-| `model_change` | `provider, modelId` | 切换模型 | `transcript-file-state.ts:159-168` |
-| `thinking_level_change` | `thinkingLevel` | 切换思考强度 | `transcript-file-state.ts:149-157` |
-| `compaction` | `summary, firstKeptEntryId, tokensBefore, details?, fromHook?` | 上下文压缩 | `transcript-file-state.ts:170-188` |
-| `custom` | `customType, data?` | 自定义元数据(非用户可见) | `transcript-file-state.ts:190-199` |
-| `custom_message` | `customType, content, display, details?` | 自定义消息(可能 UI 渲染) | `transcript-file-state.ts:211-227` |
-| `session_info` | `name` | 用户给 session 起的名字(显示在列表) | `transcript-file-state.ts:201-209` |
-| `label` | `targetId, label?` | 给某条 entry 打标签 | `transcript-file-state.ts:229-241` |
-| `branch_summary` | `fromId, summary, details?` | 分支摘要(用于回退/branch) | `transcript-file-state.ts:243+` |
-| (header) `session` | `version, id, timestamp, cwd` | 文件头 | 见 1.1 |
+| `type`                  | 关键字段                                                       | 用途                                | 证据                               |
+| ----------------------- | -------------------------------------------------------------- | ----------------------------------- | ---------------------------------- |
+| `message`               | `message: { role, content }`                                   | user/assistant/tool 消息            | `transcript-file-state.ts:139-147` |
+| `model_change`          | `provider, modelId`                                            | 切换模型                            | `transcript-file-state.ts:159-168` |
+| `thinking_level_change` | `thinkingLevel`                                                | 切换思考强度                        | `transcript-file-state.ts:149-157` |
+| `compaction`            | `summary, firstKeptEntryId, tokensBefore, details?, fromHook?` | 上下文压缩                          | `transcript-file-state.ts:170-188` |
+| `custom`                | `customType, data?`                                            | 自定义元数据(非用户可见)            | `transcript-file-state.ts:190-199` |
+| `custom_message`        | `customType, content, display, details?`                       | 自定义消息(可能 UI 渲染)            | `transcript-file-state.ts:211-227` |
+| `session_info`          | `name`                                                         | 用户给 session 起的名字(显示在列表) | `transcript-file-state.ts:201-209` |
+| `label`                 | `targetId, label?`                                             | 给某条 entry 打标签                 | `transcript-file-state.ts:229-241` |
+| `branch_summary`        | `fromId, summary, details?`                                    | 分支摘要(用于回退/branch)           | `transcript-file-state.ts:243+`    |
+| (header) `session`      | `version, id, timestamp, cwd`                                  | 文件头                              | 见 1.1                             |
 
 > **类型由外部依赖定义**:`SessionEntry` 类型从 `@earendil-works/pi-coding-agent` 0.74.0 引入
 > (`transcript-file-state.ts:6-13`)。本应用不能假设字段集合固定不变 — 见
@@ -110,11 +112,11 @@ OpenClaw 在 `~/.openclaw/agents/<agentId>/sessions/` 下为每个 session 写 *
 
 ### 1.3 本应用如何解析
 
-| 步骤 | 位置 |
-|---|---|
-| 列举 session | `src-tauri/src/fs/walker.rs::list_jsonl_files` — 已过滤 `*.trajectory.jsonl` 和 `*.trajectory-path.json` |
-| 元数据(标题/时间/大小) | `src-tauri/src/commands/sessions.rs::build_openclaw_session_meta` |
-| 记录归一化 | `src-tauri/src/parser/openclaw.rs::normalize_entry` |
+| 步骤                   | 位置                                                                                                     |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| 列举 session           | `src-tauri/src/fs/walker.rs::list_jsonl_files` — 已过滤 `*.trajectory.jsonl` 和 `*.trajectory-path.json` |
+| 元数据(标题/时间/大小) | `src-tauri/src/commands/sessions.rs::build_openclaw_session_meta`                                        |
+| 记录归一化             | `src-tauri/src/parser/openclaw.rs::normalize_entry`                                                      |
 
 未识别的 `type` 会落到 `else` 分支,以 `meta` 块形式渲染(显示 `type` 字符串作为 label)。
 新增 entry 类型不需要改本应用 — 只需在 `openclaw.rs` 的 `normalize_entry` 加 match arm。
@@ -127,6 +129,7 @@ OpenClaw 在 `~/.openclaw/agents/<agentId>/sessions/` 下为每个 session 写 *
 **应当从会话列表中排除**(本应用已经在 walker 里过滤)。
 
 证据:
+
 - 官方文档 `openclaw/docs/tools/trajectory.md:103-110` 明确 schema 标记:
   ```json
   {
@@ -145,14 +148,14 @@ OpenClaw 在 `~/.openclaw/agents/<agentId>/sessions/` 下为每个 session 写 *
 type TrajectoryEvent = {
   traceSchema: "openclaw-trajectory";
   schemaVersion: 1;
-  traceId: string;          // == sessionId
+  traceId: string; // == sessionId
   source: "runtime" | "transcript" | "export";
-  type: string;             // 事件类型(见 2.2)
-  ts: string;               // ISO 8601
-  seq: number;              // 1-based
+  type: string; // 事件类型(见 2.2)
+  ts: string; // ISO 8601
+  seq: number; // 1-based
   sourceSeq?: number;
   sessionId: string;
-  sessionKey?: string;      // e.g. "agent:main:main"
+  sessionKey?: string; // e.g. "agent:main:main"
   runId?: string;
   workspaceDir?: string;
   provider?: string;
@@ -183,7 +186,9 @@ type TrajectoryEvent = {
   "provider": "minimax",
   "modelId": "MiniMax-M3",
   "modelApi": "anthropic-messages",
-  "data": { /* 事件特定 payload */ }
+  "data": {
+    /* 事件特定 payload */
+  }
 }
 ```
 
@@ -191,17 +196,17 @@ type TrajectoryEvent = {
 
 源码枚举来自 `openclaw/docs/tools/trajectory.md:82-91` 与 `pi-embedded-runner/run/attempt.ts` 各调用点:
 
-| `type` | 何时触发 | `data` 关键字段 | 证据 |
-|---|---|---|---|
-| `session.started` | agent run 启动 | `trigger, sessionFile, workspaceDir, agentId, messageProvider, messageChannel, toolCount, clientToolCount` | `attempt.ts:2170-2179` |
-| `trace.metadata` | 紧跟 `session.started` | 完整运行配置(env, model, provider, timeoutMs, fastMode, thinkLevel, reasoningLevel, toolResultFormat, ...) | `attempt.ts:2180+` |
-| `context.compiled` | 每次构造发给模型的 prompt | `systemPrompt, prompt, messages, tools` | `attempt.ts:3430-3465` |
-| `prompt.skipped` | 早返回(无 tool/无变化) | (具体字段依触发条件) | `attempt.ts:3465+` |
-| `prompt.submitted` | 发给模型之前 | `prompt, systemPrompt, messages, imagesCount` | `attempt.ts:3645+` |
-| `model.fallback_step` | fallback chain 切换模型 | `source, target, reason, detail, position, advanced?, succeeded?, exhausted?` | `agent-command.ts:1044` |
-| `model.completed` | 模型返回 | `aborted, externalAbort, timedOut, idleTimedOut, promptError?, promptErrorSource, ...` | `attempt.ts:4150+` |
-| `trace.artifacts` | session 结束前 | 工具/usage/prompt-cache 元数据 | (官方文档列出) |
-| `session.ended` | agent run 收尾 | `status` ∈ `success` / `interrupted` / `error` / `cleanup`,`aborted, externalAbort, timedOut, ...` | `attempt.ts:4193+` |
+| `type`                | 何时触发                  | `data` 关键字段                                                                                            | 证据                    |
+| --------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `session.started`     | agent run 启动            | `trigger, sessionFile, workspaceDir, agentId, messageProvider, messageChannel, toolCount, clientToolCount` | `attempt.ts:2170-2179`  |
+| `trace.metadata`      | 紧跟 `session.started`    | 完整运行配置(env, model, provider, timeoutMs, fastMode, thinkLevel, reasoningLevel, toolResultFormat, ...) | `attempt.ts:2180+`      |
+| `context.compiled`    | 每次构造发给模型的 prompt | `systemPrompt, prompt, messages, tools`                                                                    | `attempt.ts:3430-3465`  |
+| `prompt.skipped`      | 早返回(无 tool/无变化)    | (具体字段依触发条件)                                                                                       | `attempt.ts:3465+`      |
+| `prompt.submitted`    | 发给模型之前              | `prompt, systemPrompt, messages, imagesCount`                                                              | `attempt.ts:3645+`      |
+| `model.fallback_step` | fallback chain 切换模型   | `source, target, reason, detail, position, advanced?, succeeded?, exhausted?`                              | `agent-command.ts:1044` |
+| `model.completed`     | 模型返回                  | `aborted, externalAbort, timedOut, idleTimedOut, promptError?, promptErrorSource, ...`                     | `attempt.ts:4150+`      |
+| `trace.artifacts`     | session 结束前            | 工具/usage/prompt-cache 元数据                                                                             | (官方文档列出)          |
+| `session.ended`       | agent run 收尾            | `status` ∈ `success` / `interrupted` / `error` / `cleanup`,`aborted, externalAbort, timedOut, ...`         | `attempt.ts:4193+`      |
 
 > 另有一个**非用户产生**的事件 `trace.truncated`,在 runtime 触及 10 MiB 容量上限时自动
 > 写入,`data: { reason, droppedEvents, droppedEventBytes, limitBytes }` —
@@ -209,15 +214,15 @@ type TrajectoryEvent = {
 
 ### 2.3 大小/容量限制
 
-| 限制 | 值 | 证据 |
-|---|---|---|
-| 单事件 `data` object 最多 key 数 | 64 | `runtime.ts:55` |
-| `data` 嵌套最大深度 | 6 | `runtime.ts:56` |
-| 单事件序列化后最大字节 | 256 KiB | `paths.ts:8` (`TRAJECTORY_RUNTIME_EVENT_MAX_BYTES`) |
-| 单文件总字节上限 | 50 MiB | `paths.ts:7` |
-| Live capture 软上限 | 10 MiB(超过则停止 capture 但保留文件) | `paths.ts:6` |
-| 单次 export 接受上限 | 50 MiB | 官方文档 `trajectory.md:198` |
-| 单 session 文件 export 上限 | 50 MiB | 官方文档 `trajectory.md:199` |
+| 限制                             | 值                                    | 证据                                                |
+| -------------------------------- | ------------------------------------- | --------------------------------------------------- |
+| 单事件 `data` object 最多 key 数 | 64                                    | `runtime.ts:55`                                     |
+| `data` 嵌套最大深度              | 6                                     | `runtime.ts:56`                                     |
+| 单事件序列化后最大字节           | 256 KiB                               | `paths.ts:8` (`TRAJECTORY_RUNTIME_EVENT_MAX_BYTES`) |
+| 单文件总字节上限                 | 50 MiB                                | `paths.ts:7`                                        |
+| Live capture 软上限              | 10 MiB(超过则停止 capture 但保留文件) | `paths.ts:6`                                        |
+| 单次 export 接受上限             | 50 MiB                                | 官方文档 `trajectory.md:198`                        |
+| 单 session 文件 export 上限      | 50 MiB                                | 官方文档 `trajectory.md:199`                        |
 
 > **环境变量关停**:`export OPENCLAW_TRAJECTORY=0` 完全关闭 capture
 > (`trajectory.md:159-169`)。本应用在这种模式下不会找到 `.trajectory.jsonl` — 仅看到主
@@ -237,6 +242,7 @@ type TrajectoryEvent = {
 ```
 
 证据:
+
 - 实际文件 (`cat ~/.openclaw/agents/main/sessions/<id>.trajectory-path.json`)
 - 写入逻辑:`openclaw/src/trajectory/runtime.ts:58-103` 的 `writeTrajectoryPointerBestEffort`
   - 用 `O_CREAT | O_TRUNC | O_WRONLY | O_NOFOLLOW` 打开(防 symlink 攻击)
@@ -246,6 +252,7 @@ type TrajectoryEvent = {
   - 校验 `traceSchema === "openclaw-trajectory-pointer"` 且 `schemaVersion === 1` 且 `sessionId` 匹配
 
 用途:
+
 - 当 `OPENCLAW_TRAJECTORY_DIR` 指向**非默认目录**时,trajectory 文件被分散到那个目录里;
   此时主 session 旁的 `.trajectory-path.json` 记录了 trajectory 真实路径(可以是绝对路径)
 - 路径证据:`paths.ts:48-53` — `dirOverride` 存在时返回 `${dir}/${sessionId}.jsonl`
@@ -282,6 +289,7 @@ type TrajectoryEvent = {
 ```
 
 证据:
+
 - 实际文件 (`cat ~/.openclaw/agents/main/sessions/sessions.json`)
 - 完整 schema:`openclaw/src/config/sessions/types.ts:174-…` 的 `SessionEntry`
   (注意:这个 `SessionEntry` 是**索引**用的,**不是**转录文件里的 entry)
@@ -289,18 +297,18 @@ type TrajectoryEvent = {
 
 > **本应用目前不读 `sessions.json`**:我们的 `list_jsonl_files` 直接扫描目录。
 > 改用 `sessions.json` 可以加速大目录(避免 `stat` 每个 jsonl),但需要解析
-> `sessionKey` → `agentId` 的反向映射。当 N > 1000 sessions 时值得优化。
+> `sessionKey` `agentId` 的反向映射。当 N > 1000 sessions 时值得优化。
 
 ---
 
 ## 5. 三类文件决策矩阵(本应用视角)
 
-| 文件 | 列表展示 | 详情页渲染 | 搜索 | 备注 |
-|---|---|---|---|---|
-| `<id>.jsonl` | ✅ 主 session | ✅ | ✅ | 走 `openclaw.rs::normalize_entry` |
-| `<id>.trajectory.jsonl` | ❌ 过滤 | — | — | `walker.rs` 按 `file_stem` 末缀排除 |
-| `<id>.trajectory-path.json` | ❌ 过滤 | — | — | `extension == "json"`,本就不进 jsonl 列表 |
-| `sessions.json` | (暂未读) | — | — | 优化候选 |
+| 文件                        | 列表展示   | 详情页渲染 | 搜索 | 备注                                      |
+| --------------------------- | ---------- | ---------- | ---- | ----------------------------------------- |
+| `<id>.jsonl`                | 主 session |            |      | 走 `openclaw.rs::normalize_entry`         |
+| `<id>.trajectory.jsonl`     | 过滤       | —          | —    | `walker.rs` 按 `file_stem` 末缀排除       |
+| `<id>.trajectory-path.json` | 过滤       | —          | —    | `extension == "json"`,本就不进 jsonl 列表 |
+| `sessions.json`             | (暂未读)   | —          | —    | 优化候选                                  |
 
 ---
 
@@ -326,18 +334,18 @@ type TrajectoryEvent = {
 
 ## 7. 参考资料
 
-| 文档 | 用途 |
-|---|---|
-| `openclaw/docs/tools/trajectory.md` | 官方 trajectory 文档(229 行) |
-| `openclaw/docs/cli/sessions.md` | CLI sessions 命令 + 路径约定 |
-| `openclaw/docs/concepts/session.md` | session 路由/隔离/lifecycle |
-| `openclaw/src/trajectory/paths.ts` | 文件名解析(70 行) |
-| `openclaw/src/trajectory/types.ts` | `TrajectoryEvent` / `TrajectoryBundleManifest` 类型 |
-| `openclaw/src/trajectory/runtime.ts` | 事件 envelope 构造 + 指针文件写入 |
-| `openclaw/src/trajectory/cleanup.ts` | 指针文件读取校验 |
-| `openclaw/src/agents/pi-embedded-runner/transcript-file-state.ts` | 10 种 entry 的 appendXxx 构造方法 |
-| `openclaw/src/agents/pi-embedded-runner/compaction-successor-transcript.ts:268-280` | session header 构造 |
-| `openclaw/src/config/sessions/types.ts:174-…` | `sessions.json` 索引 schema |
+| 文档                                                                                | 用途                                                |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `openclaw/docs/tools/trajectory.md`                                                 | 官方 trajectory 文档(229 行)                        |
+| `openclaw/docs/cli/sessions.md`                                                     | CLI sessions 命令 + 路径约定                        |
+| `openclaw/docs/concepts/session.md`                                                 | session 路由/隔离/lifecycle                         |
+| `openclaw/src/trajectory/paths.ts`                                                  | 文件名解析(70 行)                                   |
+| `openclaw/src/trajectory/types.ts`                                                  | `TrajectoryEvent` / `TrajectoryBundleManifest` 类型 |
+| `openclaw/src/trajectory/runtime.ts`                                                | 事件 envelope 构造 + 指针文件写入                   |
+| `openclaw/src/trajectory/cleanup.ts`                                                | 指针文件读取校验                                    |
+| `openclaw/src/agents/pi-embedded-runner/transcript-file-state.ts`                   | 10 种 entry 的 appendXxx 构造方法                   |
+| `openclaw/src/agents/pi-embedded-runner/compaction-successor-transcript.ts:268-280` | session header 构造                                 |
+| `openclaw/src/config/sessions/types.ts:174-…`                                       | `sessions.json` 索引 schema                         |
 
 openclaw 仓库路径(本地):`/Users/forcetone/workspace/github/openclaw` (版本 `2026.5.14`)
 外部依赖:`@earendil-works/pi-coding-agent@0.74.0`(`SessionEntry` 类型来源)

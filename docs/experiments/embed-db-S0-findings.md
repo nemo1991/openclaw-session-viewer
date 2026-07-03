@@ -7,7 +7,7 @@
 
 ---
 
-## ✅ 完成清单
+## 完成清单
 
 - [x] 创建实验分支 `experimental/embed-db` (从 `feature/subagent-parent-link`)
 - [x] 仓库结构: `experiment/embed-db/{Cargo.toml workspace, ingest 子 crate, web/ (空)}` + `docs/experiments/{README, embed-db-S0-findings}`
@@ -17,8 +17,8 @@
 - [x] Sink trait + StdoutSink (NDJSON 输出)
 - [x] 6 个单测通过(scanner 3 + parser 3)
 - [x] CLI 跑 fixture & 实测数据:
-  - ✅ Fixture (`fixtures/sample-claude.jsonl`) → 1 session,1001 行,2.89M tokens,UsedTool Bash=286
-  - ✅ Real `~/.claude/projects` → 35 sessions,其中 1 个主 session 含 25 个 subagent(OpenClaw Session Viewer 自身开发)
+  - Fixture (`fixtures/sample-claude.jsonl`) 1 session,1001 行,2.89M tokens,UsedTool Bash=286
+  - Real `~/.claude/projects` 35 sessions,其中 1 个主 session 含 25 个 subagent(OpenClaw Session Viewer 自身开发)
 
 ---
 
@@ -73,7 +73,7 @@
 
 ## 决策与发现
 
-### ✅ 好
+### 好
 
 1. **完全独立的子 crate 零 rebase 摩擦**
    - 全部 ingest 代码在 `experiment/embed-db/`,不污染 main
@@ -86,7 +86,7 @@
    - 后续三个 sink (surreal / parquet / sqlite) 直接读 stdin / pipe 就好
    - jq / python 都可以消费
 
-### ⚠️ 限制 (现在已知)
+### 限制 (现在已知)
 
 1. **没用 raypar / async** — 35 session 跑 0.x 秒,到 5000 session 不确定;S1 加并发
 2. **subagent 关联靠 sibling 目录推导** — Claude 实际布局是 `projects/<encoded>/<uuid>.jsonl` + `projects/<encoded>/<uuid>/subagents/`,逻辑找对 sibling,但 OpenClaw 路径未测
@@ -99,11 +99,11 @@
 
 | Task                        | Status | 备注        |
 | --------------------------- | :----: | ----------- |
-| S0 branch + skeleton + docs |   ✅   | 本 findings |
-| S1 G1 Graph view 跑通       |   ⏳   | 下周        |
-| S2 G2 OLAP 跑通             |   ⏳   | 下下周      |
-| S3 G3 RAG 跑通              |   ⏳   | 三周        |
-| S4 三 PoC findings + 决策   |   ⏳   | 四周        |
+| S0 branch + skeleton + docs |        | 本 findings |
+| S1 G1 Graph view 跑通       |        | 下周        |
+| S2 G2 OLAP 跑通             |        | 下下周      |
+| S3 G3 RAG 跑通              |        | 三周        |
+| S4 三 PoC findings + 决策   |        | 四周        |
 
 ---
 
@@ -131,7 +131,7 @@ cargo build --release
 # 跑 fixture demo
 cp ../../fixtures/sample-claude.jsonl /tmp/exp-test.jsonl
 cargo run --release -- ingest -p /tmp/exp-test.jsonl-dir --out stdout 2>/dev/null
-# ↑ 期待 1 行 NDJSON
+#  期待 1 行 NDJSON
 
 # 跑真实数据
 cargo run --release -- ingest -p ~/.claude/projects --out stdout 2>/dev/null > /tmp/real.ndjson
@@ -141,7 +141,7 @@ import json
 hits = [json.loads(l) for l in open('/tmp/real.ndjson') if json.loads(l)['subagent_count'] > 0]
 print(f'{len(hits)} sessions have subagents')
 for h in hits[:3]:
-    print(f'  {h[\"session_id\"][:8]}... → {h[\"subagent_count\"]} subagents')
+    print(f'  {h[\"session_id\"][:8]}...  {h[\"subagent_count\"]} subagents')
 "
 ```
 
@@ -163,7 +163,7 @@ experiment/embed-db/
         ├── cli.rs                         # clap 参数 (55 行)
         ├── graph.rs                       # 共享 schema (113 行)
         ├── scanner.rs                     # WalkDir 复刻 (88 行)
-        ├── parser.rs                      # JSONL → SessionGraph (260 行)
+        ├── parser.rs                      # JSONL  SessionGraph (260 行)
         └── sinks/
             ├── mod.rs                     # Sink trait (24 行)
             └── stdout.rs                  # NDJSON sink (49 行)

@@ -4,24 +4,24 @@
 **Sprint**: S2 (下周)
 **方向**: G2 OLAP — SQL 跨维度聚合 / 统计可视化
 **分支**: `experimental/embed-db`
-**PoC 状态**: ✅ **demo 跑通 (front-end 走纯聚合,不走 DuckDB)**
+**PoC 状态**: **demo 跑通 (front-end 走纯聚合,不走 DuckDB)**
 
 ---
 
-## ✅ 完成清单
+## 完成清单
 
 - [x] `web/src/analytics.ts` — 6 个纯函数聚合 + 时间范围过滤
 - [x] `web/src/views/AnalyticsView.tsx` — 6 个 recharts + 时间范围切换 (24h/7d/30d/all) + Token Top 10 表
 - [x] `web/src/Analytics.css` — 暗色 KPI / chart-card / table 样式
 - [x] `pnpm add recharts@^3.9.1` (默认 + d3 依赖,自动)
-- [x] `App.tsx` Analytics tab 从 "planned" → enabled
-- [x] `pnpm build` 0 errors → dist/ 762KB JS (gzip 229KB) — recharts + d3 占了大部分
+- [x] `App.tsx` Analytics tab 从 "planned" enabled
+- [x] `pnpm build` 0 errors dist/ 762KB JS (gzip 229KB) — recharts + d3 占了大部分
 - [x] vite preview HTTP=200,sessions.ndjson + JS bundle 都能 serve
 - [x] **真数据二次聚合 sanity check**:Node.js 模拟 analytics 函数从 s2.ndjson 跑数据
 
 ---
 
-## ⚠️ 同样策略 — 不上 DuckDB
+## 同样策略 — 不上 DuckDB
 
 **计划里** G2 OLAP 用 `duckdb-rs` 列存 SQL;**实际** 跟 G1 一样,**纯前端聚合**:
 
@@ -64,11 +64,11 @@ models: {
   'MiniMax-M2.7': { count: 1, tok: 2465323, think: 26 }
 }
 top 5 by tokens:
-  a2349f0e-856 tok= 1.12B subagents= 25 err= 122   ← 长会话
+  a2349f0e-856 tok= 1.12B subagents= 25 err= 122    长会话
   87d29ce8-5bd tok= 231.45M subagents= 0 err= 22
   bafe7b80-08f tok= 12.39M subagents= 0 err= 2
-  a2349f0e-856 tok= 7.70M subagents= 0 err= 10     ← subagent JSONL
-  a2349f0e-856 tok= 5.82M subagents= 0 err= 0      ← subagent JSONL
+  a2349f0e-856 tok= 7.70M subagents= 0 err= 10      subagent JSONL
+  a2349f0e-856 tok= 5.82M subagents= 0 err= 0       subagent JSONL
 ```
 
 **关键观察**:
@@ -86,13 +86,13 @@ top 5 by tokens:
 1. **Token 趋势**: 看 30 天 / all 切换,看 token 总消耗有没有异常飙升
 2. **错误率**: 4 分桶后,如果有 session 飘到 20+ errors,就是 "我最近是不是太累了" 或者 "agent 模型最近在挣扎什么"
 3. **模型漂移**: 多个 model bar 一目了然 — "我什么时候从 M2.7 切到 M3?"
-4. **Subagent 层级**: "10+ subagent" bucket 如果大量出现 = 深度使用 → G1 Graph view 去看具体哪个 session
+4. **Subagent 层级**: "10+ subagent" bucket 如果大量出现 = 深度使用 G1 Graph view 去看具体哪个 session
 
 ---
 
 ## 决策与发现
 
-### ✅ 好
+### 好
 
 1. **零数据库依赖** — 跟 G1 同步策略,前端 in-memory
 2. **TypeScript 聚合函数 = 数据流检查 + 类型约束 + 不写 SQL 也强类型**
@@ -100,7 +100,7 @@ top 5 by tokens:
 4. **recharts 默认 d3 dep 拉进来**,bundle 大了(762KB),但研究 PoC 阶段不 care
 5. **真数据 sanity check** 给出 insight(2 个模型 + 1 个超级会话)— 直接说明 OLAP 价值
 
-### ⚠️ 限制 (在 demo 里已知)
+### 限制 (在 demo 里已知)
 
 1. **25 subagent JSONL 被当独立 sessions** — Ingest 不知道哪些 agent-\*.jsonl 已经算在 parent 里。修复方案:parser 加一个 subagent JSONL 的 marker (`is_subagent_root=true`),V2 view 折叠到 parent。这个超出 S2 范围,S4 决策时考虑
 2. **retry_rate 用 error_count 桶代替真"重试率"** — 重试率需要 tool_use 失败后立刻有同 tool 的下次调用,得解析 message 顺序 — 真正实现要全文件扫或 SQL
@@ -114,17 +114,17 @@ top 5 by tokens:
 ```
 experiment/embed-db/web/
 └── src/
-    ├── analytics.ts                 # ⭐ 6 聚合 + summary + formatNum/formatDate
-    ├── Analytics.css                # ⭐ 全 dashboard 样式
-    └── views/AnalyticsView.tsx      # ⭐ 6 chart + 6 KPI + Top 10 表
+    ├── analytics.ts                 #  6 聚合 + summary + formatNum/formatDate
+    ├── Analytics.css                #  全 dashboard 样式
+    └── views/AnalyticsView.tsx      #  6 chart + 6 KPI + Top 10 表
 
 docs/experiments/
-└── embed-db-G2-olap-findings.md    # ⭐ 本文件
+└── embed-db-G2-olap-findings.md    #  本文件
 ```
 
 ### 修改
 
-- `experiment/embed-db/web/src/App.tsx` — Analytics tab 从 "S2 (planned)" → "S2", enabled
+- `experiment/embed-db/web/src/App.tsx` — Analytics tab 从 "S2 (planned)" "S2", enabled
 - `experiment/embed-db/web/src/App.css` — 重写(把 Analytics.css @import 进)
 - `experiment/embed-db/web/package.json` — +`recharts`
 - `experiment/embed-db/web/public/sessions.ndjson` — 重新 ingest 写入(75KB,新字段都到位)
@@ -167,11 +167,11 @@ NO_PROXY='*' open http://127.0.0.1:4173/
 
 | Sprint | 任务                          | Status |
 | ------ | ----------------------------- | :----: |
-| S0     | ingest skeleton + stdout sink |   ✅   |
-| S1     | G1 Graph view (PoC)           |   ✅   |
-| S2     | G2 OLAP (analytics 视图)      |   ✅   |
-| S3     | G3 RAG (聊天 UI)              |   ⏳   |
-| S4     | 三 PoC findings + 决策        |   ⏳   |
+| S0     | ingest skeleton + stdout sink |        |
+| S1     | G1 Graph view (PoC)           |        |
+| S2     | G2 OLAP (analytics 视图)      |        |
+| S3     | G3 RAG (聊天 UI)              |        |
+| S4     | 三 PoC findings + 决策        |        |
 
 下一步 = **S3 G3 RAG**。
 
@@ -192,11 +192,11 @@ NO_PROXY='*' open http://127.0.0.1:4173/
 
 ## 决策对照 (plan 里的 G2 验收标准)
 
-| 标准                                                |       状态        |
-| --------------------------------------------------- | :---------------: |
-| ingest --out parquet --path ~/.claude/projects 跑完 | ⚠️ 改 stdout sink |
-| web Analytics 视图打开 6 个 chart < 3s 全部渲染     |        ✅         |
-| SQL 输入框跑 SELECT ... 返回结果                    |       跳过        |
-| 时间范围筛选 24h/7d/30d 表头跟着重算                |        ✅         |
+| 标准                                                |      状态      |
+| --------------------------------------------------- | :------------: |
+| ingest --out parquet --path ~/.claude/projects 跑完 | 改 stdout sink |
+| web Analytics 视图打开 6 个 chart < 3s 全部渲染     |                |
+| SQL 输入框跑 SELECT ... 返回结果                    |      跳过      |
+| 时间范围筛选 24h/7d/30d 表头跟着重算                |                |
 
 跟 G1 一样,G2 的"实质"(聚合可视化)已验证;DuckDB 留作 S5+ 决策。

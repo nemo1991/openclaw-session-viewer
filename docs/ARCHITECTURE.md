@@ -42,75 +42,75 @@
 
 ```
 App 启动
-  ↓
-Rust setup() → AppPaths::new() 解析 ~/.claude 和 ~/.openclaw
-  ↓
-Frontend mount → App → loadSettings() (Tauri invoke get_settings)
-  ↓
-SessionsRoute mount → load() → list_sessions
-  ↓
+
+Rust setup()  AppPaths::new() 解析 ~/.claude 和 ~/.openclaw
+
+Frontend mount  App  loadSettings() (Tauri invoke get_settings)
+
+SessionsRoute mount  load()  list_sessions
+
 Rust list_sessions:
   - scan ~/.claude/projects/<key>/*.jsonl
   - 解析头部 50 条提取 title/messageCount/totalTokens
-  - 关联 ~/.claude/sessions/<pid>.json → livePid
-  - 关联 ~/.claude/projects/<key>/<uuid>/subagents/ → subagentDir
-  ↓
-返回 SessionMeta[] → 前端渲染列表
+  - 关联 ~/.claude/sessions/<pid>.json  livePid
+  - 关联 ~/.claude/projects/<key>/<uuid>/subagents/  subagentDir
+
+返回 SessionMeta[]  前端渲染列表
 ```
 
 ### 2. 打开会话
 
 ```
 点击会话卡片
-  ↓
+
 navigate(/session/<id>, { state: { session } })
-  ↓
-SessionDetailRoute mount → useTranscriptStore.start(jsonlPath)
-  ↓
+
+SessionDetailRoute mount  useTranscriptStore.start(jsonlPath)
+
 Rust stream_transcript:
   - 监听 transcript-batch / transcript-done 事件
-  - spawn_blocking → stream_batches(jsonl, 500/batch)
-    - BufReader 64KB → for_each_line
+  - spawn_blocking  stream_batches(jsonl, 500/batch)
+    - BufReader 64KB  for_each_line
     - normalize (Claude) or normalize_entry (OpenClaw)
     - tx.blocking_send(StreamBatch { entries })
-  - spawn → while rx.recv() { app.emit("transcript-batch", batch) }
-  ↓
-Frontend listenTranscriptBatches → entries: [...s.entries, ...batch.entries]
-  ↓
+  - spawn  while rx.recv() { app.emit("transcript-batch", batch) }
+
+Frontend listenTranscriptBatches  entries: [...s.entries, ...batch.entries]
+
 TranscriptView 虚拟列表渲染
 ```
 
 ### 3. 全局搜索 (Cmd+K)
 
 ```
-Cmd+K → SearchPalette 显示
-  ↓
-输入 → debounce 300ms → searchStore.search(q)
-  ↓
+Cmd+K  SearchPalette 显示
+
+输入  debounce 300ms  searchStore.search(q)
+
 listenSearchAll 监听 global-search-hit / global-search-done
-  ↓
+
 invoke("search_all", { query })
-  ↓
+
 Rust search_all:
   - 收集所有 jsonl 路径
   - spawn_blocking: for path { for_each_line { substring 搜索 } }
     - tx.blocking_send(GlobalSearchHit)
   - spawn: while rx.recv() { app.emit("global-search-hit", hit) }
-  ↓
+
 前端 set({ hits: [...s.hits, hit] })
-  ↓
+
 SearchPalette 渲染结果列表
 ```
 
 ### 4. 大模型分析
 
 ```
-设置页填 API Key/Base URL → save_settings (写入 app_config_dir/settings.json)
-  ↓
-打开分析视图 → 选模板 + 选范围
-  ↓
+设置页填 API Key/Base URL  save_settings (写入 app_config_dir/settings.json)
+
+打开分析视图  选模板 + 选范围
+
 analyze_session(path, template, range, baseUrl, apiKey, model)
-  ↓
+
 Rust analyze_session:
   - 解析整个 jsonl
   - context.rs::build_context 按 range 过滤 + 序列化
@@ -120,27 +120,27 @@ Rust analyze_session:
     - SSE 解析 content_block_delta.text
     - tx.send((text, usage))
   - spawn: while rx.recv() { app.emit("analyze-event", AnalyzeEvent) }
-  ↓
-Frontend listenAnalyze → 流式更新 result
+
+Frontend listenAnalyze  流式更新 result
 ```
 
 ### 5. 子代理摘要内嵌 (v0.6.0 P0-B)
 
 ```
 用户点 Agent 卡片 (主 session timeline)
-  ↓
+
 SubagentInlineSummary 组件 mount (默认展开,但 inline 嵌入不是 navigate)
-  ↓
+
 invoke("get_subagent_summary", { parentSessionDir, agentId })
-  ↓
+
 Rust scan_jsonl_summary:
   - 扫子 jsonl 头部 500 行 (< 5ms)
   - 提取 message_count + tool_use.name 分布 + timestamps
   - 返回 SubagentSummary { messageCount, toolDistribution, durationSeconds, ... }
-  ↓
+
 前端 SubagentInlineSummary 渲染:
   - 消息数 + 时长 + top 3 工具 chip
-  - "打开独立页面" 按钮 → navigate 跳到子会话(原 v0.5.0 行为)
+  - "打开独立页面" 按钮  navigate 跳到子会话(原 v0.5.0 行为)
 ```
 
 **为什么 inline**: v0.5.0 那种"点 Agent 卡片直接跳走"反馈很差 — 用户失去了主 session timeline 的视觉锚点。
@@ -150,24 +150,24 @@ inline 展开让用户**一眼看清**该子代理的产出(消息数 + 工具�
 
 ```
 用户点 Read 工具结果 [filePath] / Edit 工具 [file_path] / .plan reveal 按钮
-  ↓
+
 useFileReveal.revealAndNotify(path):
   - workspaceRoot 推导:
       opts.workspaceRoot > settings.defaultExportDir > sessionJsonlPath 父目录 > null
   - invoke("reveal_in_finder", { path, workspaceRoot, allowRelaxed: settings.pathSecurity.allowRelaxed })
-  ↓
+
 Rust reveal_in_finder:
-  - allowRelaxed=false → 严格 path_within(path, workspaceRoot)
-  - allowRelaxed=true  → assert_within_any_root(path)
+  - allowRelaxed=false  严格 path_within(path, workspaceRoot)
+  - allowRelaxed=true   assert_within_any_root(path)
   - 失败: Err("PathSecurity: ...")
   - 成功: 跨平台 shell reveal
       macOS: open -R
       Windows: explorer /select,
       Linux: xdg-open
-  ↓
+
 前端:
-  - result.ok → 静默成功
-  - 失败 → 行内 RevealErrorActions 三按钮:
+  - result.ok  静默成功
+  - 失败  行内 RevealErrorActions 三按钮:
       复制路径 / 去设置 / 一键开启 (确认后 toggle + 自动推断 ~/.claude 为 defaultExportDir + 重试)
 ```
 
@@ -188,21 +188,37 @@ Rust reveal_in_finder:
 - **职责**: 把原始 JSON Value 转成统一 `NormalizedMessage`
 - **独立**: 不依赖 Tauri,可独立测试
 - **三部分**:
-  - `claude.rs::normalize_record` — Claude Code JSONL → `NormalizedMessage`
-  - `openclaw.rs::normalize_entry` — OpenClaw JSONL → `NormalizedMessage`(**不再 wrapper 转 Claude**,自 v0.3.0 起直接走同一套 BlockRegistry)
+  - `claude.rs::normalize_record` — Claude Code JSONL `NormalizedMessage`
+  - `openclaw.rs::normalize_entry` — OpenClaw JSONL `NormalizedMessage`(**不再 wrapper 转 Claude**,自 v0.3.0 起直接走同一套 BlockRegistry)
   - `blocks/` — `BlockRegistry` + `BlockHandler` trait,统一处理所有 content block 类型
 - **BlockRegistry 详解**: 见 [PARSER_ARCHITECTURE.md](PARSER_ARCHITECTURE.md)
 
 ### `src-tauri/src/commands/` — Tauri 边界
 
 - **职责**: 接收 invoke,返回 serde 序列化的 JSON
-- **错误**: `AppResult<T>` → 序列化为 `{ kind, message }` 给前端
+- **错误**: `AppResult<T>` 序列化为 `{ kind, message }` 给前端
 - **路径安全**: 每次接受路径参数都做 `assert_within_lexical`
 
 ### `src-tauri/src/llm/` — 外部 API 客户端
 
 - **职责**: 流式调用 Anthropic Messages API
 - **适配**: 通过 `baseUrl` 切换官方/MiniMax/任何兼容代理
+
+### `packages/frontend/src/views/graph/` — Graph Explorer (G1/G2/G3, 实验)
+
+- **位置**: 挂在 `/graph` 顶 tab 下,3 个子 view `?view=graph|analytics|rag`
+- **数据源**: M1/M2 走 `fetch /sessions.ndjson` (双源),M3 计划切 `apiListGraph()` Tauri invoke
+- **G1 Graph**: `react-force-graph-2d` + d3-force 布局 + 自定义 canvas 绘制 (节点半径 ∝ token、error badge、subagent 角色配色)
+- **G2 Analytics**: `recharts` 6 chart + 时间范围切换
+- **G3 RAG**: 自写 hash-embedding lite (32-dim) + cosine topK + matched-tokens 高亮
+- **共享**:
+  - `graphStore` (zustand) — 缓存 `GraphEntry[]`,G1/G2/G3 共享一次加载
+  - `titleStore` (zustand + localStorage `openclaw.titleOverrides.v1`) — G1/G2/G3 共享 `display_title`,跨刷新/跨 tab 同步
+- **跳主项目原生会话详情** (G1 详情面板 "会话详情" 按钮):
+  - main 节点: `navigate(/session/<sessionId>, { state: { session: <realMeta> } })`
+  - subagent 节点: `navigate(/session/<agentId>?path=<jsonlPath>, { state: { session: <virtualMeta>, subagentContext: {...} } })`
+  - 复用 `SubagentPanel.tsx:79-110` 模板 — `?path=` 持久化兜底,F5 仍能加载子会话
+- **推进记录**: [docs/experiments/embed-db-findings.md](experiments/embed-db-findings.md)
 - **不依赖**: 与 commands/parser/cache 完全解耦,可单独测试
 
 ## 性能关键路径
@@ -260,12 +276,12 @@ if p.starts_with(&state.paths.claude.projects_dir) {
 
 ### 攻击面
 
-- ❌ 无法读取 `~/.ssh/id_rsa` 等其他位置(受 `assert_within_any_root` 兜底)
-- ❌ 无法删除文件(没有 delete 命令)
-- ❌ 无法执行任意命令(reveal 走 `args([..])` 不走 shell)
-- ✅ Tauri 命令读路径必须在 `~/.claude/` 或 `~/.openclaw/` 下
-- ✅ `reveal_in_finder` (v0.6.0) 默认 lock-down 到 `workspaceGuess` 子树,relaxed 模式仍受 `assert_within_any_root` 兜底
-- ✅ API Key 存在 `app_config_dir/settings.json`(用户家目录,OS 权限保护)
+- 无法读取 `~/.ssh/id_rsa` 等其他位置(受 `assert_within_any_root` 兜底)
+- 无法删除文件(没有 delete 命令)
+- 无法执行任意命令(reveal 走 `args([..])` 不走 shell)
+- Tauri 命令读路径必须在 `~/.claude/` 或 `~/.openclaw/` 下
+- `reveal_in_finder` (v0.6.0) 默认 lock-down 到 `workspaceGuess` 子树,relaxed 模式仍受 `assert_within_any_root` 兜底
+- API Key 存在 `app_config_dir/settings.json`(用户家目录,OS 权限保护)
 
 > **v0.6.1: `assert_within_any_root` 接受整 `~/.claude/`** (不止 `~/.claude/projects/`),让 `.plan` 文件 / tracked snapshot 路径通过时不被拒。
 
@@ -296,9 +312,9 @@ if p.starts_with(&state.paths.claude.projects_dir) {
 **前端 (TypeScript)**:
 
 - 已知 type:`components/MessageBubble.tsx::BlockRenderer` 加 `case "<kind>"`,渲染专属 UI
-- 未知 type:不用改任何代码,`MetaBlockHandler` 自动 fallback → `UnknownBlockCard` 显示字段表
+- 未知 type:不用改任何代码,`MetaBlockHandler` 自动 fallback `UnknownBlockCard` 显示字段表
 
-**示例**: `skill_listing` 类型从未知 → 已知的过程,看 git history `feat(parser): add 4 new BlockHandlers` (v0.3.1)。
+**示例**: `skill_listing` 类型从未知 已知的过程,看 git history `feat(parser): add 4 new BlockHandlers` (v0.3.1)。
 
 ### 替换 LLM 后端
 
