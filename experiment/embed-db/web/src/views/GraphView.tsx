@@ -336,7 +336,7 @@ export function GraphView() {
               // error badge — 只对 main,error_count > 0 才画
               // 位置:右下偏 (x + r*0.75, y + r*0.85),避开右上 label
               // 大小:clamp 到 [1.5, 5] — 比 main 小一档,作为"标记"而非"装饰圈"
-              // 透明度按 error_count 渐变让肉眼快速感知量级
+              // 内容:error_count 数字(>999 显示 "1k+"),白色,字号按 errR 缩放
               if (node.type === "main" && (node.error_count ?? 0) > 0) {
                 const ec = node.error_count ?? 0;
                 const errR = Math.min(5, 1.5 + Math.sqrt(ec / 8));
@@ -350,6 +350,21 @@ export function GraphView() {
                 ctx.strokeStyle = "rgba(255,255,255,0.95)";
                 ctx.lineWidth = 1.5;
                 ctx.stroke();
+                // 数字:字号 ≈ errR * 1.2,但仅当 errR 够大(>=2.5)才画
+                //   - err=1 → errR=2.0,无数字(只画红点)
+                //   - err=10 → errR=2.6,数字很挤也画(1 char)
+                //   - err=158 → errR=4.5,"158" 居中清晰
+                if (errR >= 2.5) {
+                  const text = ec >= 1000 ? "1k+" : String(ec);
+                  ctx.font = `bold ${Math.max(3, errR * 1.15)}px sans-serif`;
+                  ctx.fillStyle = "#fff";
+                  ctx.textAlign = "center";
+                  ctx.textBaseline = "middle";
+                  ctx.fillText(text, bx, by);
+                  // 还原
+                  ctx.textAlign = "start";
+                  ctx.textBaseline = "alphabetic";
+                }
               }
             }
 
