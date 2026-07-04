@@ -12,7 +12,11 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { useTranscriptFilterStore, isFilterActive } from "./transcriptFilterStore";
+import {
+  useTranscriptFilterStore,
+  isFilterActive,
+  isContentFilterActive,
+} from "./transcriptFilterStore";
 
 describe("transcriptFilterStore", () => {
   beforeEach(() => {
@@ -133,5 +137,118 @@ describe("isFilterActive helper", () => {
   it("preset='all' 但设了 from → true (边界:用户手动设了范围)", () => {
     useTranscriptFilterStore.getState().setRange("2026-06-20T00:00:00Z", undefined);
     expect(isFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+
+  it("tools 非空 → true", () => {
+    useTranscriptFilterStore.getState().toggleTool("Bash");
+    expect(isFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+
+  it("role 设了 → true", () => {
+    useTranscriptFilterStore.getState().setRole("user");
+    expect(isFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+
+  it("has 非空 → true", () => {
+    useTranscriptFilterStore.getState().toggleHas("thinking");
+    expect(isFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+});
+
+// ===== v0.7.0: content 维度 actions =====
+
+describe("transcriptFilterStore — content 维度", () => {
+  beforeEach(() => {
+    useTranscriptFilterStore.getState().clear();
+  });
+
+  it("初始状态:tools=[], role=undefined, has=[]", () => {
+    const s = useTranscriptFilterStore.getState();
+    expect(s.tools).toEqual([]);
+    expect(s.role).toBeUndefined();
+    expect(s.has).toEqual([]);
+  });
+
+  it("toggleTool:追加 → 再 toggle 移除", () => {
+    const { toggleTool } = useTranscriptFilterStore.getState();
+    toggleTool("Bash");
+    expect(useTranscriptFilterStore.getState().tools).toEqual(["Bash"]);
+    toggleTool("Read");
+    expect(useTranscriptFilterStore.getState().tools).toEqual(["Bash", "Read"]);
+    toggleTool("Bash"); // 已存在 → 移除
+    expect(useTranscriptFilterStore.getState().tools).toEqual(["Read"]);
+  });
+
+  it("toggleTool:对同一 tool 重复 toggle 是幂等的(回到空)", () => {
+    const { toggleTool } = useTranscriptFilterStore.getState();
+    toggleTool("Bash");
+    toggleTool("Bash");
+    expect(useTranscriptFilterStore.getState().tools).toEqual([]);
+  });
+
+  it("setRole:设值 / undefined", () => {
+    const { setRole } = useTranscriptFilterStore.getState();
+    setRole("user");
+    expect(useTranscriptFilterStore.getState().role).toBe("user");
+    setRole("assistant");
+    expect(useTranscriptFilterStore.getState().role).toBe("assistant");
+    setRole(undefined);
+    expect(useTranscriptFilterStore.getState().role).toBeUndefined();
+  });
+
+  it("toggleHas:多选,维内可叠加", () => {
+    const { toggleHas } = useTranscriptFilterStore.getState();
+    toggleHas("thinking");
+    expect(useTranscriptFilterStore.getState().has).toEqual(["thinking"]);
+    toggleHas("error");
+    expect(useTranscriptFilterStore.getState().has).toEqual(["thinking", "error"]);
+    toggleHas("thinking");
+    expect(useTranscriptFilterStore.getState().has).toEqual(["error"]);
+  });
+
+  it("clear:content + time 全部重置", () => {
+    const { setRange, setRole, toggleTool, toggleHas, clear } = useTranscriptFilterStore.getState();
+    setRange("2026-06-20T00:00:00Z", "2026-06-25T00:00:00Z");
+    setRole("user");
+    toggleTool("Bash");
+    toggleHas("thinking");
+    clear();
+    const s = useTranscriptFilterStore.getState();
+    expect(s.preset).toBe("all");
+    expect(s.from).toBeUndefined();
+    expect(s.to).toBeUndefined();
+    expect(s.tools).toEqual([]);
+    expect(s.role).toBeUndefined();
+    expect(s.has).toEqual([]);
+  });
+});
+
+describe("isContentFilterActive helper", () => {
+  beforeEach(() => {
+    useTranscriptFilterStore.getState().clear();
+  });
+
+  it("全空 → false", () => {
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(false);
+  });
+
+  it("只 time 有(preset='1h')→ false (content 维度独立判断)", () => {
+    useTranscriptFilterStore.getState().setPreset("1h");
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(false);
+  });
+
+  it("tools 非空 → true", () => {
+    useTranscriptFilterStore.getState().toggleTool("Bash");
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+
+  it("role 设了 → true", () => {
+    useTranscriptFilterStore.getState().setRole("user");
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+
+  it("has 非空 → true", () => {
+    useTranscriptFilterStore.getState().toggleHas("thinking");
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(true);
   });
 });
