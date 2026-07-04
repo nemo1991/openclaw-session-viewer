@@ -71,11 +71,7 @@ navigate(`/session/${agentId}?path=${jsonlPath}`, {
 
 ## 实现规模
 
-| 层                      | Rust LOC | TS LOC            | 依赖                                 |
-| ----------------------- | -------- | ----------------- | ------------------------------------ |
-| ingest crate            | ~660     | —                 | (零外部 — serde_json + walkdir)      |
-| experiment web          | —        | ~1700             | react-force-graph-2d 600KB, recharts |
-| 主项目集成 (M1+M2 净增) | 0        | +11 文件, ~900 行 | recharts 装到主项目                  |
+ingest crate ~660 行 Rust(零外部);experiment web ~1700 行 TS(`react-force-graph-2d` 600KB + `recharts`);主项目 M1+M2 净增 +11 文件 / ~900 行 TS(零 Rust)。
 
 ---
 
