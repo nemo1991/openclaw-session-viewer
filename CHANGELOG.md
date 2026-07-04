@@ -74,9 +74,11 @@ cd experiment/embed-db/web && pnpm dev    # 4173 — 双源对照
 
 ### 文档
 
-- 全 17 个 markdown 文件 0 emoji(699 个 emoji 全部清理)
-- `docs/experiments/README.md` 重写,反映 M1 + M2 完成态
-- `docs/experiments/embed-db-G1-graph-findings.md` 待补 S5+ S6 addendum
+- 16 个 markdown 文件 0 emoji(699 → 0)
+- `docs/experiments/README.md` / `embed-db-findings.md` 重写反映 M2 完成态
+- `docs/ARCHITECTURE.md` 加 Graph Explorer 模块边界段
+- `README.md` "高级"段 + 文档索引补 Graph Explorer
+- docs/experiments/embed-db-G1-graph-findings.md 末尾 addendum 加过时警告 + link 指向单一权威源
 
 ## [0.6.1] - 2026-06-30
 
