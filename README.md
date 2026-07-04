@@ -86,7 +86,6 @@ chmod +x OpenClaw*.AppImage
 - **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
 - **CI/CD** — GitHub Actions 三平台并行;docs-only 推送跳过 CI (paths-ignore)
 - **自动更新** — Tauri updater + GitHub Releases
-- **CI/CD** — GitHub Actions 三平台并行构建,docs-only 推送跳过 CI
 
 ## 截图
 
@@ -450,8 +449,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 1. 添加新功能前先开 issue 讨论
 2. 保持单元测试覆盖
 3. 遵循现有代码风格(rustfmt + prettier)
-4. 提交前跑 `pnpm -r test && pnpm typecheck`
-5. **docs-only 提交**会自动跳过 CI;如果同时改代码 + docs,CI 正常跑(看路径规则)
+4. 提交前跑 `pnpm -r test && pnpm typecheck`(docs-only 自动跳过 CI,见"工程化"段)
 
 ## 文档索引
 
