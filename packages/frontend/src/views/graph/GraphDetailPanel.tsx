@@ -8,15 +8,20 @@
  *   - 复用 SubagentPanel.tsx:79-110 模板
  * - onJumpToRag 改用 useNavigate 跳 /graph?view=rag&q=... (M2 完整实现, M1 已可用)
  * - useTitles() 改用 useTitleStore() (zustand)
+ * - first_prompt 解析(去 <command-message> 噪音)— 用 formatPrompt.parseFirstPrompt
+ * - 每个 Stat 加 vs-avg 对比 + 复制 session_id / jsonl_path 按钮
+ * - 加 session 持续时间 (formatDuration) + "同 workspace 其它 session" 链接
+ * - 去 emoji,error badge "1k+" → "≥1k"
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { GNode, SubagentRole } from "./graph-types";
 import type { GraphEntry, SessionNode } from "./types";
 import { classifyRole } from "./loader";
 import { useTitleStore } from "./titleStore";
 import type { SessionMeta as MainSessionMeta } from "@ocsv/shared";
+import { formatDuration, parseFirstPrompt, vsMedianPct } from "./formatPrompt";
 import "./GraphDetailPanel.css";
 
 interface Props {
@@ -60,6 +65,43 @@ export function GraphDetailPanel({
 
   const currentTitle = titles.get(node.id, session ? titles.auto(session) : node.label);
 
+  // ===== 计算对比基线(用全图 sessions 的中位数)— 36 节点规模下稳定,代价可忽略 =====
+  const baseline = useMemo<{ medTokens: number; medThinking: number; medErrors: number }>(() => {
+    const tokensAll: number[] = entries
+      .map((e) => e.node.token_total)
+      .filter((n): n is number => typeof n === "number")
+      .sort((a, b) => a - b);
+    const medTokens = tokensAll.length ? tokensAll[Math.floor(tokensAll.length / 2)] : 0;
+    const thinkingAll: number[] = entries
+      .map((e) => e.node.thinking_count)
+      .filter((n): n is number => typeof n === "number")
+      .sort((a, b) => a - b);
+    const medThinking = thinkingAll.length ? thinkingAll[Math.floor(thinkingAll.length / 2)] : 0;
+    const errorsAll: number[] = entries
+      .map((e) => e.node.error_count)
+      .filter((n): n is number => typeof n === "number")
+      .sort((a, b) => a - b);
+    const medErrors = errorsAll.length ? errorsAll[Math.floor(errorsAll.length / 2)] : 0;
+    return { medTokens, medThinking, medErrors };
+  }, [entries]);
+
+  // ===== 解析 first_prompt — 去 <command-message>/<local-command-caveat> 噪音 =====
+  const parsed = parseFirstPrompt(session?.first_prompt);
+
+  // ===== 同 workspace 其它 main session(limit 5)— 给"探索上下文"入口 =====
+  const sameWorkspace = useMemo(() => {
+    if (!session?.workspace) return [];
+    return entries
+      .filter(
+        (e) =>
+          e.node.node_id !== node.id &&
+          e.node.workspace === session.workspace &&
+          !e.node.is_subagent_root
+      )
+      .sort((a, b) => (b.node.last_timestamp_ms ?? 0) - (a.node.last_timestamp_ms ?? 0))
+      .slice(0, 5);
+  }, [entries, session?.workspace, node.id]);
+
   // ESC 关闭
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -86,6 +128,17 @@ export function GraphDetailPanel({
     }
     setIsEditing(false);
   };
+
+  const copyToClipboard = (text: string, label: string) => {
+    if (navigator.clipboard) {
+      void navigator.clipboard.writeText(text).then(() => {
+        // 简单提示 — 不打扰用户
+        setCopyHint(label);
+        setTimeout(() => setCopyHint(null), 1500);
+      });
+    }
+  };
+  const [copyHint, setCopyHint] = useState<string | null>(null);
 
   // ===== 跳主项目会话详情 =====
   // main 节点 → /session/<sessionId> (state.session = 真实 SessionMeta)
@@ -156,10 +209,13 @@ export function GraphDetailPanel({
     }
   };
 
-  // ===== 跳 G3 RAG(用 URL ?q= 深链,M2 完整支持) =====
+  // ===== 跳 G3 RAG(用 URL ?q= 深链,M2 完整支持)— 用解析后的 clean prompt 更准 =====
   const handleJumpToRag = () => {
-    if (!session?.first_prompt) return;
-    const q = session.first_prompt.slice(0, 80).replace(/\s+/g, " ").trim();
+    const q = (parsed.clean || session?.first_prompt || "")
+      .slice(0, 80)
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!q) return;
     navigate(`/graph?view=rag&q=${encodeURIComponent(q)}`);
   };
 
@@ -186,14 +242,14 @@ export function GraphDetailPanel({
             </h3>
           )}
           <button className="icon-btn" onClick={onClose} title="Esc 关闭">
-            ✕
+            ×
           </button>
         </div>
         <div className="detail-title-actions">
           {!isEditing && (
             <>
               <button className="icon-btn" onClick={startEdit} title="编辑显示名">
-                ✏️ 编辑
+                重命名
               </button>
               {titles.hasOverride(node.id) && (
                 <button
@@ -201,7 +257,7 @@ export function GraphDetailPanel({
                   onClick={() => titles.clear(node.id)}
                   title="撤销自定义,回到自动命名"
                 >
-                  ↺ Auto
+                  自动名
                 </button>
               )}
               {node.type === "main" && onDrillDown && (
@@ -211,16 +267,16 @@ export function GraphDetailPanel({
                   disabled={isDrilledIntoThis}
                   title={isDrilledIntoThis ? "当前已聚焦这个 session" : "进入该 session 钻取视图"}
                 >
-                  🔍 {isDrilledIntoThis ? "已聚焦" : "独立显示"}
+                  {isDrilledIntoThis ? "已聚焦" : "钻取"}
                 </button>
               )}
-              {session?.first_prompt && (
+              {(parsed.clean || session?.first_prompt) && (
                 <button
                   className="icon-btn"
                   onClick={handleJumpToRag}
                   title="跳 G3 RAG,以首问为 query 召回相关上下文"
                 >
-                  💬 G3 RAG
+                  G3 RAG
                 </button>
               )}
               {/* M1.4 新增:跳主项目原生会话详情(main + subagent 都有) */}
@@ -234,7 +290,7 @@ export function GraphDetailPanel({
                       : "跳到主项目 /session/<sessionId> 原生 TranscriptView"
                   }
                 >
-                  📄 会话详情
+                  会话详情
                 </button>
               )}
             </>
@@ -260,18 +316,29 @@ export function GraphDetailPanel({
           )}
           {node.workspace && (
             <span className="meta-tag tag-workspace" title={node.workspace}>
-              📁 {node.workspace.length > 22 ? node.workspace.slice(-22) : node.workspace}
+              {node.workspace.length > 22 ? `…${node.workspace.slice(-21)}` : node.workspace}
             </span>
           )}
           {node.primary_model && (
             <span className="meta-tag tag-model">model · {node.primary_model}</span>
           )}
+          {parsed.isLocalCommand && (
+            <span className="meta-tag tag-local" title="由 local command 触发的会话,无首问">
+              local command
+            </span>
+          )}
         </div>
 
-        {session?.first_prompt && (
+        {parsed.clean && (
           <section className="detail-section">
             <div className="detail-section-label">首问</div>
-            <p className="detail-prompt">{session.first_prompt}</p>
+            <p className="detail-prompt">
+              {parsed.commandName ? (
+                <code className="detail-cmd">{parsed.clean}</code>
+              ) : (
+                parsed.clean
+              )}
+            </p>
           </section>
         )}
 
@@ -285,21 +352,26 @@ export function GraphDetailPanel({
         <section className="detail-section">
           <div className="detail-section-label">指标</div>
           <dl className="detail-stats">
-            <Stat label="tokens" value={formatNum(node.token_total ?? 0)} />
-            <Stat label="thinking" value={formatNum(node.thinking_count ?? 0)} />
+            <Stat
+              label="tokens"
+              value={formatNum(node.token_total ?? 0)}
+              compare={vsMedianPct(node.token_total, baseline.medTokens)}
+            />
+            <Stat
+              label="thinking"
+              value={formatNum(node.thinking_count ?? 0)}
+              compare={vsMedianPct(node.thinking_count, baseline.medThinking)}
+            />
             <Stat
               label="errors"
               value={formatNum(node.error_count ?? 0)}
               warn={(node.error_count ?? 0) > 0}
+              compare={vsMedianPct(node.error_count, baseline.medErrors)}
             />
             <Stat label="subagents" value={formatNum(node.subagent_count ?? 0)} />
             <Stat
-              label="first_ts"
-              value={
-                session?.first_timestamp_ms
-                  ? new Date(session.first_timestamp_ms).toLocaleString()
-                  : "—"
-              }
+              label="持续"
+              value={formatDuration(session?.first_timestamp_ms, session?.last_timestamp_ms)}
             />
             <Stat
               label="last_ts"
@@ -345,8 +417,72 @@ export function GraphDetailPanel({
           </section>
         )}
 
+        {sameWorkspace.length > 0 && (
+          <section className="detail-section">
+            <div className="detail-section-label">同 workspace 其它 main</div>
+            <ul className="detail-sibling-list">
+              {sameWorkspace.map((sib) => (
+                <li
+                  key={sib.node.node_id}
+                  className="detail-sibling"
+                  onClick={() => {
+                    const sibMeta: Partial<MainSessionMeta> = {
+                      sessionId: sib.node.session_id,
+                      jsonlPath: sib.node.jsonl_path,
+                      title: titles.get(sib.node.node_id, titles.auto(sib.node)),
+                      workspaceGuess: sib.node.workspace,
+                      projectKey: sib.node.workspace ?? "",
+                      primaryModel: sib.node.primary_model ?? undefined,
+                      messageCount: sib.node.message_count ?? 0,
+                      sizeBytes: sib.node.size_bytes ?? 0,
+                      firstTimestamp: sib.node.first_timestamp_ms
+                        ? new Date(sib.node.first_timestamp_ms).toISOString()
+                        : undefined,
+                      hasTrajectory: false,
+                      subagentDir: undefined,
+                      source: (sib.node.source === "OpenClaw" ? "openclaw" : "claude") as any,
+                    };
+                    navigate(`/session/${encodeURIComponent(sib.node.session_id)}`, {
+                      state: { session: sibMeta },
+                    });
+                  }}
+                  title="跳转到该 session 详情"
+                >
+                  <span className="sibling-title">
+                    {titles.get(sib.node.node_id, titles.auto(sib.node))}
+                  </span>
+                  <span className="sibling-meta">
+                    {formatNum(sib.node.token_total)} tok ·{" "}
+                    {sib.node.last_timestamp_ms
+                      ? new Date(sib.node.last_timestamp_ms).toISOString().slice(0, 10)
+                      : "—"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <section className="detail-section detail-section-muted">
-          <div className="detail-section-label">session_id</div>
+          <div className="detail-section-label">
+            session_id
+            <button
+              className="copy-btn"
+              onClick={() => copyToClipboard(node.id, "session_id")}
+              title="复制 session_id"
+            >
+              {copyHint === "session_id" ? "已复制" : "复制"}
+            </button>
+            {session?.jsonl_path && (
+              <button
+                className="copy-btn"
+                onClick={() => copyToClipboard(session.jsonl_path, "jsonl_path")}
+                title="复制 jsonl_path(在 finder 中可 ⌘⇧G 跳转)"
+              >
+                {copyHint === "jsonl_path" ? "已复制" : "复制路径"}
+              </button>
+            )}
+          </div>
           <code className="detail-id">{node.id}</code>
         </section>
       </div>
@@ -355,16 +491,36 @@ export function GraphDetailPanel({
 }
 
 function formatNum(n: number): string {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
 
-function Stat({ label, value, warn }: { label: string; value: string | number; warn?: boolean }) {
+function Stat({
+  label,
+  value,
+  warn,
+  compare,
+}: {
+  label: string;
+  value: string | number;
+  warn?: boolean;
+  compare?: { pct: number; label: string } | null;
+}) {
   return (
     <div className={`stat ${warn ? "stat-warn" : ""}`}>
       <dt>{label}</dt>
-      <dd>{value}</dd>
+      <dd>
+        {value}
+        {compare && compare.pct !== 0 && (
+          <span
+            className={`stat-compare ${compare.pct > 0 ? "stat-compare-up" : "stat-compare-down"}`}
+          >
+            {compare.label}
+          </span>
+        )}
+      </dd>
     </div>
   );
 }
