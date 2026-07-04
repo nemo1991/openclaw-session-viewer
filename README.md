@@ -19,16 +19,7 @@
 
 ## 简介
 
-OpenClaw Session Viewer 是一个本地优先的桌面应用，让你可以方便地查看、搜索、分析 Claude Code 和 OpenClaw 的历史会话。
-
-**为什么需要它？**
-
-- 你的 CLI 会话记录存在 `~/.claude/projects/...` 里，但你只能用 `cat` 或文本编辑器看
-- 想搜"上次是怎么解决 X 问题的"，但 JSONL 没法全文搜索
-- 想用 LLM 总结长会话、提取代码修改，但没法选范围
-- 想把某个会话分享给同事，但没有现成的导出工具
-
-**这个应用解决上述所有问题。**
+本地优先桌面应用,查看 / 搜索 / 分析 Claude Code 和 OpenClaw 历史会话。解决 CLI JSONL 没法搜、没法 LLM 总结、没法导出、没法跨 session 关联展示的问题。
 
 ## 下载
 
@@ -68,12 +59,12 @@ chmod +x OpenClaw*.AppImage
 ### 核心
 
 - **完整会话转录** — 文本、思考、工具调用、工具结果、图片、附件、压缩事件,所有类型
-- **主-子 agent 关联展示** (v0.6.0) — 子代理消息自动缩进(紫色 accent 边 + ▸ 箭头),主 session timeline 显示子代理计数 badge,Agent 卡片底部内嵌子代理摘要(消息数 + 工具分布 + 时长),不再 navigate 跳走
+- **主-子 agent 关联展示** (v0.6.0) — 子代理消息自动缩进(紫色 accent 边 + 小三角箭头),主 session timeline 显示子代理计数 badge,Agent 卡片底部内嵌子代理摘要(消息数 + 工具分布 + 时长),不再 navigate 跳走
 - **文件路径一键 reveal** (v0.6.0) — `Read`/`Edit`/`Write` 工具结果、`.plan` 文件、tracked file snapshot 全可点击 Finder/Explorer。Workspace 沙箱保护(默认锁紧 `workspaceGuess` 子树,设置里可放开),防 `~/.ssh/id_rsa` 等
 - **三种搜索**:
-- 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
-- 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
-- URL 跳转 (`?line=N`) — 直接定位到任意消息
+  - 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
+  - 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
+  - URL 跳转 (`?line=N`) — 直接定位到任意消息
 - **排序切换** — 会话详情顶部 `正序 / 倒序` 自由切换
 - **流式加载** — Rust `BufReader` 64KB 缓冲,500 条/批,8MB+ 大文件秒开
 - **实时状态** — 5 秒轮询 `~/.claude/sessions/<pid>.json`,显示运行中的 CLI 进程
@@ -81,31 +72,20 @@ chmod +x OpenClaw*.AppImage
 
 ### 高级
 
-- **Graph Explorer** (实验, `/graph` 顶 tab)
-- **G1 Graph** — force-directed 图,节点点击直接跳主项目原生 `/session/:id` (main) 或 `/session/<agentId>?path=...` (subagent),复用 `SubagentPanel` 的 subagent context 模板
-- **G2 Analytics** — 6 chart: sessions-by-day / token-top / top-tools / model-avg-thinking / retry-rate-distribution / subagent-chain-dist,支持 24h/7d/30d/all 时间范围
-- **G3 RAG** — hash-embedding lite (32-dim, 0 deps) + cosine topK 召回,带 matched-tokens 高亮,跨 tab prefill (`?q=query`)
-- 共享 `display_title` 系统 (auto + custom override, 跨刷新/跨 tab 同步)
-- 详细推进记录见 [docs/experiments/](docs/experiments/)
-- **大模型分析** — 4 个预置模板 + 自定义 Prompt
-- 会话摘要、代码修改提取、错误/陷阱分析
-- 流式响应,实时显示 token 用量
-- 支持任何 Anthropic 兼容 API (MiniMax、自定义代理)
+- **Graph Explorer** (`/graph` 顶 tab,实验) — G1 force-directed 图,节点点击跳主项目原生 `/session/:id`;G2 6 chart + 时间范围(24h/7d/30d/all);G3 hash-embedding + cosine topK + 跨 tab prefill (`?q=query`)。共享 `display_title` 系统。详见 [docs/experiments/](docs/experiments/)
+- **大模型分析** — 4 预置模板(摘要/代码修改/错误陷阱) + 自定义 Prompt,流式响应,支持 Anthropic 兼容 API(MiniMax、自定义代理)
 - **导出** — Markdown + HTML(独立可分享,带暗色主题)
-- **多源支持** — 同时支持 Claude Code (`~/.claude/`) 和 OpenClaw (`~/.openclaw/`)
-- **自定义数据源** — 在设置页添加任意自定义根目录，自动探测类型，保存即热重载
-- **扩展设计** — `BlockRegistry` 模式 + `BlockHandler` trait，新 block type 只需实现一个 handler + register
-- **未知 block 兜底** — 新出现的 block type 自动显示为 `UnknownBlockCard`（字段表 + hint 推断 + 复制/报告）
-- **主题** — 深色/浅色/跟随系统
-- **中文界面** — 默认 zh-CN,可选 en-US
+- **多源支持** — Claude Code (`~/.claude/`) + OpenClaw (`~/.openclaw/`) + 自定义数据源根目录(热重载)
+- **扩展设计** — `BlockRegistry` 模式 + 未知 block 自动 `UnknownBlockCard` 兜底
+- **主题与 i18n** — 深色/浅色/跟随系统;默认 zh-CN,可切 en-US
 
 ### 工程化
 
 - **单元测试** — Rust 107 + TS shared 41 + TS frontend 308 = **456 个测试**
-- **路径安全** — 所有 Tauri 命令做词法检查 + `assert_within_any_root` 兜底,Reveal 设 workspace 沙箱(用户可放开),防 `../../etc/passwd`
-- **BlockRegistry 模式** — `BlockHandler` trait + 可扩展注册表,符合开闭原则
-- **自动更新** — Tauri updater + GitHub Releases
+- **路径安全** — Tauri 命令词法检查 + `assert_within_any_root` + Reveal workspace 沙箱(可放开),防 `../../etc/passwd`
 - **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
+- **CI/CD** — GitHub Actions 三平台并行;docs-only 推送跳过 CI (paths-ignore)
+- **自动更新** — Tauri updater + GitHub Releases
 - **CI/CD** — GitHub Actions 三平台并行构建,docs-only 推送跳过 CI
 
 ## 截图
@@ -456,46 +436,10 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 路线图
 
-### 已完成 (v0.1.0 v0.4.4)
+完整版本历史看 [CHANGELOG.md](CHANGELOG.md)。
 
-- [x] 基础会话列表 + 转录查看
-- [x] 全局/会话内搜索
-- [x] 大模型分析 (4 模板 + 自定义)
-- [x] Markdown/HTML 导出
-- [x] OpenClaw 存储支持 (含 trajectory 过滤)
-- [x] 实时 PID 状态
-- [x] 多 Agent UI 二级分组 (v0.2.4)
-- [x] 自定义数据源根目录 + 热重载 (v0.2.5)
-- [x] Windows [object Object] 修复 (v0.2.6)
-- [x] BlockRegistry 模式重构 + UnknownBlockCard (v0.3.0)
-- [x] 会话详情排序切换 (v0.3.1)
-- [x] 3 个新 BlockHandler: `pr-link` / `agent-name` / `task_reminder` (v0.3.2)
-- [x] 会话详情时间段筛选 (v0.4.0)
-- [x] 会话列表 UI 增强 (首条提问预览 + thinking/tool 统计 + 智能相对时间) (v0.4.0)
-- [x] OpenClaw Trajectory 支持 (8 种事件 + 流式查看) (v0.4.0)
-- [x] 详情页深色主题 meta 块修复 + 子代理字段折叠 (v0.4.1)
-- [x] 列表默认进 Claude (移除"全部" radio) (v0.4.1)
-- [x] Edit 工具 line-level diff 视图 (v0.4.2)
-- [x] Bash/Read/Task/result 默认展开 + 优化展示 (v0.4.2)
-- [x] 时区设置 (Settings 下拉,7 个常用 IANA + auto) (v0.4.2)
-- [x] 会话列表默认改回 OpenClaw (v0.4.2)
-- [x] 会话内搜索结果下拉列表 + 修 Next 按钮不滚动 / 倒序+filter 无限下拉 / agent-name(连字符) 识别 (v0.4.3)
-- [x] 重新设计 app icon (蓝紫青渐变 + 几何 C 字母 + 平台 mask) (v0.4.4)
-- [x] 主-子 agent 跳转 + SubagentPanel + back-to-parent (v0.5.0)
-- [x] Claude 会话关联信息优雅展示:子代理消息缩进 + Agent 卡片内嵌摘要 + 文件路径点击 reveal (v0.6.0)
-- [x] 5 个紧急 UX 补丁:Settings 路径安全锁 + reveal 失败三按钮(复制/去设置/一键开启) + agent 芯片越界修复 (v0.6.1)
-- [x] 单元测试 + 组件可视化测试 (456 个: Rust 107 + TS shared 41 + TS frontend 308)
-- [x] 跨平台 CI (macOS/Windows/Linux)
-- [x] docs-only 推送跳过 CI (paths-ignore)
+计划中(v0.6.1+):MultiEdit 专属 diff / ToolResultCard spillover / 时区自定义 IANA / 会话对比 / 拖拽导入 JSONL / VS Code 集成 / OpenAI ChatCompletion 兼容 LLM 后端 / i18n 完善(英文/日文)。
 
-### 计划中 (v0.6.1+)
-
-- [ ] **MultiEdit 工具的专属 diff** — 多文件编辑 diff
-- [ ] **ToolResultCard spillover** — 真正拉全内容
-- [ ] **时区下拉加 Custom IANA name 输入**
-- [ ] **会话对比** — diff 两个会话的工具调用差异
-- [ ] **拖拽导入** — 拖入 JSONL 文件直接打开
-- [ ] **VS Code 集成** — 点击路径跳转到编辑器
 - [ ] **OpenAI ChatCompletion 兼容** — 大模型后端多支持
 - [ ] **i18n 完善** — 英文/日文界面
 
@@ -511,19 +455,13 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 文档索引
 
-| 文档                                                                      | 用途                                            |
-| ------------------------------------------------------------------------- | ----------------------------------------------- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                                   | 总体架构、数据流、性能基准、安全模型            |
-| [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)                     | BlockRegistry + BlockHandler 设计、扩展指南     |
-| [CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)                   | macOS / Windows / Linux 构建、签名、公证        |
-| [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md)             | OpenClaw JSONL schema,trajectory 文件机制       |
-| [RELEASING.md](docs/RELEASING.md)                                         | 维护者发版流程,故障恢复                         |
-| [E2E_TESTING.md](docs/E2E_TESTING.md)                                     | Playwright E2E 配置 / 用法 / 写新 case / 已知坑 |
-| [SECURITY.md](docs/SECURITY.md)                                           | 文件路径 reveal 安全模型 (v0.6.0 引入)          |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                             | 已修过的 bug 与开发经验                         |
-| [experiments/README.md](docs/experiments/README.md)                       | Graph Explorer (G1/G2/G3) 实验区 + 合并状态     |
-| [experiments/embed-db-findings.md](docs/experiments/embed-db-findings.md) | S4 综合分析 + 推荐决策                          |
-| [CHANGELOG.md](CHANGELOG.md)                                              | 各版本变更记录                                  |
+**架构与格式**:[ARCHITECTURE](docs/ARCHITECTURE.md) · [PARSER_ARCHITECTURE](docs/PARSER_ARCHITECTURE.md) · [OPENCLAW_SESSION_FORMAT](docs/OPENCLAW_SESSION_FORMAT.md)
+
+**工程实践**:[RELEASING](docs/RELEASING.md) · [CROSS_PLATFORM_BUILD](docs/CROSS_PLATFORM_BUILD.md) · [SECURITY](docs/SECURITY.md) · [E2E_TESTING](docs/E2E_TESTING.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
+
+**Graph Explorer 实验** ([docs/experiments/](docs/experiments/)):[README](docs/experiments/README.md) · [embed-db-findings](docs/experiments/embed-db-findings.md) · [G1](docs/experiments/embed-db-G1-graph-findings.md) · [G2](docs/experiments/embed-db-G2-olap-findings.md) · [G3](docs/experiments/embed-db-G3-rag-findings.md)
+
+**变更**:[CHANGELOG.md](CHANGELOG.md)
 
 ## 许可证
 
