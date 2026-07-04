@@ -230,8 +230,8 @@ export function GraphView() {
 
   // -------- rendering --------
 
-  if (error) return <div className="error">❌ {error}</div>;
-  if (graphError) return <div className="error">❌ {graphError}</div>;
+  if (error) return <div className="error">{error}</div>;
+  if (graphError) return <div className="error">{graphError}</div>;
   if (graphLoading || !entries || !visible || !fullGraph) {
     return <div className="loading">加载 sessions.ndjson ...</div>;
   }
@@ -254,7 +254,7 @@ export function GraphView() {
             onChange={(e) => setFocusedNodeId(e.target.value === "" ? null : e.target.value)}
             aria-label="选择钻取的 session"
           >
-            <option value="">📍 全部 sessions ({mainOptions.length})</option>
+            <option value="">全部 sessions ({mainOptions.length})</option>
             {mainOptions.map((opt) => (
               <option key={opt.id} value={opt.id}>
                 {titles.get(opt.id, titles.auto(opt.node))}
@@ -263,32 +263,32 @@ export function GraphView() {
           </select>
           {focusedNodeId && (
             <button className="back-btn" onClick={() => setFocusedNodeId(null)} title="返回全图">
-              ↩️ 全图
+              全图
             </button>
           )}
         </div>
         <div className="legend">
-          <span className="lg lg-main">● main session</span>
-          <span className="lg lg-error">● ∝ token·err</span>
+          <span className="lg lg-main">main session</span>
+          <span className="lg lg-error">节点大小 ∝ log(tokens), 红环 = 错误数</span>
           {focusedNodeId && (
             <>
               <span className="lg" style={{ color: ROLE_COLORS.Explore }}>
-                ● Explore
+                Explore
               </span>
               <span className="lg" style={{ color: ROLE_COLORS.Design }}>
-                ● Design
+                Design
               </span>
               <span className="lg" style={{ color: ROLE_COLORS.Validate }}>
-                ● Validate
+                Validate
               </span>
               <span className="lg" style={{ color: ROLE_COLORS.Implement }}>
-                ● Implement
+                Implement
               </span>
               <span className="lg" style={{ color: ROLE_COLORS.Other }}>
-                ● Other
+                Other
               </span>
               <span className="lg" style={{ color: "#facc15" }}>
-                ■ tool (钻取内)
+                tool(钻取内)
               </span>
             </>
           )}
@@ -360,7 +360,7 @@ export function GraphView() {
                 ctx.lineWidth = 1.5;
                 ctx.stroke();
                 if (errR >= 2.5) {
-                  const text = ec >= 1000 ? "1k+" : String(ec);
+                  const text = ec >= 1000 ? "≥1k" : String(ec);
                   ctx.font = `bold ${Math.max(3, errR * 1.15)}px sans-serif`;
                   ctx.fillStyle = "#fff";
                   ctx.textAlign = "center";
@@ -372,11 +372,11 @@ export function GraphView() {
               }
             }
 
-            if (node.id === hover || focusedNodeId === node.id || scale > 1.4) {
-              ctx.font = `${11 / scale}px monospace`;
-              ctx.fillStyle = "#fff";
+            if (node.id === hover || focusedNodeId === node.id || scale > 0.9) {
+              ctx.font = `${10 / scale}px monospace`;
+              ctx.fillStyle = "rgba(226, 232, 240, 0.85)";
               ctx.textBaseline = "middle";
-              ctx.fillText(String(node.label).slice(0, 32), node.x + r + 4, node.y);
+              ctx.fillText(String(node.label).slice(0, 28), node.x + r + 3, node.y);
             }
           }}
           nodePointerAreaPaint={(node: any, color: string, ctx: CanvasRenderingContext2D) => {
@@ -395,18 +395,19 @@ export function GraphView() {
 
         <div className="time-axis-hint">
           {focusedNodeId ? (
-            <span>⏱ main 在左上 · subagent 沿 X 轴按时序展开 · 工具节点(amber)在底部</span>
+            <span>钻取模式: main 锚定左上 · subagent 沿 X 轴按时序展开 · 工具节点(黄)在底部</span>
           ) : (
             <span>
-              📦 全图模式只显示 main session · subagent 折叠进详情面板 · 点节点 → 钻取查看子图
+              全图模式只显示 main session,subagent 折叠进详情面板 · 点节点 → 钻取查看子图 · 时序沿 Y
+              轴自上而下
             </span>
           )}
         </div>
       </div>
 
       <footer className="graph-footer">
-        👆 点击节点 → 右侧面板 · ✏️ 可重命名(跨 G1/G2/G3 同步) · 🔍 可独立显示该 session · 💬
-        可跳主项目会话详情
+        点击节点 → 右侧详情 · 编辑可重命名(跨 G1/G2/G3 同步) · 钻取可独立显示 · G3 RAG / 会话详情
+        一键跳转
       </footer>
 
       {selectedNode && (

@@ -71,10 +71,14 @@ export function classifyRole(desc: string | null | undefined): SubagentRole {
   return "Other";
 }
 
-/** main 节点半径 ∝ sqrt(token_total / 1e6),clamp [4, 14] */
+/** main 节点半径 ∝ log10(token_total),clamp [4, 14]
+ *  用对数避免 1.2B token 的 outlier 压扁其它节点 (sqrt 在跨 1000× 范围时太敏感)
+ *  1M → log10(1e6) = 6, 1B → 9; linear scale 4 + 1.4×(log10(t) - 6)
+ */
 function tokenRadius(tokenTotal: number | undefined | null): number {
-  const t = Math.max(0, tokenTotal ?? 0);
-  return Math.min(14, Math.max(4, Math.sqrt(t / 1e6)));
+  const t = Math.max(1, tokenTotal ?? 0);
+  const r = 4 + 1.4 * (Math.log10(t) - 6);
+  return Math.min(14, Math.max(4, r));
 }
 
 /**

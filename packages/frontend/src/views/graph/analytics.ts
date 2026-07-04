@@ -204,6 +204,10 @@ export interface Summary {
   total_tokens: number;
   total_subagents: number;
   total_errors: number;
+  /** 无错误 session 数 / 总数 — 成功率 */
+  clean_sessions: number;
+  /** 平均 session 持续时间(ms) */
+  avg_duration_ms: number;
   date_range: { from_ms: number; to_ms: number };
 }
 
@@ -211,12 +215,20 @@ export function summary(nodes: GraphNode[]): Summary {
   let total_tokens = 0;
   let total_subagents = 0;
   let total_errors = 0;
+  let clean_sessions = 0;
+  let duration_sum = 0;
+  let duration_count = 0;
   let from_ms = Infinity;
   let to_ms = -Infinity;
   for (const n of nodes) {
     total_tokens += n.token_total;
     total_subagents += n.subagent_count;
     total_errors += n.error_count;
+    if (n.error_count === 0) clean_sessions += 1;
+    if (n.first_timestamp_ms && n.last_timestamp_ms && n.last_timestamp_ms > n.first_timestamp_ms) {
+      duration_sum += n.last_timestamp_ms - n.first_timestamp_ms;
+      duration_count += 1;
+    }
     const ts = n.last_timestamp_ms ?? n.first_timestamp_ms ?? n.mtime_ms;
     if (ts) {
       if (ts < from_ms) from_ms = ts;
@@ -228,11 +240,97 @@ export function summary(nodes: GraphNode[]): Summary {
     total_tokens,
     total_subagents,
     total_errors,
+    clean_sessions,
+    avg_duration_ms: duration_count ? duration_sum / duration_count : 0,
     date_range: {
       from_ms: from_ms === Infinity ? 0 : from_ms,
       to_ms: to_ms === -Infinity ? 0 : to_ms,
     },
   };
+}
+
+/** 7. 按 workspace 错误数 / session 数 — 看哪条 work stream 最不稳 */
+export interface WorkspaceErrorRow {
+  workspace: string;
+  sessions_count: number;
+  total_errors: number;
+  err_per_session: number;
+}
+
+export function errorsByWorkspace(nodes: GraphNode[]): WorkspaceErrorRow[] {
+  const map = new Map<string, { sessions: number; errors: number }>();
+  for (const n of nodes) {
+    const ws = n.workspace ?? "(unknown)";
+    const m = map.get(ws) ?? { sessions: 0, errors: 0 };
+    m.sessions += 1;
+    m.errors += n.error_count;
+    map.set(ws, m);
+  }
+  return Array.from(map.entries())
+    .map(([workspace, v]) => ({
+      workspace,
+      sessions_count: v.sessions,
+      total_errors: v.errors,
+      err_per_session: v.sessions ? v.errors / v.sessions : 0,
+    }))
+    .sort((a, b) => b.total_errors - a.total_errors);
+}
+
+/** 8. 工具按"类别"分组 — 简单启发式,基于工具名首段 */
+const TOOL_CATEGORY_RULES: Array<[RegExp, string]> = [
+  [/^(Read|Write|Edit|Glob|Grep|LS)$/i, "文件"],
+  [/^(Bash|Shell)$/i, "Shell"],
+  [/^(TaskUpdate|TaskCreate|TaskOutput|TaskStop|TaskList)$/i, "Task 管理"],
+  [/^(Agent|Task)$/i, "子代理"],
+  [/^(WebFetch|WebSearch)$/i, "Web"],
+  [/^(AskUserQuestion|AskUser)$/i, "交互"],
+  [/^(TodoWrite|TODOs)$/i, "TODO"],
+];
+
+export interface ToolCategoryRow {
+  category: string;
+  total_calls: number;
+  sessions_count: number;
+}
+
+export function toolsByCategory(entries: GraphEntry[]): ToolCategoryRow[] {
+  const byTool = new Map<string, { sessions: Set<string>; calls: number }>();
+  for (const e of entries) {
+    for (const ed of e.edges) {
+      if (ed.type !== "UsedTool") continue;
+      let m = byTool.get(ed.tool_name);
+      if (!m) {
+        m = { sessions: new Set(), calls: 0 };
+        byTool.set(ed.tool_name, m);
+      }
+      m.sessions.add(e.node.node_id);
+      m.calls += ed.count;
+    }
+  }
+  const byCat = new Map<string, { calls: number; sessions: Set<string> }>();
+  for (const [tool, v] of byTool) {
+    let cat = "其他";
+    for (const [re, name] of TOOL_CATEGORY_RULES) {
+      if (re.test(tool)) {
+        cat = name;
+        break;
+      }
+    }
+    let bucket = byCat.get(cat);
+    if (!bucket) {
+      bucket = { calls: 0, sessions: new Set() };
+      byCat.set(cat, bucket);
+    }
+    bucket.calls += v.calls;
+    for (const s of v.sessions) bucket.sessions.add(s);
+  }
+  return Array.from(byCat.entries())
+    .map(([category, v]) => ({
+      category,
+      total_calls: v.calls,
+      sessions_count: v.sessions.size,
+    }))
+    .sort((a, b) => b.total_calls - a.total_calls);
 }
 
 export function formatNum(n: number): string {
