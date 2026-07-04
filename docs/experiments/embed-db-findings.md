@@ -81,12 +81,7 @@ navigate(`/session/${agentId}?path=${jsonlPath}`, {
 
 ## 待办 (M3)
 
-1. **ingest crate 合并到 src-tauri**:`src-tauri/src/commands/graph.rs` 加 `pub async fn list_graph()`,复用 moka cache 5min TTL
-2. **`graphStore.load()` 切 Tauri invoke** — 替换 `fetch('/sessions.ndjson')` 为 `invoke('list_graph')`
-3. **删实验 web**:`git rm -r experiment/embed-db/web/` + ingest(若已合并)
-4. **清理 CI / README / docs** 残留 `experiment/` 引用
-5. **补单测 + e2e** — M1/M2 跳过的 6 个 `.test.ts/.test.tsx` + `e2e/graph-explorer.spec.ts`
-6. **用户决定**:`experimental/embed-db` → `main` 合 PR 时机
+见 [CHANGELOG.md](../../CHANGELOG.md) `[Unreleased].### 待办 (M3)` 段 + [docs/experiments/README.md](./README.md) 的"M3 TODO"段。本文件不重复列,跟两处保持同步。
 
 ---
 
