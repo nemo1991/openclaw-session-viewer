@@ -29,6 +29,15 @@ import { useKey } from "../lib/keymap";
 import { formatBytes, formatNumber, formatTimeExact } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { apiRevealInFinder } from "../lib/api";
+import {
+  summarizeSession,
+  findRepeatRuns,
+  findIdleGaps,
+  formatIdleGap,
+  type SessionSummary,
+  type RepeatRun,
+  type IdleGap,
+} from "../components/sessionInsights";
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionDetailRoute.css";
 
@@ -101,6 +110,14 @@ export default function SessionDetailRoute() {
     () => (meta?.sessionId ? livePids.find((p) => p.sessionId === meta.sessionId) : undefined),
     [meta, livePids]
   );
+
+  // ===== 聚合 + 去噪(从已加载 entries 派生) =====
+  const sessionInsights = useMemo(() => {
+    const summary: SessionSummary = summarizeSession(entries);
+    const repeats: RepeatRun[] = findRepeatRuns(entries, 3);
+    const idles: IdleGap[] = findIdleGaps(entries, 5 * 60_000);
+    return { summary, repeats, idles };
+  }, [entries]);
 
   // 当前搜索命中(传给 useTranscriptScroll)
   const currentHit = useSearchInSessionStore(
@@ -309,6 +326,13 @@ export default function SessionDetailRoute() {
 
       <SearchInSessionBar />
 
+      {/* 聚合 chip 行 — 一眼看到 session 结构 */}
+      <SessionSummaryStrip
+        summary={sessionInsights.summary}
+        repeats={sessionInsights.repeats}
+        idles={sessionInsights.idles}
+      />
+
       {error && (
         <div className="error">
           {t("app.error")}: {error}
@@ -316,6 +340,102 @@ export default function SessionDetailRoute() {
       )}
 
       <TranscriptView />
+    </div>
+  );
+}
+
+/**
+ * SessionSummaryStrip — 一行聚合 chip
+ *
+ * 数据来源:summarizeSession / findRepeatRuns / findIdleGaps
+ * (纯函数,见 components/sessionInsights.ts)
+ *
+ * 设计:不抢戏 — 1 行,小字号,色块编码。空数据不渲染。
+ */
+function SessionSummaryStrip({
+  summary,
+  repeats,
+  idles,
+}: {
+  summary: SessionSummary;
+  repeats: RepeatRun[];
+  idles: IdleGap[];
+}) {
+  // 空 entries 或空 tool 都不显示(避免加载中闪烁)
+  if (summary.textMessageCount === 0) return null;
+  if (summary.toolUsage.length === 0 && summary.textMessageCount < 3) return null;
+
+  // 取 top 5 tool,剩余合 "其他" 显示计数
+  const topTools = summary.toolUsage.slice(0, 5);
+  const otherTools = summary.toolUsage.slice(5);
+  const otherCount = otherTools.reduce((a, b) => a + b.count, 0);
+
+  return (
+    <div className="session-summary-strip" data-testid="session-summary-strip">
+      <span className={`ss-phase ss-phase-${summary.phaseHint}`} title={summary.phaseDetail}>
+        {summary.phaseHint === "explore" && "探索"}
+        {summary.phaseHint === "implement" && "实施"}
+        {summary.phaseHint === "mixed" && "混合"}
+        {summary.phaseHint === "short" && "短会话"}
+        {summary.phaseDetail && <span className="ss-phase-detail"> · {summary.phaseDetail}</span>}
+      </span>
+      <span className="ss-sep" />
+      {topTools.map((t) => (
+        <span key={t.tool} className="ss-tool" title={`${t.tool} × ${t.count}`}>
+          {t.tool} <span className="ss-tool-count">{t.count}</span>
+        </span>
+      ))}
+      {otherCount > 0 && (
+        <span
+          className="ss-tool ss-tool-other"
+          title={otherTools.map((t) => `${t.tool} × ${t.count}`).join("; ")}
+        >
+          +{otherTools.length} 其他 <span className="ss-tool-count">{otherCount}</span>
+        </span>
+      )}
+      {summary.subagentCount > 0 && (
+        <>
+          <span className="ss-sep" />
+          <span className="ss-subagent">subagent × {summary.subagentCount}</span>
+        </>
+      )}
+      {summary.thinkingCount > 0 && (
+        <>
+          <span className="ss-sep" />
+          <span className="ss-thinking">thinking × {summary.thinkingCount}</span>
+        </>
+      )}
+      {summary.errorCount > 0 && (
+        <>
+          <span className="ss-sep" />
+          <span className="ss-error" title="包含 stopReason=error 的 assistant message">
+            错误 × {summary.errorCount}
+          </span>
+        </>
+      )}
+      {repeats.length > 0 && (
+        <>
+          <span className="ss-sep" />
+          <span
+            className="ss-repeat"
+            title={repeats.map((r) => `${r.tool} × ${r.count}`).join("; ")}
+          >
+            连续重复 {repeats.length} 段
+          </span>
+        </>
+      )}
+      {idles.length > 0 && (
+        <>
+          <span className="ss-sep" />
+          <span
+            className="ss-idle"
+            title={idles.map((g) => formatIdleGap(g.durationMs)).join("; ")}
+          >
+            {idles.length} 长间隔 · 最长{" "}
+            {formatIdleGap(Math.max(...idles.map((g) => g.durationMs)))}
+          </span>
+        </>
+      )}
     </div>
   );
 }
