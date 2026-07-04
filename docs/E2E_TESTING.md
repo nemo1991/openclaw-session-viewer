@@ -378,17 +378,17 @@ await page.addInitScript((session) => {
 
 ## 路线图 (待补的 E2E)
 
-| 模块           | 优先级 | 建议 case                                                                                                                       |
-| -------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| 路由跳转       | 高     | 会话列表 详情 返回列表,详情 轨迹页                                                                                              |
-| 快捷键         | 高     | `Cmd+K` 搜索 / `Cmd+F` 会话内 / `n` / `p` / `Esc`                                                                               |
-| Graph Explorer | 中     | G1 节点点击跳 `/session/:id` (main + subagent 两种)/ G2 chart 渲染 / G3 `?q=` prefill + 点命中跳详情(用 mock `sessions.ndjson`) |
-| 时间筛选       | 中     | preset 切换 / 自定义 datetime-local / URL 同步                                                                                  |
-| 主题切换       | 中     | dark / light / system 切换 + localStorage 持久化                                                                                |
-| 时区设置       | 中     | 切换 IANA 名,刷新后保持                                                                                                         |
-| 大模型分析     | 低     | mock Anthropic 响应,验证 token 计数                                                                                             |
-| 导出           | 低     | Markdown / HTML 下载触发 + 文件内容                                                                                             |
-| 视觉回归       | 低     | 全页 screenshot 对比 baseline                                                                                                   |
+| 模块           | 优先级 | 建议 case                                                                                            |
+| -------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| 路由跳转       | 高     | 会话列表 详情 返回列表,详情 轨迹页                                                                   |
+| 快捷键         | 高     | `Cmd+K` 搜索 / `Cmd+F` 会话内 / `n` / `p` / `Esc`                                                    |
+| Graph Explorer | 中     | G1 节点点击跳 `/session/:id` (main + subagent) / G2 chart / G3 `?q=` prefill(mock `sessions.ndjson`) |
+| 时间筛选       | 中     | preset 切换 / 自定义 datetime-local / URL 同步                                                       |
+| 主题切换       | 中     | dark / light / system 切换 + localStorage 持久化                                                     |
+| 时区设置       | 中     | 切换 IANA 名,刷新后保持                                                                              |
+| 大模型分析     | 低     | mock Anthropic 响应,验证 token 计数                                                                  |
+| 导出           | 低     | Markdown / HTML 下载触发 + 文件内容                                                                  |
+| 视觉回归       | 低     | 全页 screenshot 对比 baseline                                                                        |
 
 ---
 
