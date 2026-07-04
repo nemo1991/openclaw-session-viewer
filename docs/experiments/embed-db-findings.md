@@ -1,246 +1,204 @@
-# S4: 三 PoC 综合 findings + 决策建议
+# Graph Explorer 推进总结 (M2 收口态)
 
-**日期**: 2026-07-01
-**Sprint**: S4 (决赛) — 收口
-**状态**: **三个 PoC 全部跑通**
-**分支**: `experimental/embed-db` (commit 885adf7 + S4 commit)
+**日期**: 2026-07-04 (覆盖原 S4 文,保留 S0-S3 历史数据)
+**分支**: `experimental/embed-db` (基于 `feature/subagent-parent-link`)
+**状态**: 3 个 PoC 全部跑通且合并到主项目 (M1 + M2 完成)
 
----
-
-## TL;DR
-
-| PoC               | 价值        | 成本 | 推荐                                     |
-| ----------------- | ----------- | ---- | ---------------------------------------- |
-| **G1 Graph**      |             | 中   | ** 主推** — 升主线首选                   |
-| **G2 Analytics**  |             | 低   | ** 保留** — dashboard 模式               |
-| **G3 RAG (lite)** | (M1) / (M2) | 低   | ** 保留 lite 作为入口** — 真 LLM 留 v0.8 |
-
-**本轮出 demo 给所有 3 个方向,但**G1 Graph 显著胜出\*\*:
-
-- 用户**一眼就能看见** agent 拓扑(60 节点力导向图),main 项目做不到
-- 完成 = 浏览器端纯 React 渲染 = 零外部依赖
-- 用最少代码解决最大的"认知负担"问题
+> 历史内容(S0-S3 推进数据 + 决策依据)保留在本文件后半段,作"为什么这样选"的可追溯参考。**当前权威状态看 [docs/experiments/README.md](./README.md)** + [CHANGELOG.md](../../CHANGELOG.md) [Unreleased] 段。
 
 ---
 
-## 三 PoC 对比表
+## TL;DR — 完成态
 
-### 维度 1:能给用户回答什么问题?
+| PoC          | 状态          | 合并 commit | 入口                      | 数据源 (M1/M2 → M3)                                    |
+| ------------ | ------------- | ----------- | ------------------------- | ------------------------------------------------------ |
+| G1 Graph     | 主项目已 ship | `bc24a08`   | `/graph?view=graph`       | fetch `/sessions.ndjson` → Tauri invoke `list_graph()` |
+| G2 Analytics | 主项目已 ship | `683e61d`   | `/graph?view=analytics`   | (同上 — `graphStore` 三 view 共享)                     |
+| G3 RAG       | 主项目已 ship | `683e61d`   | `/graph?view=rag[&q=...]` | (同上)                                                 |
 
-| PoC               | 强项问题                                                                                         | 弱项问题                                |
-| ----------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------- |
-| **G1 Graph**      | "这个 session 调用了哪些 subagent?谁 spawn 谁?" / "一个 session 里 25 个 subagent 是怎么协作的?" | 找具体文本内容 (要配合 G3) / 跨 session |
-| **G2 Analytics**  | "最近 30 天 token 总消耗?" / "模型漂移?" / "哪个 session 错误率最高?"                            | 单 session 详情 / 关联关系              |
-| **G3 RAG (lite)** | "我上次写 API 是哪个 session 怎么做的?" / "我 retry 最多的工具是啥?" (hash 不能跨字面)           | 语义模糊查询 (想睡 vs 疲倦)             |
+**关键决策(2026-07-01 起的总览)**:
 
-### 维度 2:实现成本 (实际 LOC + 时间)
-
-| PoC               | Rust LOC              | TS LOC                                 | 总耗时  | 主要依赖                     |
-| ----------------- | --------------------- | -------------------------------------- | ------- | ---------------------------- |
-| **G1 Graph**      | +110 (parser + graph) | ~250 (loader + GraphView)              | ~6 小时 | react-force-graph-2d (600KB) |
-| **G2 Analytics**  | 0                     | ~570 (analytics + AnalyticsView + CSS) | ~3 小时 | recharts + d3 (380KB)        |
-| **G3 RAG (lite)** | +30 (parser snippets) | ~300 (rag + RagChat + CSS)             | ~3 小时 | 0 deps (纯 JS)               |
-
-### 维度 3:用户价值 (定性打分 1-5)
-
-| 维度                | G1                    | G2 (M1)                | G3 (lite)        |
-| ------------------- | --------------------- | ---------------------- | ---------------- |
-| 跨 session 检索能力 | 5 (subagent 拓扑)     | 3 (聚合 + 不能 single) | 4 (召回 top-K)   |
-| 可解释性            | 5 (节点 + 边肉眼可见) | 4 (SQL 类图表)         | 3 (hash 不透明)  |
-| 学习曲线(用户)      | 5 (一打开就知道)      | 4 (6 chart 合理)       | 3 (要输入 query) |
-| 学习曲线(开发者)    | 3 (parser 加字段)     | 2 (analytics 函数)     | 2 (rag.ts 简单)  |
-| 演示价值            | 5 (视觉震撼)          | 4 (数据密集)           | 3 (冷静)         |
-| 持久化价值          | 1 (无状态)            | 1 (无状态)             | 1 (无状态)       |
-
-### 维度 4:扩展性
-
-| PoC          | 加 schema 字段难度           | 数据规模上限                   |
-| ------------ | ---------------------------- | ------------------------------ |
-| G1 Graph     | 易 (parser.rs+graph.rs,几天) | 60-100 节点 fluent             |
-| G2 Analytics | 易 (analytics.ts+UI)         | 500+ rows OK                   |
-| G3 RAG lite  | 易 (rag.ts embed 替身)       | 1000+ session OK (~150ms 索引) |
+1. **升主线,合并 G1/G2/G3 进主项目 `packages/frontend/`** 而非新建独立 binary — 用户原话"实验特性只要分支分开,但与主线运行环境一支就好"
+2. **不引入嵌入式图数据库** — 35 sessions × ~2KB ≈ 70KB 总内存,9ms 索引 / < 1ms 查询,DB 集成成本超过收益
+3. **数据源短期双源**(fetch + experiment web),M3 切 Tauri invoke — 中途不破坏任一边
+4. **子代理也能跳自己的详情页** — 复用 `SubagentPanel.tsx:79-110` 模板,`?path=` 持久化兜底
 
 ---
 
-## 每个 PoC 的"实质洞察"
+## 完成时间线 (M1 + M2)
 
-### G1 Graph — 为什么胜出
+| 日期       | commit                 | 阶段   | 关键变更                                                                                                                         |
+| ---------- | ---------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-06-22 | (S0 起)                | 0      | branch + `experiment/embed-db/ingest/` 子 crate skeleton;NDJSON sink;SessionNode schema                                          |
+| 2026-06-26 | (S1-G1)                | 1      | G1 force-directed 图渲染(60+ 节点:35 main + 25 subagent);`react-force-graph-2d` + d3-force                                       |
+| 2026-06-28 | (S1.5 G1 补强)         | 2      | 节点半径 ∝ token / 角色配色 / 钻取模式 / 详情面板 / `display_title` 跨视图                                                       |
+| 2026-06-28 | (S2-G2)                | 3      | G2 6 chart + 时间范围;recharts 引入;`analytics.ts` 6 个纯函数                                                                    |
+| 2026-06-29 | (S3-G3)                | 4      | G3 hash-embedding lite (32-dim) + cosine topK + matched-tokens 高亮 + 预设 query                                                 |
+| 2026-07-01 | (S4 收口)              | 5      | 本文件原版 writes:"3 PoC 全部跑通,建议 G1 升 main"                                                                               |
+| 2026-07-02 | (S6 子节点 ts bug fix) | 6      | subagent 节点 `first_timestamp_ms` 真实化(`agent_id` 字段加到 SessionNode,Spawned edge 链路修复)                                 |
+| 2026-07-03 | `4d4ea18`              | 7      | 实验 web:全图模式删 subagent 节点(折叠进详情面板)                                                                                |
+| 2026-07-03 | `f41d555`              | 8      | 实验 web:详情面板跳 G3 RAG                                                                                                       |
+| 2026-07-04 | `bc24a08`              | **M1** | **合并 G1 到主项目**:`/graph?view=graph`;`GraphDetailPanel` 跳主项目 `/session/:id` 原生路由;zustand `titleStore` + `graphStore` |
+| 2026-07-04 | `683e61d`              | **M2** | **合并 G2 + G3**:recharts 引入;`AnalyticsView` / `RagChat` 搬入;`?q=query` 跨 tab prefill                                        |
 
-打开 G1 Graph,用户**立刻**看出:
-
-- OpenClaw Session Viewer 自己开发的 session (a2349f0e) **有 25 个 subagent**
-- 每个 subagent 都有 `description` 注释(`"Explore time and timezone handling"`、`"查找 SAP 相关模型文件"`)
-- 用 1.1B tokens,这是该用户**知道但从未图形化看到**的事实
-
-main 项目 /session/<uuid> 详情页也能看到 SubagentPanel + SubagentInlineSummary,但需要**打开特定 session**。G1 直接给**全局视角**。
-
-### G2 Analytics — 实用但不惊艳
-
-打开 G2 Analytics,用户看到:
-
-- 6 个 chart + 6 KPI,数据真实(1.42B tokens、26 subagent、190 errors、1048 thinking)
-- 模型漂移一目了然:MiniMax-M3 × 34 + M2.7 × 1
-- Token top 5 列表带 hover 高亮
-
-**vs G1**: 它告诉用户**"你的数据是啥"**,但没告诉"为什么是这样"。纯聚合,洞察要用户自己摸索。
-
-### G3 RAG (lite) — 召回 OK 但语义窄
-
-输入 `openclaw session`,**精准召回 a2349f0e cosine 0.752**(OpenClaw Session Viewer dev)。
-但输入 `想睡的 session`(或者需要同义召回的 query),hash embedding 完全失败。
-**这个 PoC 证明了**:**用户确实想跨 session 召回,但需要更聪明的检索**。M1 (hash) 是 baseline,M2 (真 embedding) 才能完成 promise。
+3 PoC 决策 → 实施路径:S0-S3 推进(留 history) → 用户决定升主线 → M1 + M2 合并 → **M3 待启动**
 
 ---
 
-## 推荐:三阶段收口
+## 实现规模 (实际 LOC)
 
-### 阶段 1 (本周完成 ):三个 PoC 都跑通
-
-三个 demo 都能开浏览器看到效果,信息密度对比明显。
-
-### 阶段 2 (下一步建议):挑主推一个升 main
-
-推荐 **G1 Graph 升 main**:
-
-- 价值最高
-- 不需要 backend 数据库(纯前端 React)
-- Tauri 项目里直接做个 `/explore` route 把 GraphView 塞进去
-- main session URL 兼容(click 节点跳 main 项目 `/session/<uuid>`)
-
-代码量:
-
-- `web/src/views/GraphView.tsx` `packages/frontend/src/views/`
-- `web/src/loader.ts` (NDJSON 加载) 等价改成调 Tauri command 拉 SessionMeta
-- 节点颜色 + hover + 渲染逻辑保留
-- 实验分支的 `ingest/` **完全不动**(用 main 项目自己的 list_sessions 流)
-
-### 阶段 3 (可选):G2 Analytics 进 settings tab
-
-Analytics 作为"Advanced" tab 进 main,跟 Settings 并列:
-
-- 复用 6 个聚合函数 + recharts
-- 数据源:调 `apiListSessions()` (v0.6.1 已有) 一次性拉
-- 时间范围切换天然支持(localStorage 持久化)
-
-### 阶段 4 (未来 v0.8+):G3 RAG 真版本
-
-换 `fastembed-rs` wasm (~30MB) 或 OpenAI text-embedding-3-small:
-
-- 解除 M1 lite 的"不能跨字面召回"问题
-- 但加 30MB model 体积,**只在该方向被选择升 main 时再加**
+| 层                      | Rust LOC | TS LOC                              | 依赖                                           |
+| ----------------------- | -------- | ----------------------------------- | ---------------------------------------------- |
+| ingest crate            | ~660     | —                                   | (零外部 — 纯 serde_json + walkdir)             |
+| experiment web          | —        | ~1700 (5 个 view + 5 个 store/load) | react-force-graph-2d 600KB, d3 380KB, recharts |
+| 主项目集成 (M1+M2 净增) | 0        | +11 文件,~900 行                    | recharts 装到主项目                            |
 
 ---
 
-## 决策记录
-
-### 已决定:继续在实验分支开发,定期 rebase main
-
-参考 main commit list:实验分支 4 个 commit 全部在 `experimental/embed-db` 上,跟 main 解耦良好。
-
-### 已决定:不上任何后端数据库
-
-理由:35 sessions × 2KB 在浏览器内存里 9ms 索引,< 1ms 查询。DuckDB / SurrealDB / SQLite-vec 全部**没**增加价值。后续如果 sessions 突破 1 万,再考虑 SQLite-vec + FTS5(那个是 BM25 / FTS 的真正用场)。
-
-### 已决定:实验分支不并回 main
-
-写这份 findings 后,**实验分支保持 active**,等用户在 main 里推进 Graph v0.7.x 时 — 那个 PR 才会"消化"实验分支的代码。
-
-### 待用户决定:G1 是否升 main?
-
-- 选项 A:**立即升 main** — 写 PR,带 G1 GraphView 进 main
-- 选项 B:**暂时搁置实验** — v0.6.1 已 ship,主项目先固化,实验分支冷藏
-- 选项 C:**继续实验** — 加 message-level edges + subagent graph 节点 hover 展示 sub-graph
-
----
-
-## 风险与缓解
-
-| 风险                                | 缓解                                                            |
-| ----------------------------------- | --------------------------------------------------------------- |
-| 实验分支腐烂 (没人 main batch 进来) | 1 个月无 commit 自动归档到 `archive/embed-db/`                  |
-| 升 main 时 rebase 大冲              | 实验分支只动 `experiment/embed-db/`,零接触 main — rebase 0 冲突 |
-| G1 / G2 视觉风格跟 main 不一致      | 升 main 时改用 main 项目的 CSS 变量 + 设计 token                |
-| 用户数据集会变(用户源数据变更)      | 重新 ingest + 重新 build 是 1 行命令                            |
-
----
-
-## 文件总览 (S0 + S1 + S2 + S3)
+## 完成态架构 (M2 收口)
 
 ```
-docs/experiments/
-├── README.md                              # 3 PoC 概览
-├── embed-db-S0-findings.md                # S0 findings
-├── embed-db-G1-graph-findings.md          # S1 findings
-├── embed-db-G2-olap-findings.md           # S2 findings
-├── embed-db-G3-rag-findings.md            # S3 findings
-└── embed-db-findings.md                   #  S4 (本文件)
-
-experiment/embed-db/
-├── Cargo.toml                             # workspace
-├── ingest/                                #  Rust 子 crate (~660 行)
-│   ├── Cargo.toml
-│   └── src/
-│       ├── main.rs
-│       ├── cli.rs
-│       ├── graph.rs                       # SessionNode (含 RAG snippets)
-│       ├── scanner.rs
-│       ├── parser.rs                      # 6 step 提取
-│       └── sinks/stdout.rs                # NDJSON output
-└── web/                                   #  Vite + React + TS (~1700 行)
-    ├── package.json
-    ├── vite.config.ts
-    ├── public/sessions.ndjson             # 35 sessions × ~2.9 snippets = 90KB
-    └── src/
-        ├── main.tsx
-        ├── App.tsx                        # 3-tab 路由
-        ├── App.css / Analytics.css / RagChat.css
-        ├── types.ts
-        ├── loader.ts                      # NDJSON  graph nodes/links
-        ├── graph-types.ts
-        ├── analytics.ts                   # 6 聚合函数
-        ├── rag.ts                         # hash embedding + cosine
-        └── views/
-            ├── GraphView.tsx               #  G1 (react-force-graph-2d)
-            ├── AnalyticsView.tsx           #  G2 (recharts × 6)
-            └── RagChat.tsx                 #  G3 (cosine topK 召回)
+packages/frontend/src/
+├── routes/
+│   ├── GraphExplorerRoute.tsx      /graph 顶 tab 入口 + useSearchParams
+│   ├── SessionsRoute.tsx           列表 + topbar 跳 /graph
+│   └── SessionDetailRoute.tsx      原生 /session/:id (已支持 subagent context)
+├── views/graph/
+│   ├── GraphView.tsx               G1 force-directed + custom canvas
+│   ├── GraphDetailPanel.tsx        详情面板 + 跳主项目原生 /session/:id
+│   ├── AnalyticsView.tsx           G2 6 chart
+│   ├── RagChat.tsx                 G3 hash-embedding + cosine
+│   ├── graphStore.ts               zustand 共享 entries
+│   ├── titleStore.ts               zustand 跨 tab display_title
+│   ├── loader.ts / title.ts / analytics.ts / rag.ts / graph-types.ts / types.ts
+│   └── {GraphDetailPanel,AnalyticsView,RagChat}.css
+└── public/
+    └── sessions.ndjson             M1/M2 临时数据源,M3 切 Tauri invoke
 ```
+
+**会话详情跳转**(主项目原生的能力,被 G1 复用):
+
+- main 节点: `navigate(/session/<sessionId>, { state: { session: <realMeta> } })`
+- subagent 节点: `navigate(/session/<agentId>?path=<jsonlPath>, { state: { session: <virtualMeta>, subagentContext: {...} } })`
+- 复用模板: `SubagentPanel.tsx:79-110` (主项目早已实现,subagent 跳父 + `?path=` F5 兜底)
+- 之前跳 G3 RAG 按钮(实验 web 跳同应用另一 view)被替代为跳主项目原生的 `/session/:id`
 
 ---
 
-## 运行时数据 (实测)
+## 待办 (M3 — 未启动)
+
+1. **ingest crate 合并到 src-tauri**:`src-tauri/src/commands/graph.rs` 加 `list_graph(app: AppHandle) -> Vec<GraphEntry>` Tauri command;复用 moka cache 5min TTL
+2. **`graphStore.load()` 切 Tauri invoke**:`packages/frontend/src/lib/api.ts` `apiListGraph()` 替换 `fetch('/sessions.ndjson')` 为 `invoke('list_graph')`
+3. **删除实验 web**:`git rm -r experiment/embed-db/web/` + ingest crate(若已合并)
+4. **清理 CI / README / docs** 残留 `experiment/` 引用
+5. **用户决定时机合并** `experimental/embed-db` → `main`
+6. **补 vitest + e2e** — M1/M2 跳过测试,M3 收尾时补 `loader.test` / `titleStore.test` / `GraphView.test` / `GraphDetailPanel.test` / `analytics.test` / `rag.test` + `e2e/graph-explorer.spec.ts`
+
+触发 M3 的先决条件:
+
+- 全部 6 个文件测试写过且过
+- Tauri dev 启动后 `/graph?view=graph` 数据流从 invoke 来
+- e2e smoke 全过
+- 主项目原有 4 个 route 都不破
+
+---
+
+## 历史 (S0-S3 决策依据,保留作可追溯参考)
+
+> 以下保留作"为什么这样选"的依据。**当前状态以上方完成态为准**。
+
+### S4 原始决策(2026-07-01 写下,后由 M1+M2 覆盖)
+
+| PoC               | 推荐决策                             | 当前实际(2026-07-04)               |
+| ----------------- | ------------------------------------ | ---------------------------------- |
+| **G1 Graph**      | 升主线首选                           | 已 ship M1 (`bc24a08`)             |
+| **G2 Analytics**  | 保留 — dashboard                     | 已 ship M2 (`683e61d`)             |
+| **G3 RAG (lite)** | 留 lite 入口,M2 真 embedding 推 v0.8 | M2 ship lite;真 embedding 仍待未来 |
+
+G1 胜出的原因(现在依然成立):
+
+- 用户**一眼**看见 agent 拓扑;main 项目做不到
+- 纯前端 React = 零 backend 依赖
+- 最少代码解决最大"认知负担"问题
+
+### 各 PoC 实质洞察 (S0-S3)
+
+**G1 Graph**: 在 a2349f0e 上看到 25 个 subagent 节点(全部 Explore/Design 角色,纯思考无实施),1.1B tokens — 用户**早就知道但从未图形化看到**的事实。
+
+**G2 Analytics**: 6 个聚合函数 + 6 KPI,1.42B tokens / 26 subagent / 190 errors / 1048 thinking;模型漂移一目了然。但纯聚合,洞察靠用户自己摸索。
+
+**G3 RAG (lite)**: hash embedding 召回精准但语义窄(`想睡` query 失败)。证明"用户确实想跨 session 召回,但需要真 embedding"。M1 (hash) 是 baseline;真 embedding 是 v0.8+ 路线项目。
+
+### 维度对比表 (S4 原始)
+
+| 维度                | G1  | G2 (lite) | G3 (lite) |
+| ------------------- | --- | --------- | --------- |
+| 跨 session 检索能力 | 5   | 3         | 4         |
+| 可解释性            | 5   | 4         | 3         |
+| 学习曲线(用户)      | 5   | 4         | 3         |
+| 学习曲线(开发者)    | 3   | 2         | 2         |
+| 演示价值            | 5   | 4         | 3         |
+| 持久化价值          | 1   | 1         | 1         |
+
+### S4 当时数据快照
 
 ```
 35 sessions 真实数据
-├─ G1: react-force-graph-2d 渲染 60+ 节点 (35 main + 25 subagent) 流畅
+├─ G1: react-force-graph-2d 渲染 60+ 节点 (10 main + 25 subagent + 26 tool 等)
 ├─ G2: 6 chart + 6 KPI + token top 10 表
 └─ G3: hash-embedding 索引 9ms / query < 1ms
 ```
 
-OpenClaw Session Viewer 分支 `feature/subagent-parent-link` 上的真实会话:
+`feature/subagent-parent-link` 上的 a2349f0e:
 
-- **a2349f0e-...**: OpenClaw Session Viewer 自开发主会话
-  - 1.12B tokens / 25 subagent / 122 errors / 681 thinking blocks
-  - primary_model = MiniMax-M3
-  - top 3 工具: Bash / Edit / Read
-  - **G1**:25 个紫点 subagent 节点,每点都有 description
-  - **G2**:token top 1,该 session 占总 token 79%
-  - **G3**:`openclaw session` query cosine 0.752 **第一名**
+- 1.12B tokens / 25 subagent / 122 errors / 681 thinking blocks
+- primary_model = MiniMax-M3 (主项目 Claude Code 模型 — 写错,实际是开发用的模型)
+- top 3 工具: Bash / Edit / Read
 
----
+> 注: a2349f0e 是 OpenClaw Session Viewer **自身开发用的会话语料**(用户在此会话开发 viewer 本身),不是真实用户会话数据。
 
-## 三 PoC 价值排序 (从用户视角)
+### S4 当时推荐的"阶段 2"决策(已落地)
 
-```
-  G1 Graph            视觉冲击第一 / 立刻给 insight
-  G2 Analytics       数据清点 / 看到模型漂移 / top sessions
-  G3 RAG (lite)     跨 session 自然语言探索的雏形
-                       但需要真 embedding 才能 replace 关键词搜索
-```
+| S4 阶段 2 推荐                          | 实际落地                                                                                          |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| G1 升 main (`/explore` 或类似)          | `/graph?view=graph` (跟 S4 推荐 `Tauri 路由加 /explore` 略有差,但实质一致)                        |
+| 合并后用 main 项目的 `list_sessions` 流 | M1/M2 用 `useGraphStore + fetch NDJSON`(双源);**M3 才接入 Tauri `list_graph()`**,正是 S4 推荐路径 |
+| ingest crate 完全不动                   | M1/M2 不动(M3 才合并到 src-tauri)                                                                 |
 
 ---
 
-## 一句话结论
+## 文件总览 (历史 + 当前)
 
-**三个 PoC 全部跑通,G1 Graph 是接下来最该升 main 的那个**(视觉震撼 + 纯 React + 零依赖)。G2 是个不错的 dashboard,但已经在 G1 里"看见"了。G3 lite 是更远期的 roadmap 项目(真 embedding 才是完整 promise)。
+```
+docs/experiments/
+├── README.md                              # 3 PoC 概览 + 当前状态
+├── embed-db-S0-findings.md                # S0 skeleton
+├── embed-db-G1-graph-findings.md          # S1 G1;末尾 addendum 标 M1+M2
+├── embed-db-G2-olap-findings.md           # S2 G2
+├── embed-db-G3-rag-findings.md            # S3 G3
+└── embed-db-findings.md                   # 本文件 — 完成态 + 历史
 
-实验分支不会并回 main,留给将来的 v0.7.x Graph view PR 用。
+experiment/embed-db/                       # M3 后整个 git rm
+├── Cargo.toml                             # workspace
+├── ingest/                                # Rust 子 crate (~660 行)
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs / cli.rs
+│       ├── graph.rs                       # SessionNode (含 RAG snippets + agent_id)
+│       ├── scanner.rs
+│       ├── parser.rs                      # 6 step 提取 + extract_agent_id_from_path
+│       └── sinks/stdout.rs                # NDJSON output
+└── web/                                   # Vite + React + TS (~1700 行,4173 跑)
+    ├── package.json
+    ├── vite.config.ts
+    ├── public/sessions.ndjson             # 35 sessions → 36 行 NDJSON (~90KB)
+    └── src/                                # 后续迁到主项目 (M1+M2 已完成)
+```
+
+---
+
+## 一句话结论(2026-07-04 更新)
+
+**3 PoC 全部 ship 到主项目**(M1 + M2 收口),G1 + G2 + G3 在 `/graph?view=...` 顶 tab 下跑,数据源临时走 fetch /sessions.ndjson,**M3 切 Tauri invoke + 删 experiment/** 是下一步(等用户决定时机)。
+
+---

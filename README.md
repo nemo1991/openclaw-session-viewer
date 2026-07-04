@@ -11,7 +11,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)]()
 [![Release](https://img.shields.io/github/v/release/nemo1991/openclaw-session-viewer)](https://github.com/nemo1991/openclaw-session-viewer/releases/latest)
 
-[下载](#-下载) · [功能](#-功能) · [快速开始](#-快速开始) · [架构](#-架构) · [开发](#-开发) · [故障排除](#-故障排除) · [路线图](#-路线图) · [文档索引](#-文档索引)
+[下载](#下载) · [功能](#功能) · [快速开始](#快速开始) · [架构](#架构) · [开发](#开发) · [故障排除](#故障排除) · [路线图](#路线图) · [文档索引](#文档索引)
 
 </div>
 
@@ -74,7 +74,7 @@ chmod +x OpenClaw*.AppImage
 - 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
 - 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
 - URL 跳转 (`?line=N`) — 直接定位到任意消息
-- ↕ **排序切换** — 会话详情顶部 ` 正序 /  倒序` 自由切换
+- **排序切换** — 会话详情顶部 `正序 / 倒序` 自由切换
 - **流式加载** — Rust `BufReader` 64KB 缓冲,500 条/批,8MB+ 大文件秒开
 - **实时状态** — 5 秒轮询 `~/.claude/sessions/<pid>.json`,显示运行中的 CLI 进程
 - **工具溢出文件** — 自动加载 `tool-results/*.txt` 长输出
@@ -511,17 +511,19 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 文档索引
 
-| 文档                                                          | 用途                                            |
-| ------------------------------------------------------------- | ----------------------------------------------- |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                       | 总体架构、数据流、性能基准、安全模型            |
-| [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)         | BlockRegistry + BlockHandler 设计、扩展指南     |
-| [CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)       | macOS / Windows / Linux 构建、签名、公证        |
-| [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md) | OpenClaw JSONL schema,trajectory 文件机制       |
-| [RELEASING.md](docs/RELEASING.md)                             | 维护者发版流程,故障恢复                         |
-| [E2E_TESTING.md](docs/E2E_TESTING.md)                         | Playwright E2E 配置 / 用法 / 写新 case / 已知坑 |
-| [SECURITY.md](docs/SECURITY.md)                               | 文件路径 reveal 安全模型 (v0.6.0 引入)          |
-| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                 | 已修过的 bug 与开发经验                         |
-| [CHANGELOG.md](CHANGELOG.md)                                  | 各版本变更记录                                  |
+| 文档                                                                      | 用途                                            |
+| ------------------------------------------------------------------------- | ----------------------------------------------- |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md)                                   | 总体架构、数据流、性能基准、安全模型            |
+| [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)                     | BlockRegistry + BlockHandler 设计、扩展指南     |
+| [CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)                   | macOS / Windows / Linux 构建、签名、公证        |
+| [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md)             | OpenClaw JSONL schema,trajectory 文件机制       |
+| [RELEASING.md](docs/RELEASING.md)                                         | 维护者发版流程,故障恢复                         |
+| [E2E_TESTING.md](docs/E2E_TESTING.md)                                     | Playwright E2E 配置 / 用法 / 写新 case / 已知坑 |
+| [SECURITY.md](docs/SECURITY.md)                                           | 文件路径 reveal 安全模型 (v0.6.0 引入)          |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)                             | 已修过的 bug 与开发经验                         |
+| [experiments/README.md](docs/experiments/README.md)                       | Graph Explorer (G1/G2/G3) 实验区 + 合并状态     |
+| [experiments/embed-db-findings.md](docs/experiments/embed-db-findings.md) | S4 综合分析 + 推荐决策                          |
+| [CHANGELOG.md](CHANGELOG.md)                                              | 各版本变更记录                                  |
 
 ## 许可证
 

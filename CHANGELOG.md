@@ -56,11 +56,40 @@
 - `experiment/embed-db/web/` — 完整保留,双源对照不破
 - plan 文件 `openclaw-session-session-session-transient-kernighan.md` 更新到 M2 完成态
 
+### 复现 / 验收
+
+```bash
+# 主项目 1420: G1/G2/G3 跑在 /graph 顶 tab
+cd packages/frontend
+pnpm dev                                    # 1420
+
+# 实验 web 4173: 历史原型作双源对照
+cd experiment/embed-db/web
+pnpm dev                                    # 4173
+```
+
+| URL                                                         | 期望                                                 |
+| ----------------------------------------------------------- | ---------------------------------------------------- |
+| `http://localhost:1420/`                                    | 主项目列表 + 顶部 Network icon (Graph 入口)          |
+| `http://localhost:1420/graph?view=graph`                    | 10 个 main 节点 force-directed 图 + 详情面板可点     |
+| `http://localhost:1420/graph?view=analytics`                | 6 chart + KPI 渲染                                   |
+| `http://localhost:1420/graph?view=rag`                      | G3 RAG + 输入框                                      |
+| `http://localhost:1420/graph?view=rag&q=openclaw%20session` | URL prefill 自动跑 topK                              |
+| `http://localhost:1420/session/<main-sessionId>`            | 主项目原生 TranscriptView (G1 跳来)                  |
+| `http://localhost:1420/session/<agentId>?path=<jsonlPath>`  | 主项目原生 + 顶部"返回父会话"按钮 (G1 subagent 跳来) |
+
+Build 验收:
+
+```bash
+cd packages/frontend && pnpm exec vite build   # 0 error (718KB / 235KB gzip)
+```
+
 ### 待办 (M3)
 
 - ingest crate 合并到 src-tauri + 新 `list_graph()` Tauri command
 - `graphStore.load()` 切到 invoke 拿数据
 - `git rm -r experiment/embed-db/`(用户决定时机)
+- 补 6 个测试文件 + e2e (M1/M2 跳过)
 
 ### 文档
 
