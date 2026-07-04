@@ -41,7 +41,7 @@
 | S4     | 综合 + 推荐决策                      | [embed-db-findings.md](embed-db-findings.md)       |
 | M1     | 合并 G1 到主项目                     | commit `bc24a08`                                   |
 | M2     | 合并 G2 + G3 + 跨 tab prefill        | commit `683e61d`                                   |
-| M3     | 数据源切 Tauri + 删 experiment/      | 未启动                                             |
+| M3     | 数据源切 Tauri + 删 experiment/      | 未启动 (2026-07-04,等用户决定时机)                 |
 
 ---
 
@@ -109,3 +109,23 @@ navigate(`/session/${agentId}?path=${jsonlPath}`, {
 - 不动 `src-tauri/src/commands/sessions.rs` 的 `list_sessions` 路径(M3 才动)
 - 不上真 LLM(M1-M3 hash-embedding lite 够 demo)
 - 不动 `packages/frontend/src/state/sessionsStore.ts`(Graph / Detail 共存靠独立 graphStore)
+
+---
+
+## M3 TODO(等用户决定时机启动)
+
+1. **ingest crate 合并到 src-tauri**:`src-tauri/src/commands/graph.rs` 加 `pub async fn list_graph(app: AppHandle) -> Result<Vec<GraphEntry>, String>`,复用 moka cache 5min TTL
+2. **`graphStore.load()` 切 Tauri invoke**:`packages/frontend/src/lib/api.ts::apiListGraph()` 替换 `fetch('/sessions.ndjson')` 为 `invoke('list_graph')`
+3. **删实验 web**:`git rm -r experiment/embed-db/web/` + ingest(若 src-tauri 已合并 ingest 代码)
+4. **清理 CI / README / docs** 残留 `experiment/` 引用
+5. **补单测 + e2e** — M1/M2 跳过的 6 个 `.test.ts/.test.tsx` + `e2e/graph-explorer.spec.ts`
+6. **用户决定**:`experimental/embed-db` → `main` 合 PR
+
+前置条件:
+
+- 全部 6 个新增测试文件过
+- `pnpm tauri dev` 启动后 `/graph?view=graph` 数据流从 invoke 来(无需 fetch NDJSON)
+- e2e smoke 全过
+- 主项目原有 4 个 route 都不破
+
+详细待办见 [CHANGELOG.md](../../CHANGELOG.md) `[Unreleased].### 待办 (M3)` 段 + plan 文件 `/Users/forcetone/.claude/plans/openclaw-session-session-session-transient-kernighan.md`。

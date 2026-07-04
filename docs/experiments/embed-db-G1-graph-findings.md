@@ -502,6 +502,14 @@ SessionNode 字段顺序 + 新字段,前向兼容(老 NDJSON 仍可解析,只是
 
 # 合并 addendum (M1 + M2, 2026-07-03)
 
+> **警告**:此 addendum 写于 2026-07-03,commit / 数据已**可能**过时。**当前权威状态请看**:
+>
+> - [CHANGELOG.md](../../CHANGELOG.md) 的 `[Unreleased]` 段
+> - [docs/experiments/README.md](./README.md) 的"状态总结 (M2 收口)"段
+> - [docs/experiments/embed-db-findings.md](./embed-db-findings.md) 的"完成时间线"
+>
+> 下面记录的是当时的判断 + 决策依据,作为可追溯参考。
+
 G1 PoC 推进到 S6 后,跟 G2/G3 一起合并到主项目 `packages/frontend/`。
 
 ## 状态

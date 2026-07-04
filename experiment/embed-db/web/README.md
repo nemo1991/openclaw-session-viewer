@@ -1,32 +1,41 @@
-# React + TypeScript + Vite
+# experiment/embed-db/web — 历史 Vite 原型
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+> **状态(2026-07-04)**: M1 + M2 已合并完成。G1/G2/G3 现在跑在主项目 `packages/frontend/` 的 `/graph?view=...` 顶 tab 下(端口 1420)。本目录保留作**双源对照** —— 仍可跑作历史参考,M3 完成时 `git rm`。
 
-Currently, two official plugins are available:
+## 跑起来
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd experiment/embed-db/web
+pnpm install
+pnpm dev   # 端口 4173
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## 数据
+
+需要 `public/sessions.ndjson`,从 ingest crate 生成:
+
+```bash
+cargo run --manifest-path experiment/embed-db/Cargo.toml -- ingest --out experiment/embed-db/web/public/sessions.ndjson
+```
+
+## 端口对照
+
+| 环境             | 端口 | 入口                                |
+| ---------------- | ---- | ----------------------------------- |
+| 主项目(生产路径) | 1420 | `/graph?view=graph\|analytics\|rag` |
+| 本实验 web(历史) | 4173 | tabs 切 view                        |
+
+## 已迁入主项目
+
+| 实验 web                                           | 主项目                                                          |
+| -------------------------------------------------- | --------------------------------------------------------------- |
+| `src/App.tsx`                                      | `packages/frontend/src/routes/GraphExplorerRoute.tsx`           |
+| `src/views/GraphView.tsx`                          | `packages/frontend/src/views/graph/GraphView.tsx`               |
+| `src/views/GraphDetailPanel.tsx`                   | `packages/frontend/src/views/graph/GraphDetailPanel.tsx`        |
+| `src/views/AnalyticsView.tsx`                      | `packages/frontend/src/views/graph/AnalyticsView.tsx`           |
+| `src/views/RagChat.tsx`                            | `packages/frontend/src/views/graph/RagChat.tsx`                 |
+| `src/loader.ts / title.ts / analytics.ts / rag.ts` | `packages/frontend/src/views/graph/` 同名                       |
+| `src/titleStore.tsx`                               | `packages/frontend/src/views/graph/titleStore.ts`(zustand 改造) |
+| `src/graph-types.ts / types.ts`                    | `packages/frontend/src/views/graph/` 同名                       |
+
+详见 [docs/experiments/README.md](../../docs/experiments/README.md) + [CHANGELOG.md](../../CHANGELOG.md) 的 [Unreleased] 段。
