@@ -202,3 +202,55 @@
   border-left: 2px solid rgba(168, 85, 247, 0.6);
   padding-left: 8px !important;
 }
+
+/* ===== v0.7.0: Content filter bar ===== */
+.transcript-content-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 16px 8px;
+  border-top: 1px solid var(--color-border-subtle, #e5e5e5);
+}
+.content-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.content-filter-label {
+  font-size: 10px;
+  color: var(--color-text-subtle);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-right: 2px;
+}
+.content-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  transition: background 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.content-chip:hover {
+  background: var(--color-bg-hover);
+}
+.content-chip-active {
+  background: var(--color-primary-bg, #3b82f620);
+  border-color: var(--color-primary, #3b82f6);
+  color: var(--color-primary, #3b82f6);
+  font-weight: 600;
+}
+.content-chip-x {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: 1px;
+}

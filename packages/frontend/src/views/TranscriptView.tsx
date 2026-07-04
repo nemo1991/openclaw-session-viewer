@@ -7,11 +7,15 @@
  * - FilterPanel / SortPanel 用受控组件,不再用 document.getElementById
  * - URL 同步委托 useSessionUrlSync(由 SessionDetailRoute 调用)
  *
+ * v0.7.0: ContentFilterPanel 接入 — tool/role/has-attribute 3 维内容筛选,
+ *   availableTools 从 summarizeSession(entries) 动态派生。
+ *
  * View 本体只负责:
  * - 拿 hook 输出渲染 toolbar + 虚拟列表 + footer
  * - 渲染空 / loading 文案
  */
 
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router-dom";
 
@@ -29,18 +33,20 @@ import {
   findIdleGaps,
   findRunForEntry,
   formatIdleGap,
+  summarizeSession,
 } from "../components/sessionInsights";
 import "./TranscriptView.css";
 
 export function TranscriptView() {
   const { t } = useTranslation();
   const path = useTranscriptStore((s) => s.path); // v0.5.0:透传给 MessageBubble
+  const entries = useTranscriptStore((s) => s.entries);
   const { loading, totalCount, loadedCount } = useTranscriptStore();
   const currentHit = useSearchInSessionStore(
     (s) => (s.currentHitIndex >= 0 ? s.hits[s.currentHitIndex] : null) ?? null
   );
 
-  const { entries, sortedEntries, sortAsc, setSortAsc } = useTranscriptPipeline();
+  const { sortedEntries, sortAsc, setSortAsc } = useTranscriptPipeline();
   const filter = useTranscriptFilterStore();
   const filterActive = isFilterActive(filter);
   const fmtOpts = useFormatOpts();
@@ -60,6 +66,13 @@ export function TranscriptView() {
     idleGapByAfterIndex.set(g.afterIndex, g.durationMs);
   }
 
+  // ===== v0.7.0:ContentFilterPanel 用的 availableTools =====
+  // 从 entries 动态派生,反映该 session 实际用到的 tool(不硬编码常见列表)。
+  const availableTools = useMemo(
+    () => summarizeSession(entries).toolUsage.map((t) => t.tool),
+    [entries]
+  );
+
   return (
     <div className="transcript-view">
       <TranscriptToolbar
@@ -74,6 +87,17 @@ export function TranscriptView() {
         onApply={(from, to) => useTranscriptFilterStore.getState().setRange(from, to)}
         onClear={() => useTranscriptFilterStore.getState().clear()}
         onSortChange={setSortAsc}
+        // ===== Content filter props =====
+        availableTools={availableTools}
+        selectedTools={filter.tools}
+        role={filter.role}
+        has={filter.has}
+        onToggleTool={(t) => useTranscriptFilterStore.getState().toggleTool(t)}
+        onSetRole={(r) => useTranscriptFilterStore.getState().setRole(r)}
+        onToggleHas={(a) => useTranscriptFilterStore.getState().toggleHas(a)}
+        onClearContent={() =>
+          useTranscriptFilterStore.setState({ tools: [], role: undefined, has: [] })
+        }
       />
       <div className="transcript-scroll" ref={parentRef} data-testid="transcript-scroll">
         {sortedEntries.length === 0 && loading && (
