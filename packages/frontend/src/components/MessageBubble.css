@@ -202,6 +202,27 @@
   margin-bottom: 0;
 }
 
+.block-text-muted {
+  color: var(--color-text-muted, #94a3b8);
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(148, 163, 184, 0.08);
+  border-left: 2px solid rgba(148, 163, 184, 0.3);
+  border-radius: 0 3px 3px 0;
+}
+
+.block-text-sr-note {
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: #c4b5fd;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px dashed rgba(168, 85, 247, 0.3);
+  border-radius: 3px;
+  display: inline-block;
+  font-style: italic;
+}
+
 .block-image,
 .block-unknown {
   padding: 8px;
