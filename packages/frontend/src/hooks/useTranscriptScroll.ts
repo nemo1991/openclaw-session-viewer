@@ -24,7 +24,8 @@ interface ScrollOpts {
 }
 
 export interface ScrollResult {
-  parentRef: React.RefObject<HTMLDivElement>;
+  // React 19: useRef<T>(null) → RefObject<T | null>;保持 nullable 与调用方一致
+  parentRef: React.RefObject<HTMLDivElement | null>;
   virtualizer: ReturnType<typeof useVirtualizer<HTMLDivElement, Element>>;
   /** 跳到指定 entry.index(URL ?line=N 用),内部走 virtualizer */
   jumpToEntry: (entryIndex: number) => void;

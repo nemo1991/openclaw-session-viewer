@@ -35,8 +35,8 @@ export function tokenize(text: string): string[] {
   }
   // 2-char substring(相邻 2 字)
   for (let i = 0; i < norm.length - 1; i++) {
-    const a = norm[i],
-      b = norm[i + 1];
+    const a = norm[i] ?? "",
+      b = norm[i + 1] ?? "";
     if (/\s/.test(a) || /\s/.test(b)) continue;
     out.push(a + b);
   }
@@ -59,16 +59,19 @@ export function embed(text: string): Float32Array {
   }
   // L2 normalize
   let norm = 0;
-  for (let i = 0; i < DIM; i++) norm += v[i] * v[i];
+  for (let i = 0; i < DIM; i++) {
+    const vi = v[i] ?? 0;
+    norm += vi * vi;
+  }
   norm = Math.sqrt(norm) || 1;
-  for (let i = 0; i < DIM; i++) v[i] /= norm;
+  for (let i = 0; i < DIM; i++) v[i] = (v[i] ?? 0) / norm;
   return v;
 }
 
 export function cosine(a: Float32Array, b: Float32Array): number {
   let dot = 0;
   for (let i = 0; i < DIM; i++) {
-    dot += a[i] * b[i];
+    dot += (a[i] ?? 0) * (b[i] ?? 0);
   }
   return dot; // both L2-normalized, so dot == cosine
 }
