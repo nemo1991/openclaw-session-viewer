@@ -66,12 +66,20 @@ export function TranscriptView() {
     idleGapByAfterIndex.set(g.afterIndex, g.durationMs);
   }
 
-  // ===== v0.7.0:ContentFilterPanel 用的 availableTools =====
-  // 从 entries 动态派生,反映该 session 实际用到的 tool(不硬编码常见列表)。
+  // ===== v0.7.0:ContentFilterPanel 用的 availableTools / availableModels =====
+  // 从 entries 动态派生,反映该 session 实际用到的 tool / model(不硬编码常见列表)。
   const availableTools = useMemo(
     () => summarizeSession(entries).toolUsage.map((t) => t.tool),
     [entries]
   );
+  const availableModels = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of entries) {
+      const m = e.normalized.model;
+      if (m) set.add(m);
+    }
+    return Array.from(set).sort();
+  }, [entries]);
 
   return (
     <div className="transcript-view">
@@ -92,11 +100,22 @@ export function TranscriptView() {
         selectedTools={filter.tools}
         role={filter.role}
         has={filter.has}
+        availableModels={availableModels}
+        selectedModels={filter.models}
+        sidechainMode={filter.sidechainMode}
         onToggleTool={(t) => useTranscriptFilterStore.getState().toggleTool(t)}
         onSetRole={(r) => useTranscriptFilterStore.getState().setRole(r)}
         onToggleHas={(a) => useTranscriptFilterStore.getState().toggleHas(a)}
+        onToggleModel={(m) => useTranscriptFilterStore.getState().toggleModel(m)}
+        onSetSidechainMode={(m) => useTranscriptFilterStore.getState().setSidechainMode(m)}
         onClearContent={() =>
-          useTranscriptFilterStore.setState({ tools: [], role: undefined, has: [] })
+          useTranscriptFilterStore.setState({
+            tools: [],
+            role: undefined,
+            has: [],
+            models: [],
+            sidechainMode: "all",
+          })
         }
       />
       <div className="transcript-scroll" ref={parentRef} data-testid="transcript-scroll">

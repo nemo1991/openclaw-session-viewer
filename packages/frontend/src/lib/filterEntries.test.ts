@@ -132,6 +132,7 @@ function makeBlockEntry(
     stopReason?: string | null;
     subagentId?: string;
     isSidechain?: boolean;
+    model?: string;
   } = {}
 ): TranscriptEntryOut {
   return {
@@ -147,6 +148,7 @@ function makeBlockEntry(
       stopReason: opts.stopReason ?? null,
       subagentId: opts.subagentId,
       isSidechain: opts.isSidechain,
+      model: opts.model,
     },
   };
 }
@@ -284,6 +286,97 @@ describe("applyContentFilter", () => {
     ];
     // tools=[] (不限) + role=assistant → 只保留 entry 0
     const out = applyContentFilter(entries, { tools: [], role: "assistant" });
+    expect(out.map((e) => e.index)).toEqual([0]);
+  });
+
+  // ===== v0.7.0: model 维度 =====
+  it("model 多选:entry.normalized.model 命中任一即保留", () => {
+    const entries = [
+      makeBlockEntry(0, [], { model: "claude-opus-4-7" }),
+      makeBlockEntry(1, [], { model: "claude-sonnet-4-5" }),
+      makeBlockEntry(2, [], { model: "claude-haiku-4-5" }),
+      makeBlockEntry(3, [], { model: undefined }), // 老 session 缺 model
+    ];
+    const out = applyContentFilter(entries, { models: ["claude-opus-4-7", "claude-haiku-4-5"] });
+    expect(out.map((e) => e.index)).toEqual([0, 2]);
+  });
+
+  it("model 缺(undefined)→ 当成不命中,跳过", () => {
+    const entries = [
+      makeBlockEntry(0, [], { model: "claude-opus-4-7" }),
+      makeBlockEntry(1, [], { model: undefined }),
+    ];
+    const out = applyContentFilter(entries, { models: ["claude-opus-4-7"] });
+    expect(out.map((e) => e.index)).toEqual([0]);
+  });
+
+  it("model + 其它维度:跨维 AND", () => {
+    const entries = [
+      // 0: model=opus + role=assistant ✓
+      makeBlockEntry(0, [], { model: "claude-opus-4-7", role: "assistant" }),
+      // 1: model=opus + role=user ✗
+      makeBlockEntry(1, [], { model: "claude-opus-4-7", role: "user" }),
+      // 2: model=sonnet + role=assistant ✗
+      makeBlockEntry(2, [], { model: "claude-sonnet-4-5", role: "assistant" }),
+    ];
+    const out = applyContentFilter(entries, {
+      models: ["claude-opus-4-7"],
+      role: "assistant",
+    });
+    expect(out.map((e) => e.index)).toEqual([0]);
+  });
+
+  it("models=[] 空数组 = model 维度不限", () => {
+    const entries = [
+      makeBlockEntry(0, [], { model: "claude-opus-4-7" }),
+      makeBlockEntry(1, [], { model: undefined }),
+    ];
+    const out = applyContentFilter(entries, { models: [] });
+    expect(out).toBe(entries); // 全部不限 → 直通引用
+  });
+
+  // ===== v0.7.0: sidechainMode 维度 =====
+  it("sidechainMode='main' → 只保留 isSidechain !== true 的 entry", () => {
+    const entries = [
+      makeBlockEntry(0, [], { isSidechain: undefined }), // 主链
+      makeBlockEntry(1, [], { isSidechain: false }), // 主链(显式 false)
+      makeBlockEntry(2, [], { isSidechain: true }), // 子链
+    ];
+    const out = applyContentFilter(entries, { sidechainMode: "main" });
+    expect(out.map((e) => e.index)).toEqual([0, 1]);
+  });
+
+  it("sidechainMode='sidechain' → 只保留 isSidechain === true 的 entry", () => {
+    const entries = [
+      makeBlockEntry(0, [], { isSidechain: undefined }),
+      makeBlockEntry(1, [], { isSidechain: true }),
+      makeBlockEntry(2, [], { isSidechain: true, subagentId: "agent-a4aa77" }),
+    ];
+    const out = applyContentFilter(entries, { sidechainMode: "sidechain" });
+    expect(out.map((e) => e.index)).toEqual([1, 2]);
+  });
+
+  it("sidechainMode='all'(默认)→ 全部保留", () => {
+    const entries = [
+      makeBlockEntry(0, [], { isSidechain: undefined }),
+      makeBlockEntry(1, [], { isSidechain: true }),
+    ];
+    expect(applyContentFilter(entries, { sidechainMode: "all" })).toBe(entries);
+  });
+
+  it("sidechain + model 跨维 AND", () => {
+    const entries = [
+      // 0: 主链 + opus ✓
+      makeBlockEntry(0, [], { isSidechain: false, model: "claude-opus-4-7" }),
+      // 1: 子链 + opus ✗
+      makeBlockEntry(1, [], { isSidechain: true, model: "claude-opus-4-7" }),
+      // 2: 主链 + sonnet ✗
+      makeBlockEntry(2, [], { isSidechain: false, model: "claude-sonnet-4-5" }),
+    ];
+    const out = applyContentFilter(entries, {
+      sidechainMode: "main",
+      models: ["claude-opus-4-7"],
+    });
     expect(out.map((e) => e.index)).toEqual([0]);
   });
 });

@@ -44,11 +44,13 @@ export function useTranscriptPipeline(): PipelineResult {
   const filterFrom = useTranscriptFilterStore((s) => s.from);
   const filterTo = useTranscriptFilterStore((s) => s.to);
 
-  // v0.7.0:content 维度单独订阅,只在这 3 个字段变化时才触发 content-filter 重算
+  // v0.7.0:content 维度单独订阅,只在这 5 个字段变化时才触发 content-filter 重算
   const contentActive = useTranscriptFilterStore(isContentFilterActive);
   const filterTools = useTranscriptFilterStore((s) => s.tools);
   const filterRole = useTranscriptFilterStore((s) => s.role);
   const filterHas = useTranscriptFilterStore((s) => s.has);
+  const filterModels = useTranscriptFilterStore((s) => s.models);
+  const filterSidechainMode = useTranscriptFilterStore((s) => s.sidechainMode);
 
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -69,9 +71,19 @@ export function useTranscriptPipeline(): PipelineResult {
             tools: filterTools,
             role: filterRole,
             has: filterHas,
+            models: filterModels,
+            sidechainMode: filterSidechainMode,
           })
         : timeFiltered,
-    [timeFiltered, contentActive, filterTools, filterRole, filterHas]
+    [
+      timeFiltered,
+      contentActive,
+      filterTools,
+      filterRole,
+      filterHas,
+      filterModels,
+      filterSidechainMode,
+    ]
   );
 
   const sortedEntries = useMemo(

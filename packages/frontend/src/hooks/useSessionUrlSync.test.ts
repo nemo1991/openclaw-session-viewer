@@ -78,12 +78,14 @@ describe("parseUrlSearch", () => {
       role: undefined,
       tools: [],
       has: [],
+      models: [],
+      sidechainMode: "all",
     });
   });
 
   it("全字段", () => {
     const r = parseUrlSearch(
-      "?from=2026-06-25T10:00:00Z&to=2026-06-25T11:00:00Z&role=user&tool=Bash,Read&has=thinking,error"
+      "?from=2026-06-25T10:00:00Z&to=2026-06-25T11:00:00Z&role=user&tool=Bash,Read&has=thinking,error&model=claude-opus-4-7,claude-sonnet-4-5&sidechain=main"
     );
     expect(r).toEqual({
       from: "2026-06-25T10:00:00Z",
@@ -91,7 +93,17 @@ describe("parseUrlSearch", () => {
       role: "user",
       tools: ["Bash", "Read"],
       has: ["thinking", "error"],
+      models: ["claude-opus-4-7", "claude-sonnet-4-5"],
+      sidechainMode: "main",
     });
+  });
+
+  it("sidechain=sidechain → sidechainMode='sidechain'", () => {
+    expect(parseUrlSearch("?sidechain=sidechain").sidechainMode).toBe("sidechain");
+  });
+
+  it("sidechain 非法值 → fall back to 'all'", () => {
+    expect(parseUrlSearch("?sidechain=bogus").sidechainMode).toBe("all");
   });
 
   it("部分字段(time only)", () => {

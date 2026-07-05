@@ -61,7 +61,17 @@ export function parseToolCsv(csv: string | null): string[] {
     .filter((s) => s.length > 0);
 }
 
-/** 把 URL search 字符串一次性解析成 store 5 字段
+/** v0.7.0: model CSV — 与 tool 同样不白名单(用户 session 可能有任意 model id)
+ *  但要求非空 + 长度 < 100(防 ?model=AAAAAAAA... 把 store 撑爆) */
+export function parseModelCsv(csv: string | null): string[] {
+  if (!csv) return [];
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length < 100);
+}
+
+/** 把 URL search 字符串一次性解析成 store 6 字段
  *  供 useSessionUrlSync 调用,也便于纯函数测试。
  *
  *  注意:`?role=` 空值被当成 undefined(URLSearchParams.get 会返回 "",我们
@@ -79,14 +89,21 @@ export function parseUrlSearch(search: string): {
   role?: string;
   tools: string[];
   has: HasAttribute[];
+  models: string[];
+  sidechainMode: "all" | "main" | "sidechain";
 } {
   const params = new URLSearchParams(search);
+  const scRaw = emptyToUndef(params.get("sidechain"));
+  const sidechainMode: "all" | "main" | "sidechain" =
+    scRaw === "main" || scRaw === "sidechain" ? scRaw : "all";
   return {
     from: emptyToUndef(params.get("from")),
     to: emptyToUndef(params.get("to")),
     role: emptyToUndef(params.get("role")),
     tools: parseToolCsv(params.get("tool")),
     has: parseHasCsv(params.get("has")),
+    models: parseModelCsv(params.get("model")),
+    sidechainMode,
   };
 }
 
@@ -99,16 +116,22 @@ export function useSessionUrlSync({ search, entriesLoaded, jumpToEntry }: UrlSyn
     const role = params.get("role") ?? undefined;
     const tools = parseToolCsv(params.get("tool"));
     const has = parseHasCsv(params.get("has"));
+    const models = parseModelCsv(params.get("model"));
+    const scRaw = params.get("sidechain");
+    const sidechainMode: "all" | "main" | "sidechain" =
+      scRaw === "main" || scRaw === "sidechain" ? scRaw : "all";
 
     const s = useTranscriptFilterStore.getState();
-    // 用 setState 一次性合并,避免 4 次单独 set 触发 4 次 pipeline 重算
+    // 用 setState 一次性合并,避免多次单独 set 触发 pipeline 重算
     useTranscriptFilterStore.setState({
       from,
       to,
-      preset: from || to ? "custom" : tools.length > 0 || role || has.length > 0 ? "all" : s.preset, // 没 URL 干预时保留现有 preset
+      preset: from || to ? "custom" : s.preset, // 没 URL 干预时保留现有 preset
       role,
       tools,
       has,
+      models,
+      sidechainMode,
     });
   }, [search]);
 

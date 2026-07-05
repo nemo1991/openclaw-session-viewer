@@ -251,4 +251,59 @@ describe("isContentFilterActive helper", () => {
     useTranscriptFilterStore.getState().toggleHas("thinking");
     expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(true);
   });
+
+  it("models 非空 → true", () => {
+    useTranscriptFilterStore.getState().clear();
+    useTranscriptFilterStore.getState().toggleModel("claude-opus-4-7");
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+
+  it("sidechainMode !== 'all' → true", () => {
+    useTranscriptFilterStore.getState().clear();
+    useTranscriptFilterStore.getState().setSidechainMode("main");
+    expect(isContentFilterActive(useTranscriptFilterStore.getState())).toBe(true);
+  });
+});
+
+// ===== v0.7.0: model + sidechainMode 单元 =====
+describe("v0.7.0 model + sidechain", () => {
+  beforeEach(() => {
+    useTranscriptFilterStore.getState().clear();
+  });
+
+  it("toggleModel:多选,维内可叠加", () => {
+    const s = useTranscriptFilterStore.getState();
+    s.toggleModel("claude-opus-4-7");
+    s.toggleModel("claude-sonnet-4-5");
+    expect(useTranscriptFilterStore.getState().models).toEqual([
+      "claude-opus-4-7",
+      "claude-sonnet-4-5",
+    ]);
+  });
+
+  it("toggleModel:对同一 model 重复 toggle 是幂等的(回到空)", () => {
+    const s = useTranscriptFilterStore.getState();
+    s.toggleModel("claude-opus-4-7");
+    s.toggleModel("claude-opus-4-7");
+    expect(useTranscriptFilterStore.getState().models).toEqual([]);
+  });
+
+  it("setSidechainMode:all / main / sidechain", () => {
+    const s = useTranscriptFilterStore.getState();
+    s.setSidechainMode("main");
+    expect(useTranscriptFilterStore.getState().sidechainMode).toBe("main");
+    s.setSidechainMode("sidechain");
+    expect(useTranscriptFilterStore.getState().sidechainMode).toBe("sidechain");
+    s.setSidechainMode("all");
+    expect(useTranscriptFilterStore.getState().sidechainMode).toBe("all");
+  });
+
+  it("clear:把 models / sidechainMode 也重置", () => {
+    const s = useTranscriptFilterStore.getState();
+    s.toggleModel("claude-opus-4-7");
+    s.setSidechainMode("main");
+    s.clear();
+    expect(useTranscriptFilterStore.getState().models).toEqual([]);
+    expect(useTranscriptFilterStore.getState().sidechainMode).toBe("all");
+  });
 });
