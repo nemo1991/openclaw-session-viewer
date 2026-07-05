@@ -23,9 +23,11 @@ describe("TextBlock", () => {
     expect(strong?.textContent).toBe("bold");
   });
 
-  it("缺 text → 渲染空字符串不崩", () => {
+  it("缺 text → 返回 null 不崩(parseMessageText 把空当无内容)", () => {
     const block: NormalizedBlockFE = { kind: "text" };
     const { container } = render(<TextBlock block={block} />);
-    expect(container.querySelector(".block-text")).toBeInTheDocument();
+    // v0.5.0+: TextBlock 返回 null 而不是空 div — 没必要渲染空容器
+    expect(container.querySelector(".block-text")).toBeNull();
+    expect(container.firstChild).toBeNull();
   });
 });
