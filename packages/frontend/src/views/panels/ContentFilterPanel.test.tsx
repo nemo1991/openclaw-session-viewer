@@ -29,6 +29,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -45,6 +50,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -62,6 +72,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={onToggleTool}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -79,6 +94,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -100,6 +120,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={onSetRole}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -121,6 +146,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -140,6 +170,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={onToggleHas}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -161,6 +196,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -186,6 +226,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={noop}
       />
     );
@@ -203,6 +248,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={onClearContent}
       />
     );
@@ -222,6 +272,11 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={onClearContent}
       />
     );
@@ -237,7 +292,226 @@ describe("ContentFilterPanel", () => {
         onToggleTool={noop}
         onSetRole={noop}
         onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
         onClearContent={onClearContent}
+      />
+    );
+    expect(screen.getByTestId("content-filter-clear")).toBeInTheDocument();
+  });
+
+  // ===== v0.7.0: model 维度 =====
+  it("availableModels 渲染成 chip,空数组不渲染 model 行", () => {
+    const { rerender } = render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={["claude-opus-4-7", "claude-sonnet-4-5"]}
+        selectedModels={[]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    expect(screen.getByTestId("content-filter-model-claude-opus-4-7")).toBeInTheDocument();
+    expect(screen.getByTestId("content-filter-model-claude-sonnet-4-5")).toBeInTheDocument();
+
+    rerender(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={[]}
+        selectedModels={[]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    expect(screen.queryByTestId("content-filter-models")).toBeNull();
+  });
+
+  it("model chip 短标签:opus / sonnet / haiku 关键字识别", () => {
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={["claude-opus-4-7", "claude-sonnet-4-5", "claude-haiku-4-5"]}
+        selectedModels={[]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    const opus = screen.getByTestId("content-filter-model-claude-opus-4-7");
+    const sonnet = screen.getByTestId("content-filter-model-claude-sonnet-4-5");
+    const haiku = screen.getByTestId("content-filter-model-claude-haiku-4-5");
+    expect(opus.textContent).toBe("opus");
+    expect(sonnet.textContent).toBe("sonnet");
+    expect(haiku.textContent).toBe("haiku");
+  });
+
+  it("model chip 点击 → onToggleModel(model) + active 状态反映", async () => {
+    const onToggleModel = vi.fn();
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={["claude-opus-4-7"]}
+        selectedModels={[]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={onToggleModel}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    const chip = screen.getByTestId("content-filter-model-claude-opus-4-7");
+    expect(chip.getAttribute("data-active")).toBe("false");
+    await userEvent.click(chip);
+    expect(onToggleModel).toHaveBeenCalledWith("claude-opus-4-7");
+  });
+
+  it("selectedModels 含 model → chip 高亮", () => {
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={["claude-opus-4-7", "claude-sonnet-4-5"]}
+        selectedModels={["claude-opus-4-7"]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    expect(
+      screen.getByTestId("content-filter-model-claude-opus-4-7").getAttribute("data-active")
+    ).toBe("true");
+    expect(
+      screen.getByTestId("content-filter-model-claude-sonnet-4-5").getAttribute("data-active")
+    ).toBe("false");
+  });
+
+  // ===== v0.7.0: sidechainMode 维度 =====
+  it("sidechain 3 选项:渲染 all / main / sidechain", () => {
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={[]}
+        selectedModels={[]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    expect(screen.getByTestId("filter-sidechain-all")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-sidechain-main")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-sidechain-sidechain")).toBeInTheDocument();
+  });
+
+  it("sidechainMode='main' → main chip 高亮,其它 false", () => {
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={[]}
+        selectedModels={[]}
+        sidechainMode="main"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    expect(screen.getByTestId("filter-sidechain-main").getAttribute("data-active")).toBe("true");
+    expect(screen.getByTestId("filter-sidechain-all").getAttribute("data-active")).toBe("false");
+    expect(screen.getByTestId("filter-sidechain-sidechain").getAttribute("data-active")).toBe(
+      "false"
+    );
+  });
+
+  it("sidechain chip 点击 → onSetSidechainMode(mode) 触发", async () => {
+    const onSetSidechainMode = vi.fn();
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={[]}
+        selectedModels={[]}
+        sidechainMode="all"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={onSetSidechainMode}
+        onClearContent={noop}
+      />
+    );
+    await userEvent.click(screen.getByTestId("filter-sidechain-main"));
+    expect(onSetSidechainMode).toHaveBeenCalledWith("main");
+    await userEvent.click(screen.getByTestId("filter-sidechain-sidechain"));
+    expect(onSetSidechainMode).toHaveBeenCalledWith("sidechain");
+  });
+
+  it("sidechainMode='main' 激活时,清除按钮显示", () => {
+    render(
+      <ContentFilterPanel
+        availableTools={[]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        availableModels={[]}
+        selectedModels={[]}
+        sidechainMode="main"
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        onToggleModel={noop}
+        onSetSidechainMode={noop}
+        onClearContent={noop}
       />
     );
     expect(screen.getByTestId("content-filter-clear")).toBeInTheDocument();

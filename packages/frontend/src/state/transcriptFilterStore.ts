@@ -40,6 +40,10 @@ interface TranscriptFilterStore {
   role?: string;
   /** 多选 has-attribute;空数组 = 不限 */
   has: HasAttribute[];
+  /** v0.7.0: 多选 model (haiku/sonnet/opus/...);空数组 = 不限 */
+  models: string[];
+  /** v0.7.0: 单选 sidechain 模式;"all" = 不限(默认),"main" = 只看主链,"sidechain" = 只看子链 */
+  sidechainMode: "all" | "main" | "sidechain";
 
   // ===== Actions: time =====
   /** 切换 preset (1h/24h/7d/all 时同步设置 from) */
@@ -54,6 +58,10 @@ interface TranscriptFilterStore {
   setRole: (role: string | undefined) => void;
   /** 切换单个 has attribute */
   toggleHas: (attr: HasAttribute) => void;
+  /** 切换单个 model(已选 → 移除,未选 → 追加) */
+  toggleModel: (model: string) => void;
+  /** 设置 sidechain 模式("all" / "main" / "sidechain") */
+  setSidechainMode: (mode: "all" | "main" | "sidechain") => void;
 
   // ===== Actions: 批量 =====
   /** 清空所有过滤(time + content) */
@@ -89,6 +97,8 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
   tools: [],
   role: undefined,
   has: [],
+  models: [],
+  sidechainMode: "all",
 
   // ===== Time actions =====
   setPreset: (p) => {
@@ -132,6 +142,17 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
     });
   },
 
+  toggleModel: (model) => {
+    const current = get().models;
+    set({
+      models: current.includes(model) ? current.filter((m) => m !== model) : [...current, model],
+    });
+  },
+
+  setSidechainMode: (mode) => {
+    set({ sidechainMode: mode });
+  },
+
   // ===== Batch =====
   clear: () => {
     set({
@@ -141,6 +162,8 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
       tools: [],
       role: undefined,
       has: [],
+      models: [],
+      sidechainMode: "all",
     });
   },
 }));
@@ -158,15 +181,23 @@ export function isFilterActive(s: TranscriptFilterStore): boolean {
     Boolean(s.from || s.to) ||
     s.tools.length > 0 ||
     Boolean(s.role) ||
-    s.has.length > 0
+    s.has.length > 0 ||
+    s.models.length > 0 ||
+    s.sidechainMode !== "all"
   );
 }
 
 /**
- * Content 维度是否生效 — 仅看 tools/role/has
+ * Content 维度是否生效 — 仅看 tools/role/has/models/sidechain
  * (time 单独由 s.preset 判断;Pipeline hook 用 isContentFilterActive 来
  *  在 contentFilter 步骤做短路)
  */
 export function isContentFilterActive(s: TranscriptFilterStore): boolean {
-  return s.tools.length > 0 || Boolean(s.role) || s.has.length > 0;
+  return (
+    s.tools.length > 0 ||
+    Boolean(s.role) ||
+    s.has.length > 0 ||
+    s.models.length > 0 ||
+    s.sidechainMode !== "all"
+  );
 }

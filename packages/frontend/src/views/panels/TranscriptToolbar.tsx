@@ -4,7 +4,7 @@
  * 简单组合组件,放在 transcript 视图顶部。原 TranscriptView 直接渲染这三个,
  * 抽出来便于单测 toolbar 整体(同时验证子组件 mount)。
  *
- * v0.7.0: 加 ContentFilterPanel — 内容维度(tool / role / has-attribute)filter。
+ * v0.7.0: 加 ContentFilterPanel — 内容维度(tool / role / has-attribute / model)filter。
  */
 
 import { FilterPanel, type FilterPanelProps } from "./FilterPanel";
@@ -39,9 +39,14 @@ export function TranscriptToolbar(props: TranscriptToolbarProps) {
     selectedTools: rest.selectedTools,
     role: rest.role,
     has: rest.has,
+    availableModels: rest.availableModels,
+    selectedModels: rest.selectedModels,
+    sidechainMode: rest.sidechainMode,
     onToggleTool: rest.onToggleTool,
     onSetRole: rest.onSetRole,
     onToggleHas: rest.onToggleHas,
+    onToggleModel: rest.onToggleModel,
+    onSetSidechainMode: rest.onSetSidechainMode,
     onClearContent,
   };
   return (

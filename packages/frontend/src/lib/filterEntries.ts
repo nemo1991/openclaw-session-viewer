@@ -52,6 +52,11 @@ export interface ContentFilterOptions {
   role?: string;
   /** 多选 has-attribute:任一 attr 命中 → 命中(空数组 = 不限) */
   has?: HasAttribute[];
+  /** v0.7.0: 多选 model:entry.normalized.model 命中任一 → 命中(空数组 = 不限) */
+  models?: string[];
+  /** v0.7.0: 单选 sidechain mode:"all" 不限; "main" 只看主链(isSidechain !== true);
+   *  "sidechain" 只看子链(isSidechain === true)。undefined = "all"。 */
+  sidechainMode?: "all" | "main" | "sidechain";
 }
 
 /** 一个 block 的 kind === expected? — 读 open-index 的 name 字段 */
@@ -96,9 +101,19 @@ export function applyContentFilter(
 ): TranscriptEntryOut[] {
   const tools = opts.tools ?? [];
   const has = opts.has ?? [];
+  const models = opts.models ?? [];
   const role = opts.role;
+  const sidechainMode = opts.sidechainMode ?? "all";
   // 全部维度都不限 → 直通(返回 entries,filter 上游 memo 引用复用)
-  if (tools.length === 0 && has.length === 0 && !role) return entries;
+  if (
+    tools.length === 0 &&
+    has.length === 0 &&
+    models.length === 0 &&
+    !role &&
+    sidechainMode === "all"
+  ) {
+    return entries;
+  }
   return entries.filter((e) => {
     if (role && e.normalized.role !== role) return false;
     if (tools.length > 0 && !tools.some((t) => blockHasToolUse(e.normalized.blocks, t))) {
@@ -107,6 +122,12 @@ export function applyContentFilter(
     if (has.length > 0 && !has.some((h) => entryHasAttr(e, h))) {
       return false;
     }
+    if (models.length > 0) {
+      const m = e.normalized.model;
+      if (!m || !models.includes(m)) return false;
+    }
+    if (sidechainMode === "main" && e.normalized.isSidechain === true) return false;
+    if (sidechainMode === "sidechain" && e.normalized.isSidechain !== true) return false;
     return true;
   });
 }
