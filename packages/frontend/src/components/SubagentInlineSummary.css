@@ -1,0 +1,117 @@
+/* v0.6.0: Agent 卡片内嵌子代理摘要 */
+
+.subagent-inline-summary {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-hover);
+  border-radius: var(--radius-sm);
+  border-left: 2px solid var(--color-accent, #8250df);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.subagent-inline-summary.is-loading,
+.subagent-inline-summary.is-error {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-muted);
+}
+
+.subagent-inline-summary.is-error {
+  border-left-color: var(--color-error, #c00);
+}
+
+.subagent-inline-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.subagent-inline-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.subagent-inline-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  color: var(--color-text-muted);
+}
+
+.subagent-inline-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text);
+}
+
+.subagent-inline-tool-chip.is-muted {
+  color: var(--color-text-muted);
+  background: transparent;
+}
+
+.subagent-inline-tool-count {
+  color: var(--color-text-muted);
+  font-size: 9px;
+  margin-left: 2px;
+}
+
+.subagent-inline-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.subagent-inline-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+.subagent-inline-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-primary-fg, #fff);
+  border: 1px solid var(--color-primary);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.subagent-inline-open-btn:hover {
+  opacity: 0.85;
+}
+
+/* v0.6.0: Loader2 旋转 */
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

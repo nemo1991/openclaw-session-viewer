@@ -1,6 +1,6 @@
 # Parser 架构
 
-本文档描述 OpenClaw / Claude Code JSONL → 前端 `NormalizedBlock` 的归一化层。
+本文档描述 OpenClaw / Claude Code JSONL 前端 `NormalizedBlock` 的归一化层。
 重点是 v0.3.0 引入的 **BlockRegistry 模式**、v0.3.0 OpenClaw 去 wrapper、v0.3.0+ 未知 block 兜底。
 
 > 总体架构、Tauri 进程边界、性能基准见 [ARCHITECTURE.md](ARCHITECTURE.md)。
@@ -23,7 +23,7 @@
 ```
 ┌────────────────────────────────────────────────────────────┐
 │  Layer 1: Record 级 (claude.rs / openclaw.rs)             │
-│  把 JSONL 一行 (record) → NormalizedMessage {            │
+│  把 JSONL 一行 (record)  NormalizedMessage {            │
 │      role, id, timestamp, blocks: Vec<NormalizedBlock>   │
 │  }                                                        │
 │  • claude.rs::normalize_record (Claude Code)              │
@@ -33,15 +33,15 @@
                             ▼ blocks
 ┌────────────────────────────────────────────────────────────┐
 │  Layer 2: Block 级 (blocks/ BlockRegistry)                │
-│  把单个 content block (item) → NormalizedBlock { kind, data }│
+│  把单个 content block (item)  NormalizedBlock { kind, data }│
 │  委托给 default_registry().normalize(item)                │
 └────────────────────────────────────────────────────────────┘
                             │
                             ▼ NormalizedBlock
 ┌────────────────────────────────────────────────────────────┐
 │  Layer 3: 渲染级 (frontend BlockRenderer)                  │
-│  已知 kind → 专属卡片 (TextBlock / ToolUseCard / ...)      │
-│  未知 kind → UnknownBlockCard                              │
+│  已知 kind  专属卡片 (TextBlock / ToolUseCard / ...)      │
+│  未知 kind  UnknownBlockCard                              │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,7 +52,7 @@
 ```rust
 // openclaw.rs::normalize_entry
 let mut transformed = serde_json::Map::new();
-transformed.insert("type", "message");  // ← 伪造成 Claude
+transformed.insert("type", "message");  //  伪造成 Claude
 // ... 拷贝字段 + 把 role: "tool" 改写成 "user"
 claude::normalize_record(&Value::Object(transformed))  // 再走 Claude 路径
 ```
@@ -61,7 +61,7 @@ claude::normalize_record(&Value::Object(transformed))  // 再走 Claude 路径
 
 - 两套 parser 耦合在一段 match 里
 - TS 端 `normalize.ts` 已经独立处理 OpenClaw,**前后端架构不对称**
-- `role: "tool"` 的改写 → 还原 patch,易漏
+- `role: "tool"` 的改写 还原 patch,易漏
 - 加新 block type 必须同时改 `claude.rs` 和 `openclaw.rs` wrapper
 
 **现在 (v0.3.0+)**:
@@ -107,12 +107,12 @@ pub trait BlockHandler: Send + Sync {
 **`matches()` 必须纯函数 + 无副作用**
 
 ```rust
-// ✅ 正确:只读 type 字段
+//  正确:只读 type 字段
 fn matches(&self, item: &Value) -> bool {
     item.get("type").and_then(|v| v.as_str()) == Some("text")
 }
 
-// ❌ 错:依赖外部状态
+//  错:依赖外部状态
 fn matches(&self, item: &Value) -> bool {
     self.config.some_flag && item.get("type")... // 不要这样
 }
@@ -144,7 +144,7 @@ fn tool_use_handler() {
         "type": "tool_use", "id": "x", "name": "Bash", "input": {}
     })).unwrap();
     assert_eq!(n.kind, "tool_use");
-    assert!(n.data.contains_key("name"));  // ← 必须 assert
+    assert!(n.data.contains_key("name"));  //  必须 assert
     assert!(n.data.contains_key("input"));
 }
 ```
@@ -165,7 +165,7 @@ pub fn default_registry() -> BlockRegistry {
         .register(SkillListingHandler)
         .register(PlanModeHandler)
         .register(FileSnapshotHandler)
-        .register(MetaBlockHandler)  // ← 必须最后!
+        .register(MetaBlockHandler)  //  必须最后!
 }
 ```
 
@@ -237,7 +237,7 @@ fn matches(&self, item: &Value) -> bool {
 fn normalize(&self, item: &Value) -> BlockResult {
     let mut data = serde_json::Map::new();
 
-    // arguments → input 重命名(pi-coding-agent 兼容)
+    // arguments  input 重命名(pi-coding-agent 兼容)
     let raw_input = item.get("input")
         .or_else(|| item.get("arguments"))
         .cloned()
@@ -263,7 +263,7 @@ pub struct MetaBlockHandler;
 
 impl BlockHandler for MetaBlockHandler {
     fn matches(&self, item: &Value) -> bool {
-        true  // ← 永远匹配,作为 catchall
+        true  //  永远匹配,作为 catchall
     }
 
     fn normalize(&self, item: &Value) -> BlockResult {
@@ -305,9 +305,9 @@ impl BlockHandler for MetaBlockHandler {
         <FieldRow name={k} value={v} />
       ))}
     </table>
-    <button onClick={() => copy(JSON.stringify(payload, null, 2))}>📋 复制</button>
+    <button onClick={() => copy(JSON.stringify(payload, null, 2))}> 复制</button>
     <a href={reportUrl} target="_blank">
-      🐛 报告
+      报告
     </a>
   </div>
 </details>
@@ -424,14 +424,14 @@ pub fn default_registry() -> BlockRegistry {
 case "cache_stats":
   return (
     <div className="block-cache-stats">
-      <span className="meta-kind-badge">📊 cache</span>
+      <span className="meta-kind-badge"> cache</span>
       <span>hits: {block.hits}</span>
       <span>misses: {block.misses}</span>
     </div>
   );
 ```
 
-不写这一步也 OK,`MetaBlockHandler` 自动兜底 → `UnknownBlockCard` 显示字段表 + hint。
+不写这一步也 OK,`MetaBlockHandler` 自动兜底 `UnknownBlockCard` 显示字段表 + hint。
 
 ### Step 4: 验证
 
@@ -472,9 +472,9 @@ export interface NormalizedBlockFE {
 
 **风险点**:
 
-- handler 输出字段名错误 → 前端 fallback 到 `[kind]` 字面显示
-- handler 字段缺失 → 前端读 `undefined` → fallback 链生效
-- handler 多余字段 → 前端直接接收,无影响(但增加 payload 大小)
+- handler 输出字段名错误 前端 fallback 到 `[kind]` 字面显示
+- handler 字段缺失 前端读 `undefined` fallback 链生效
+- handler 多余字段 前端直接接收,无影响(但增加 payload 大小)
 
 **预防**:
 
@@ -485,21 +485,30 @@ export interface NormalizedBlockFE {
 
 ## 已知 block type 速查
 
-| 原始 type(s)                                                        | Normalized kind | 文件               | 前端渲染               |
-| ------------------------------------------------------------------- | --------------- | ------------------ | ---------------------- |
-| `text`                                                              | `text`          | `text.rs`          | `<TextBlock>` Markdown |
-| `thinking` / `redacted_thinking`                                    | `thinking`      | `thinking.rs`      | `<ThinkingBlock>` 折叠 |
-| `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | `tool_use`      | `tool_use.rs`      | `<ToolUseCard>`        |
-| `tool_result` / `toolResult`                                        | `tool_result`   | `tool_result.rs`   | `<ToolResultCard>`     |
-| `image`                                                             | `image`         | `image.rs`         | `<ImageBlock>`         |
-| `agent_listing_delta`                                               | `agent_listing` | `agent_listing.rs` | `<BlockMetaInfo>` 精简 |
-| `skill_listing`                                                     | `skill_listing` | `skill_listing.rs` | `<BlockMetaInfo>` 精简 |
-| `plan_mode`                                                         | `plan_mode`     | `plan_mode.rs`     | `<BlockMetaInfo>` 精简 |
-| `file_history_snapshot`                                             | `file_snapshot` | `file_snapshot.rs` | `<BlockMetaInfo>` 精简 |
-| (其它)                                                              | `meta`          | `meta.rs`          | `<UnknownBlockCard>`   |
+| 原始 type(s)                                                        | Normalized kind | 文件               | 前端渲染                                                     |
+| ------------------------------------------------------------------- | --------------- | ------------------ | ------------------------------------------------------------ |
+| `text`                                                              | `text`          | `text.rs`          | `<TextBlock>` Markdown                                       |
+| `thinking` / `redacted_thinking`                                    | `thinking`      | `thinking.rs`      | `<ThinkingBlock>` 折叠                                       |
+| `tool_use` / `toolUse` / `tool_call` / `function_call` / `toolCall` | `tool_use`      | `tool_use.rs`      | `<ToolUseCard>`                                              |
+| `tool_result` / `toolResult`                                        | `tool_result`   | `tool_result.rs`   | `<ToolResultCard>`                                           |
+| `image`                                                             | `image`         | `image.rs`         | `<ImageBlock>`                                               |
+| `agent_listing_delta`                                               | `agent_listing` | `agent_listing.rs` | `<BlockMetaInfo>` + chip wrap 溢出保护 (v0.6.x)              |
+| `skill_listing`                                                     | `skill_listing` | `skill_listing.rs` | `<BlockMetaInfo>` 默认全显示 (>6 行滚动) (v0.6.x)            |
+| `plan_mode`                                                         | `plan_mode`     | `plan_mode.rs`     | `<MetaBlock>` reveal 按钮 + 失败行内三按钮 (v0.6.x)          |
+| `file_history_snapshot`                                             | `file_snapshot` | `file_snapshot.rs` | `<MetaBlock>` 路径可点击 + 失败行内三按钮 (v0.6.x)           |
+| `task_reminder`                                                     | `task_reminder` | `task_reminder.rs` | `<MetaBlock>` 含 id 串联 + description + blocks DAG (v0.6.x) |
+| `agent_name` / `agent-name`                                         | `agent_name`    | `agent_name.rs`    | `<MetaBlock>` 单行 优雅展示 (v0.6.x)                         |
+| `pr_link` / `pr-link`                                               | `pr_link`       | `pr_link.rs`       | `<MetaBlock>` 带链接徽章 (v0.6.x)                            |
+| (其它)                                                              | `meta`          | `meta.rs`          | `<UnknownBlockCard>`                                         |
 
 **多 alias 是有意为之** — 同一概念在不同 agent / 不同 schema 中命名不同,
 handler `matches()` 一次认全,前端只需一个 `case "<kind>"`。
+
+### v0.6.x 新增关键归一化 (`parser/claude.rs`)
+
+- `NormalizedMessage.subagentId` — 从 envelope.agentId 提取(仅 `isSidechain=true` 时)
+- 旧的 Rust 端写死 `None` 让 v0.5.0 浪费了这条关键关联 — v0.6.0 真正归一化进数据
+- 测试: 3 case (有/无 isSidechain × 有/无 agentId)
 
 ---
 

@@ -37,7 +37,7 @@ pnpm tauri build
 open "src-tauri/target/release/bundle/macos/OpenClaw 会话查看器.app"
 ```
 
-⚠️ **不要** 直接运行 `target/release/openclaw-session-viewer` 裸二进制 — Tauri 2 在 macOS 上必须在 .app bundle 内运行才能正确初始化 webview。
+**不要** 直接运行 `target/release/openclaw-session-viewer` 裸二进制 — Tauri 2 在 macOS 上必须在 .app bundle 内运行才能正确初始化 webview。
 
 ### 代码签名 (可选)
 
@@ -162,7 +162,7 @@ pnpm tauri build
 
 ### 安装
 
-双击 .msi → 按向导安装 → 开始菜单找到 "OpenClaw Session Viewer"。
+双击 .msi 按向导安装 开始菜单找到 "OpenClaw Session Viewer"。
 
 ### 代码签名 (强烈推荐)
 
@@ -208,7 +208,7 @@ Tauri bundler 在 Windows MSI 阶段调用 WiX 3.x 的 `light.exe`,对非 ASCII
 
 ## GitHub Actions 自动构建
 
-见 `.github/workflows/release.yml`。触发条件:`push tag v*` → 三平台并行构建 → 上传 artifacts → 创建 GitHub Release。
+见 `.github/workflows/release.yml`。触发条件:`push tag v*` 三平台并行构建 上传 artifacts 创建 GitHub Release。
 
 CI workflow 配置要点:
 

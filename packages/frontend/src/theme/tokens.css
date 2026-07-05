@@ -44,6 +44,15 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+
+  /* v0.6.x: Graph Explorer (G1) — subagent 角色配色 */
+  --color-role-explore: #10b981;
+  --color-role-design: #6366f1;
+  --color-role-validate: #f59e0b;
+  --color-role-implement: #ef4444;
+  --color-role-other: #94a3b8;
+  --color-tool-node: #facc15;
+  --color-error-badge: #ef4444;
 }
 
 [data-theme="dark"] {

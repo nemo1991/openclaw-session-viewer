@@ -12,8 +12,16 @@
  * 关键:不能是 "[object Object]"
  */
 
-import { describe, it, expect } from "vitest";
-import { extractErrorMessage } from "./api";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock Tauri core so we can spy on `invoke` calls (the path correction happens
+// before invoke, so we just want to verify the arguments reach the bridge).
+const mockInvoke = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+import { extractErrorMessage, apiListSubagentsByMeta } from "./api";
 
 describe("extractErrorMessage", () => {
   it("字符串原样返回", () => {
@@ -77,5 +85,72 @@ describe("extractErrorMessage", () => {
 
   it("嵌套对象 (有 kind 但没 message → 用 kind)", () => {
     expect(extractErrorMessage({ kind: "X", context: { a: 1 } })).toBe("X");
+  });
+});
+
+/**
+ * apiListSubagentsByMeta 路径修复回归测试
+ *
+ * Bug: 之前 `apiListSubagentsByMeta({ subagentDir: ".../session/subagents" })`
+ *      直接把 ".../session/subagents" 传给 `list_subagents` 命令,
+ *      后端内部又 `.join("subagents")` → ".../session/subagents/subagents"
+ *      → 不存在 → 返回 [] → panel 显示 "该会话无子代理" 而非 N 行。
+ *
+ * 修复: helper 内 `replace(/\/subagents\/?$/, "")` 去掉尾部 `/subagents`。
+ */
+describe("apiListSubagentsByMeta — 路径修复 v0.5.0", () => {
+  beforeEach(() => {
+    mockInvoke.mockReset();
+    mockInvoke.mockResolvedValue([]);
+  });
+
+  it("subagentDir = '/parent/session/subagents' → invoke sessionDir = '/parent/session'", async () => {
+    // 这是导致 panel 空显示的真 bug 场景
+    mockInvoke.mockResolvedValue([
+      {
+        agentId: "a1d92",
+        jsonlPath: "/parent/session/subagents/agent-a1d92.jsonl",
+        metaPath: "/parent/session/subagents/agent-a1d92.meta.json",
+        agentType: "Explore",
+        description: "Test",
+      },
+    ]);
+    await apiListSubagentsByMeta({
+      subagentDir: "/parent/session/subagents",
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("list_subagents", {
+      sessionDir: "/parent/session",
+    });
+  });
+
+  it("subagentDir 尾带 / 也能正确剥掉", async () => {
+    await apiListSubagentsByMeta({
+      subagentDir: "/parent/session/subagents/",
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("list_subagents", {
+      sessionDir: "/parent/session",
+    });
+  });
+
+  it("subagentDir 缺失 → 不调 invoke,直接返 []", async () => {
+    const result = await apiListSubagentsByMeta({ subagentDir: undefined });
+    expect(result).toEqual([]);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("subagentDir 是 null → 不调 invoke,直接返 []", async () => {
+    const result = await apiListSubagentsByMeta({ subagentDir: null });
+    expect(result).toEqual([]);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("subagentDir 不以 /subagents 结尾 → 防御性 short-circuit(不调 invoke)", async () => {
+    // 比如后端数据 schema 变化导致 subagentDir 直接是父目录 — helper 不知道
+    // 该用哪条路径,保守起见 return [],避免给后端发怪路径造成 500。
+    const result = await apiListSubagentsByMeta({
+      subagentDir: "/parent/session",
+    });
+    expect(result).toEqual([]);
+    expect(mockInvoke).not.toHaveBeenCalled();
   });
 });

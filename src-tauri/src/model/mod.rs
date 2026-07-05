@@ -68,6 +68,14 @@ pub struct SessionMeta {
     /// trajectory 文件大小(字节)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trajectory_size_bytes: Option<u64>,
+    // --- v0.5.0 subagent 关联 ---
+    /// 子 agent 文件数量(<sessionId>/subagents/agent-*.jsonl)
+    /// OpenClaw 会话始终为 None(无 Claude 风格子代理机制)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_count: Option<u32>,
+    /// 子 agent id 列表(去重,与 list_subagents 返回顺序一致)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subagent_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,7 +96,46 @@ pub struct SubagentMeta {
     pub agent_id: String,
     pub jsonl_path: String,
     pub meta_path: String,
+    /// `.meta.json` 解析后的内容(原始 JSON 值),含 agentType / description / toolUseId / spawnDepth
     pub meta: Option<serde_json::Value>,
+    // --- v0.5.0 详情字段(从 .meta.json + jsonl 头部 200 行解析) ---
+    /// "Explore" / "Plan" / "general-purpose" 等(来自 .meta.json 的 agentType)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_type: Option<String>,
+    /// 任务描述(来自 .meta.json 的 description)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// 子 agent 自身消息数(jsonl 头部扫描估算)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_count: Option<u32>,
+    /// 首条消息 ISO timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_timestamp: Option<String>,
+    /// 末条消息 ISO timestamp
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_timestamp: Option<String>,
+    // --- v0.6.0: 递归子代理层级(来自 .meta.json 的 spawnDepth) ---
+    /// 0 = 主 session 直接派出的子代理
+    /// 1+ = 子代理内部又派出的子代理(递归),UI 截递归避免深度爆炸
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spawn_depth: Option<u32>,
+}
+
+/// v0.6.0: 单个子代理的摘要(轻量级,Agent 卡片内嵌展开用)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentSummary {
+    pub agent_id: String,
+    pub description: Option<String>,
+    pub agent_type: Option<String>,
+    pub message_count: Option<u32>,
+    /// 工具使用分布,按 count 降序排列: `[(name, count), ...]`
+    /// 例: `[("Bash", 8), ("Read", 5), ("Edit", 2)]`
+    pub tool_distribution: Vec<(String, u32)>,
+    pub first_timestamp: Option<String>,
+    pub last_timestamp: Option<String>,
+    /// 从 first 到 last 的秒数(None 当时间不可解析)
+    pub duration_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

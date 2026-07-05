@@ -267,3 +267,43 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-warning);
 }
+
+/* v0.5.0:Claude Agent 卡片的"打开子代理详情"按钮 + resolved badge */
+.tool-task-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border);
+}
+
+.tool-task-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tool-task-action-btn:hover:not(:disabled) {
+  background: var(--color-primary);
+  color: var(--color-primary-fg);
+}
+
+.tool-task-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tool-task-resolved {
+  font-size: 10px;
+  color: var(--color-success);
+  font-family: var(--font-mono);
+}

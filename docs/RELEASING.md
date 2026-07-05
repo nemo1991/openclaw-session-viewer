@@ -6,7 +6,12 @@
 
 发版前确认:
 
-- [ ] 所有合并的 PR 都已写进 `CHANGELOG.md` 的 `## [Unreleased]` 段
+- [ ] 所有合并的 PR 都已写进 `CHANGELOG.md` 的 `## [Unreleased]` 段(注意: 历史养成的习惯是
+      release commit 之后打的 fix 全部累积,直到下个版本才写进 CHANGELOG——**v0.6.1 fix**
+      即源自此:5 个补丁在 [0.6.0] 之后才补进去,**只发 patch 版本** (0.6.1) 而不是直接修
+      v0.6.0 release 的 git tag)
+- [ ] `CHANGELOG.md` 顶部版本总览表的 Rust / TS / 合计测试数跟实际 `cargo test` /
+      `pnpm test` 输出对得上(本次 v0.6.0 发布时 CHANGELOG 写 410 但跑出来 456,差 +44)
 - [ ] 本地完整验证通过:
 
   ```bash
@@ -97,16 +102,16 @@ Release body 自动从 `CHANGELOG.md` 的 `## [X.Y.Z]` 段抓取。
 
 ## 故障恢复
 
-| 状况                                            | 恢复                                                                                 |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------ |
-| CI 失败但 tag 已推                              | `git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z`,修复后重打                  |
-| Draft 已创建但不想要                            | Releases 页面 → 该 release → **Delete**                                              |
-| Draft 没附上正确 body                           | Releases 页面 → **Edit** → 手动粘 CHANGELOG 段                                       |
-| 想重跑同 tag release                            | Actions 页面 → Release workflow → **Run workflow**(填同样的 tag)                     |
-| Windows runner 缺 Python 3                      | 理论上预装,缺失时改 PowerShell `ConvertFrom-Json` 注入                               |
-| **release commit 带 `[skip ci]` 跳过 workflow** | 改用 `gh workflow run Release --ref vX.Y.Z` 手动触发;或 `--amend` 改 commit message  |
-| **hotfix 流程**                                 | 从 `vX.Y.Z` tag 拉 `hotfix/vX.Y.Z+1` 分支 → 修复 → PR → 合并后打 `vX.Y.Z+1` tag → CI |
-| **CI workflow 文件改动导致 release 失败**       | 本地 lint: `brew install actionlint && actionlint .github/workflows/`                |
+| 状况                                            | 恢复                                                                                |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------- |
+| CI 失败但 tag 已推                              | `git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z`,修复后重打                 |
+| Draft 已创建但不想要                            | Releases 页面 该 release **Delete**                                                 |
+| Draft 没附上正确 body                           | Releases 页面 **Edit** 手动粘 CHANGELOG 段                                          |
+| 想重跑同 tag release                            | Actions 页面 Release workflow **Run workflow**(填同样的 tag)                        |
+| Windows runner 缺 Python 3                      | 理论上预装,缺失时改 PowerShell `ConvertFrom-Json` 注入                              |
+| **release commit 带 `[skip ci]` 跳过 workflow** | 改用 `gh workflow run Release --ref vX.Y.Z` 手动触发;或 `--amend` 改 commit message |
+| **hotfix 流程**                                 | 从 `vX.Y.Z` tag 拉 `hotfix/vX.Y.Z+1` 分支 修复 PR 合并后打 `vX.Y.Z+1` tag CI        |
+| **CI workflow 文件改动导致 release 失败**       | 本地 lint: `brew install actionlint && actionlint .github/workflows/`               |
 
 ### Hotfix 示例
 
@@ -117,7 +122,7 @@ git checkout -b hotfix/v0.3.2 v0.3.1
 # 改代码
 git commit -am "fix(parser): ..."
 git push origin hotfix/v0.3.2
-# 提 PR → 合 main → 打 tag
+# 提 PR  合 main  打 tag
 git checkout main
 git tag v0.3.2
 git push origin main --tags

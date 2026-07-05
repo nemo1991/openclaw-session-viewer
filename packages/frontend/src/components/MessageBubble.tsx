@@ -17,6 +17,7 @@ import { memo } from "react";
 import { FileText } from "lucide-react";
 
 import type { NormalizedBlockFE, TranscriptEntryOut } from "../lib/api";
+import { useTranscriptStore } from "../state/transcriptStore";
 import { MessageHeader } from "./MessageHeader";
 import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { UnknownBlockCard } from "./UnknownBlockCard";
@@ -29,12 +30,29 @@ import { ImageBlock } from "./blocks/ImageBlock";
 import { UnknownBlock } from "./blocks/UnknownBlock";
 import "./MessageBubble.css";
 
+/** v0.6.0: 跳转后高亮持续时间 — 1.5s 后 class 自然失效, CSS 动画也只跑 1.5s */
+const JUMP_HIGHLIGHT_MS = 1500;
+
 interface Props {
   entry: TranscriptEntryOut;
+  /** v0.5.0:主 session 的 jsonl 路径(透传到 ToolUseBlock → ToolUseCard → Agent 卡片定位子代理) */
+  parentJsonlPath?: string;
+  /** v0.5.0:主 session 的 sessionId */
+  parentSessionId?: string;
 }
 
-function MessageBubbleInner({ entry }: Props) {
+function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) {
   const msg = entry.normalized;
+
+  // v0.6.0: 跳到该 entry 时, 1.5s 内加 .msg-just-jumped class 触发高亮动画
+  // 选择 zustand selector 订阅: 跳转时 lastJumpedId 变化 → 所有 bubbles 重渲染
+  // (罕见操作, memo 优化在常态仍有效)
+  const lastJumpedId = useTranscriptStore((s) => s.lastJumpedId);
+  const lastJumpedAt = useTranscriptStore((s) => s.lastJumpedAt);
+  const isJustJumped =
+    lastJumpedId !== null &&
+    msg.id === lastJumpedId &&
+    Date.now() - lastJumpedAt < JUMP_HIGHLIGHT_MS;
 
   // meta 类消息:不渲染大卡片,渲染小标签
   if (msg.role === "meta") {
@@ -49,7 +67,9 @@ function MessageBubbleInner({ entry }: Props) {
           }
           // 已知 meta label → MetaBlock 专属样式
           if (isKnownMetaLabel(labelStr)) {
-            return <MetaBlock key={i} block={b} label={labelStr} />;
+            return (
+              <MetaBlock key={i} block={b} label={labelStr} parentJsonlPath={parentJsonlPath} />
+            );
           }
           // 有 payload 且字段丰富时使用完整 UnknownBlockCard
           if (
@@ -70,8 +90,19 @@ function MessageBubbleInner({ entry }: Props) {
     );
   }
 
+  // v0.6.0: 子代理内部消息缩进 (子 session 视角下, 所有消息 isSidechain=true 且有 subagentId)
+  // 用 msg.subagentId 触发 .msg-subagent class, CSS 加左侧 border + 缩进
+  const isSubagent = Boolean(msg.subagentId);
+  const cls = `msg msg-${msg.role}${isSubagent ? " msg-subagent" : ""}${
+    isJustJumped ? " msg-just-jumped" : ""
+  }`;
   return (
-    <div className={`msg msg-${msg.role}`}>
+    <div
+      className={cls}
+      data-subagent-id={isSubagent ? msg.subagentId : undefined}
+      data-is-sidechain={msg.isSidechain ? "true" : "false"}
+      data-just-jumped={isJustJumped ? "true" : undefined}
+    >
       <MessageHeader
         role={msg.role}
         model={msg.model}
@@ -80,7 +111,12 @@ function MessageBubbleInner({ entry }: Props) {
       />
       <div className="msg-body">
         {msg.blocks.map((block, i) => (
-          <BlockRenderer key={i} block={block} />
+          <BlockRenderer
+            key={i}
+            block={block}
+            parentJsonlPath={parentJsonlPath}
+            parentSessionId={parentSessionId}
+          />
         ))}
       </div>
     </div>
@@ -96,12 +132,26 @@ export const MessageBubble = memo(MessageBubbleInner);
  * 2. 已知 5 种 block kind 走 blocks/*Block
  * 3. 兜底 UnknownBlock(走 UnknownBlockCard)
  */
-export function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
+export function BlockRenderer({
+  block,
+  parentJsonlPath,
+  parentSessionId,
+}: {
+  block: NormalizedBlockFE;
+  parentJsonlPath?: string;
+  parentSessionId?: string;
+}) {
   const kind = block.kind as string;
 
   // meta 类 kind 统一走 MetaBlock
   if (isMetaKind(kind)) {
-    return <MetaBlock block={block} label={String(block.label ?? kind)} />;
+    return (
+      <MetaBlock
+        block={block}
+        label={String(block.label ?? kind)}
+        parentJsonlPath={parentJsonlPath}
+      />
+    );
   }
 
   switch (kind) {
@@ -110,9 +160,15 @@ export function BlockRenderer({ block }: { block: NormalizedBlockFE }) {
     case "thinking":
       return <ThinkingBlockWrap block={block} />;
     case "tool_use":
-      return <ToolUseBlock block={block} />;
+      return (
+        <ToolUseBlock
+          block={block}
+          parentJsonlPath={parentJsonlPath}
+          parentSessionId={parentSessionId}
+        />
+      );
     case "tool_result":
-      return <ToolResultBlock block={block} />;
+      return <ToolResultBlock block={block} parentJsonlPath={parentJsonlPath} />;
     case "image":
       return <ImageBlock block={block} />;
     default:

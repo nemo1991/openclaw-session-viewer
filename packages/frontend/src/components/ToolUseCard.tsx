@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Wrench,
   ChevronDown,
@@ -8,14 +9,24 @@ import {
   Edit3,
   Globe,
   ListChecks,
+  ExternalLink,
 } from "lucide-react";
 import { computeLineDiff, diffStats, DiffTooLargeError, type DiffLine } from "../lib/diff";
+import { apiListSubagentsByMeta } from "../lib/api";
+import { useSessionsStore } from "../state/sessionsStore";
+import { useTranslation } from "react-i18next";
+import { useFileReveal } from "../hooks/useFileReveal";
+import { SubagentInlineSummary } from "./SubagentInlineSummary";
 import "./ToolUseCard.css";
 
 interface Props {
-  id: string;
+  id?: string;
   name: string;
   input: Record<string, unknown>;
+  /** 主 session 的 jsonl 路径(用于查找对应子 agent) */
+  parentJsonlPath?: string;
+  /** 主 session 的 sessionId(用于 navigate 时 state 传父) */
+  parentSessionId?: string;
 }
 
 const TOOL_ICONS: Record<string, typeof Wrench> = {
@@ -29,9 +40,10 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
   WebFetch: Globe,
   WebSearch: Globe,
   Task: Wrench,
+  Agent: Wrench,
 };
 
-export function ToolUseCard({ id, name, input }: Props) {
+export function ToolUseCard({ id, name, input, parentJsonlPath, parentSessionId }: Props) {
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
   const Icon = TOOL_ICONS[name] ?? Wrench;
@@ -46,26 +58,47 @@ export function ToolUseCard({ id, name, input }: Props) {
         <span className="tool-name">{name}</span>
         {summary && <span className="tool-summary">{summary}</span>}
         {replaceAll && <span className="tool-badge tool-badge-warn">替换全部</span>}
-        <span className="tool-id">{id.slice(0, 8)}</span>
+        <span className="tool-id">{id?.slice(0, 8) ?? ""}</span>
       </button>
-      {open && <div className="tool-use-body">{renderBody(name, input)}</div>}
+      {open && (
+        <div className="tool-use-body">
+          {renderBody(name, input, id, parentJsonlPath, parentSessionId)}
+        </div>
+      )}
     </div>
   );
 }
 
 /** v0.4.2: 按 tool name dispatch 到专属 body 渲染器 */
-function renderBody(name: string, input: Record<string, unknown>) {
+function renderBody(
+  name: string,
+  input: Record<string, unknown>,
+  toolUseId?: string,
+  parentJsonlPath?: string,
+  parentSessionId?: string
+) {
   switch (name) {
     case "Edit":
-      return <EditToolBody input={input} />;
+      return <EditToolBody input={input} parentJsonlPath={parentJsonlPath} />;
     case "Bash":
       return <BashToolBody input={input} />;
     case "Read":
     case "Write":
     case "NotebookEdit":
-      return <ReadToolBody input={input} />;
+      return <ReadToolBody input={input} parentJsonlPath={parentJsonlPath} />;
     case "Task":
-      return <TaskToolBody input={input} />;
+    case "Agent":
+      // v0.5.0:Claude Code 用 name="Agent" 派生子代理,input schema
+      // 跟 Task 完全一样(description / subagent_type / prompt / taskId)
+      // 共用 TaskToolBody
+      return (
+        <TaskToolBody
+          input={input}
+          toolUseId={toolUseId}
+          parentJsonlPath={parentJsonlPath}
+          parentSessionId={parentSessionId}
+        />
+      );
     default:
       return <pre className="tool-body-json">{JSON.stringify(input, null, 2)}</pre>;
   }
@@ -105,7 +138,13 @@ function summarize(name: string, input: Record<string, unknown>): string {
  * v0.4.2: Edit 工具 — line-level diff 视图
  * old_string / new_string 缺失时 fallback 到 JSON dump;超大输入走 fallback + 警告。
  */
-function EditToolBody({ input }: { input: Record<string, unknown> }) {
+function EditToolBody({
+  input,
+  parentJsonlPath: _parentJsonlPath,
+}: {
+  input: Record<string, unknown>;
+  parentJsonlPath?: string;
+}) {
   const oldStr = String(input.old_string ?? "");
   const newStr = String(input.new_string ?? "");
 
@@ -170,10 +209,19 @@ function BashToolBody({ input }: { input: Record<string, unknown> }) {
 }
 
 /** v0.4.2: Read / Write / NotebookEdit — file_path 粗体 + offset/limit 行号指示 */
-function ReadToolBody({ input }: { input: Record<string, unknown> }) {
+function ReadToolBody({
+  input,
+  parentJsonlPath,
+}: {
+  input: Record<string, unknown>;
+  parentJsonlPath?: string;
+}) {
   const filePath = String(input.file_path ?? input.notebook_path ?? input.path ?? "");
   const offset = typeof input.offset === "number" ? input.offset : null;
   const limit = typeof input.limit === "number" ? input.limit : null;
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
 
   let rangeBadge: string | null = null;
   if (offset != null && limit != null) {
@@ -184,9 +232,23 @@ function ReadToolBody({ input }: { input: Record<string, unknown> }) {
     rangeBadge = `前 ${limit} 行`;
   }
 
+  // v0.6.0: 文件路径可点击 reveal
+  const handlePathClick = async () => {
+    if (!filePath) return;
+    const r = await revealAndNotify(filePath);
+    if (!r.ok) console.warn("reveal 失败:", r.error);
+  };
+
   return (
     <div className="tool-body-read">
-      <div className="tool-read-file-path">{filePath || "(无文件路径)"}</div>
+      <div
+        className="tool-read-file-path file-path-clickable"
+        data-testid="file-path-reveal"
+        onClick={handlePathClick}
+        title={filePath ? `${filePath} (点击 reveal in Finder)` : ""}
+      >
+        {filePath || "(无文件路径)"}
+      </div>
       {rangeBadge && <span className="tool-badge tool-read-range">{rangeBadge}</span>}
     </div>
   );
@@ -196,8 +258,24 @@ function ReadToolBody({ input }: { input: Record<string, unknown> }) {
  * v0.4.2: Task 工具 — TaskCreate vs TaskUpdate 区分
  *  - TaskCreate: description + subagent_type + prompt 预览
  *  - TaskUpdate: taskId + status 大 badge + content
+ *
+ * v0.5.0:Claude Code Agent(name="Agent")也走这个 body(input schema 完全一致)。
+ *  末尾追加"打开子代理详情"按钮 — 按 toolUseId 在 list_subagents 中精确匹配
+ *  对应的子代理,跳到 /session/<agentId> + state.subagentContext。
  */
-function TaskToolBody({ input }: { input: Record<string, unknown> }) {
+function TaskToolBody({
+  input,
+  toolUseId,
+  parentJsonlPath,
+  parentSessionId,
+}: {
+  input: Record<string, unknown>;
+  toolUseId?: string;
+  parentJsonlPath?: string;
+  parentSessionId?: string;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
   const isUpdate = input.taskId != null;
   const description = String(input.description ?? "");
   const subagentType = String(input.subagent_type ?? "");
@@ -205,6 +283,68 @@ function TaskToolBody({ input }: { input: Record<string, unknown> }) {
   const status = String(input.status ?? "");
   const content = input.content ? String(input.content) : "";
   const taskId = String(input.taskId ?? "");
+
+  // v0.6.0: 异步解析子代理 agentId(按 toolUseId 匹配 .meta.json)
+  // 解析后传给 SubagentInlineSummary 显示摘要;解析失败 InlineSummary 走 error 态
+  const [resolvedAgentId, setResolvedAgentId] = useState<string | null>(null);
+  const [parentSessionDir, setParentSessionDir] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toolUseId || !parentSessionId) return;
+    let cancelled = false;
+    (async () => {
+      const meta = useSessionsStore
+        .getState()
+        .sessions.find((s) => s.sessionId === parentSessionId);
+      if (!meta?.subagentDir) return;
+      const subs = await apiListSubagentsByMeta(meta);
+      if (cancelled) return;
+      // .meta.json toolUseId 字段精确匹配(实测 19/19)
+      const matched = subs.find((s) => s.meta?.toolUseId === toolUseId);
+      if (matched) {
+        setResolvedAgentId(matched.agentId);
+        // parentSessionDir = meta.subagentDir 去掉尾 /subagents
+        setParentSessionDir(meta.subagentDir.replace(/\/subagents\/?$/, ""));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [toolUseId, parentSessionId]);
+
+  const handleOpenChildPage = async () => {
+    if (!resolvedAgentId) return;
+    const meta = useSessionsStore.getState().sessions.find((s) => s.sessionId === parentSessionId);
+    const subs = await apiListSubagentsByMeta(meta ?? { subagentDir: null });
+    const matched = subs.find((s) => s.agentId === resolvedAgentId);
+    if (!matched) return;
+    navigate(
+      `/session/${encodeURIComponent(resolvedAgentId)}?path=${encodeURIComponent(matched.jsonlPath)}`,
+      {
+        state: {
+          session: {
+            sessionId: matched.agentId,
+            jsonlPath: matched.jsonlPath,
+            title: matched.description ?? matched.agentId,
+            workspaceGuess: meta?.workspaceGuess ?? meta?.projectKey ?? "",
+            projectKey: meta?.projectKey ?? "",
+            primaryModel: meta?.primaryModel ?? null,
+            messageCount: matched.messageCount ?? 0,
+            sizeBytes: 0,
+            firstTimestamp: matched.firstTimestamp ?? null,
+            hasTrajectory: false,
+            subagentDir: null,
+            totalTokens: undefined,
+            source: "claude",
+          },
+          subagentContext: {
+            parentSessionId: parentSessionId ?? "",
+            agentId: matched.agentId,
+            agentType: matched.agentType ?? null,
+          },
+        },
+      }
+    );
+  };
 
   if (isUpdate) {
     return (
@@ -221,6 +361,10 @@ function TaskToolBody({ input }: { input: Record<string, unknown> }) {
     );
   }
 
+  // v0.6.0: 显示 InlineSummary 需 toolUseId + parent 上下文 + 已解析出 resolvedAgentId
+  // 解析是异步的,InlineSummary 内部 loading/error 态由它自己处理
+  const canShowInlineSummary = !isUpdate && !!toolUseId && !!parentSessionId && !!parentJsonlPath;
+
   return (
     <div className="tool-body-task">
       {description && <div className="tool-task-headline">{description}</div>}
@@ -229,6 +373,14 @@ function TaskToolBody({ input }: { input: Record<string, unknown> }) {
         <pre className="tool-task-prompt">
           {prompt.length > 200 ? prompt.slice(0, 200) + "…" : prompt}
         </pre>
+      )}
+      {/* v0.6.0: 内嵌子代理摘要(取代 v0.5.0 的 navigate 按钮) */}
+      {canShowInlineSummary && resolvedAgentId && parentSessionDir && (
+        <SubagentInlineSummary
+          parentSessionDir={parentSessionDir}
+          agentId={resolvedAgentId}
+          onOpenChildPage={handleOpenChildPage}
+        />
       )}
     </div>
   );

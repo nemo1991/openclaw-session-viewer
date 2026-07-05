@@ -3,7 +3,68 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-elevated);
-  overflow: hidden;
+  /* v0.6.x: 不要 overflow: hidden, 让子元素 (meta agent 列表 / 长 code block) 撑满
+   * 之前 overflow:hidden 会让 agent_listing_delta 的 6 个 chip 行裁掉最后一个
+   * 现在依赖 border-radius + border 内部子元素不会跑出 */
+  /* overflow: hidden; */ /* 暂时禁用避免 agent meta 越界 */
+  /* 替代: 给 .msg 设 max-width: 100% 让它被父容器 (.transcript-scroll) 约束 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* v0.6.0: 子代理内部消息缩进
+ * - 左侧紫色 accent border 标识 "这是子代理干的"
+ * - 缩进 24px 跟主 session 视觉分离
+ * - 0.92 opacity 让子代理消息不那么 "重", 父主 timeline 仍是焦点
+ */
+.msg.msg-subagent {
+  margin-left: 24px;
+  border-left: 3px solid var(--color-accent, #8250df);
+  opacity: 0.92;
+  position: relative;
+}
+
+/* v0.6.0: 子代理消息前小色块, 一眼能数清 subagent 数 */
+.msg.msg-subagent::before {
+  content: "▸";
+  position: absolute;
+  left: -18px;
+  top: 12px;
+  color: var(--color-accent, #8250df);
+  font-size: 12px;
+}
+
+/* v0.6.0: 跳到该消息时, 1.5s 高亮反馈 (last-prompt LeafJumpButton 触发后)
+ * - 背景从 primary 色调淡回 elevated, 视觉上一眼能定位
+ * - box-shadow 框出 primary 边框
+ * - 1.5s 后动画自然结束, class 也可通过 Date.now() 判定过期
+ */
+.msg.msg-just-jumped {
+  animation: jump-pulse 1.5s ease-out;
+}
+
+@keyframes jump-pulse {
+  0% {
+    background: var(--color-primary-bg, rgba(91, 107, 255, 0.25));
+    box-shadow: 0 0 0 3px var(--color-primary, #5b6bff);
+  }
+  60% {
+    background: var(--color-primary-bg, rgba(91, 107, 255, 0.12));
+    box-shadow: 0 0 0 1px var(--color-primary, #5b6bff);
+  }
+  100% {
+    background: var(--color-bg-elevated, transparent);
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* 减少动画偏好 (用户开了 prefers-reduced-motion) 直接显示最终态, 不闪 */
+@media (prefers-reduced-motion: reduce) {
+  .msg.msg-just-jumped {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--color-primary, #5b6bff);
+  }
 }
 
 .msg-header {
@@ -107,6 +168,10 @@
   margin: 4px 0;
   padding-left: 12px;
   border-left: 2px solid var(--color-border);
+  /* v0.6.x: 子元素 max-width:100% 起作用的前提 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .msg-meta-pill {
@@ -135,6 +200,27 @@
 
 .block-text p:last-child {
   margin-bottom: 0;
+}
+
+.block-text-muted {
+  color: var(--color-text-muted, #94a3b8);
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(148, 163, 184, 0.08);
+  border-left: 2px solid rgba(148, 163, 184, 0.3);
+  border-radius: 0 3px 3px 0;
+}
+
+.block-text-sr-note {
+  margin-top: 6px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: #c4b5fd;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px dashed rgba(168, 85, 247, 0.3);
+  border-radius: 3px;
+  display: inline-block;
+  font-style: italic;
 }
 
 .block-image,
@@ -329,6 +415,48 @@
   transform: rotate(90deg);
 }
 
+/* v0.6.0: last-prompt 跳到对话位置按钮 */
+.subagent-meta-jump-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--color-primary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: all 0.15s ease;
+}
+
+.subagent-meta-jump-btn:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.subagent-meta-jump-btn:active {
+  transform: scale(0.96);
+}
+
+/* "目标不在范围" 状态: 灰色禁用样式 — 不真正 disabled (日志仍能触发 warn) */
+.subagent-meta-jump-btn.subagent-meta-jump-btn-disabled,
+.subagent-meta-jump-btn[data-state="disabled"] {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  cursor: not-allowed;
+}
+
+.subagent-meta-jump-btn.subagent-meta-jump-btn-disabled:hover,
+.subagent-meta-jump-btn[data-state="disabled"]:hover {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
 .subagent-meta-detail {
   flex-basis: 100%;
   margin: 4px 0 0;
@@ -341,6 +469,723 @@
   color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 240px;
+  max-height: 400px;
   overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* v0.6.0 meta 增强: mode/permission value 彩色 chip
+ * 实测:大多数是 normal(灰),但 plan/bypass 是少有的 "危险态"需要眼睛看到
+ */
+.subagent-meta-value {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  margin: 0 4px;
+  border: 1px solid transparent;
+  letter-spacing: 0.3px;
+}
+.subagent-meta-value-neutral {
+  background: var(--color-surface-2, rgba(120, 120, 120, 0.12));
+  color: var(--color-text-muted, #888);
+  border-color: var(--color-border, #e0e0e0);
+}
+.subagent-meta-value-plan {
+  background: rgba(59, 130, 246, 0.18);
+  color: rgb(59, 130, 246);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+.subagent-meta-value-danger {
+  background: rgba(220, 38, 38, 0.18);
+  color: rgb(220, 38, 38);
+  border-color: rgba(220, 38, 38, 0.5);
+}
+
+/* mode/permission summary 末端的 "长 N" 提示,提示用户 prompt 长 */
+.subagent-meta-tag {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--color-surface-1, rgba(120, 120, 120, 0.18));
+  color: var(--color-text-muted, #888);
+  margin: 0 4px;
+}
+.subagent-meta-tag-length {
+  letter-spacing: 0.3px;
+}
+
+/* summary 上的 quick jump 按钮 — 用户报 "last-prompt 显示不全", 这里直接暴露小跳转图标,无需展开 details */
+.subagent-meta-summary-jump {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 4px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-primary);
+  transition: all 0.15s ease;
+}
+.subagent-meta-summary-jump:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
+  border-color: var(--color-primary);
+}
+.subagent-meta-summary-jump-disabled {
+  color: var(--color-text-muted);
+  border-color: var(--color-border);
+  cursor: not-allowed;
+}
+.subagent-meta-summary-jump-disabled:hover {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
+}
+
+/* title copy 按钮 — 长 title 拷贝 */
+.subagent-meta-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: all 0.15s ease;
+}
+.subagent-meta-copy-btn:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.06));
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* v0.6.0 MetaBlock 增强:
+ * - file_snapshot 路径列表
+ * - skill_listing 长列表折叠
+ * - plan_mode reminder 配色
+ * - agent_listing 加/减标配色
+ */
+
+.meta-primary-text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text);
+}
+
+.meta-section {
+  flex-basis: 100%;
+  margin: 4px 0;
+  /* v0.6.x: 防止 flex-basis: 100% + 长子元素溢出父容器 */
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+.meta-section-title {
+  display: block;
+  font-size: 10px;
+  color: var(--color-text-muted);
+  margin-bottom: 2px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+/* v0.6.x: meta-list 必须受父容器宽度约束, 否则 flex-wrap 但子项 inline-block 仍溢出
+ * v0.6.x (再修): 用 max-width:100% + min-width:0 + word-break 强制任何字符断行 */
+.meta-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 0;
+  line-height: 1.5;
+  max-width: 100%;
+  min-width: 0;
+  /* 容器本身保证单 chip 宽度被 clamp 到父内 */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.meta-list-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 2px 0;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.meta-tag {
+  display: inline-flex;
+  align-items: center;
+  /* v0.6.x fix: 长 agent name 撑破父容器 (e.g. 'claude-code-guide') — 合并两处定义
+   * 之前 .meta-tag 在 line 606 重复声明只设了 display/align-items, 覆盖了 line 250
+   * 的 overflow-wrap:anywhere, 让 agent_listing 的长 chip 不断行
+   * v0.6.x 再修: max-width 200px + overflow-wrap:anywhere + word-break:break-all
+   * 同时 max-width 缩到 200px, 让 5-6 个长 chip 在 ~700px 容器内能 wrap 到第二行 */
+  max-width: 200px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.meta-tag-add {
+  color: rgb(34, 197, 94);
+  background: rgba(34, 197, 94, 0.12);
+}
+.meta-tag-remove {
+  color: rgb(220, 38, 38);
+  background: rgba(220, 38, 38, 0.12);
+  text-decoration: line-through;
+  opacity: 0.8;
+}
+
+.meta-reminder-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.meta-reminder-full {
+  background: rgba(59, 130, 246, 0.18);
+  color: rgb(59, 130, 246);
+}
+.meta-reminder-none {
+  background: rgba(120, 120, 120, 0.18);
+  color: var(--color-text-muted);
+}
+
+.meta-file-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* v0.6.x: 长 file path 不撑破容器 */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-file-item {
+  padding: 2px 0;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 路径可点击 (reveal in Finder) */
+.meta-path-clickable {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--color-surface-2);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--color-text);
+  word-break: break-all;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+  /* v0.6.x fix: 长 file path 不撑破容器, 完整值通过 title 显示 */
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.meta-path-clickable:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.08));
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.meta-path-clickable:active {
+  transform: scale(0.98);
+}
+
+/* plan_mode 路径 reveal 行 */
+.meta-details-plan {
+  flex-basis: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.meta-plan-path-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  max-width: 100%;
+  min-width: 0;
+}
+.meta-reveal-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-primary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.meta-reveal-btn:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
+  border-color: var(--color-primary);
+}
+
+/* ===== v0.6.x 默认展开的 meta 块样式 =====
+ * 用户报: '已展开, 不需要折叠按钮' — 所有 meta 块不再用 <details> 折叠,
+ * 改用 flex 列布局, 内容永远可见。
+ *
+ * 配套:
+ * - .meta-block-flat 基础样式 (替代原 .block-meta-info 在 meta 类里的多行版本)
+ * - .meta-list-scrollable 列表滚动 (> 6 个不再折叠, 而是 max-height 滚动)
+ * - .meta-reveal-error 内联错误显示 (用户报 reveal 无效 — 给错误提示)
+ * - .meta-plan-block plan_mode 平面块
+ * - .meta-task-row-head / .meta-task-meta / .meta-task-graph 关联字段展示
+ *   (task_reminder 关联关系: id 跨 reminder 串联, blocks/blockedBy DAG)
+ */
+
+/* 默认展开的 meta 块 (替代 <details>) */
+.subagent-meta-block-flat {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  margin: 4px 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.subagent-meta-block-flat .subagent-meta-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* last-prompt 上下结构: prompt 在上, 跳按钮在下 */
+.subagent-meta-block-flat .subagent-meta-detail {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+/* last-prompt action row — 跳按钮单独占一行, 左对齐 */
+.subagent-meta-action-row {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+.subagent-meta-action-row .subagent-meta-jump-btn {
+  margin-top: 0;
+}
+
+/* title 文本 — 比 .subagent-meta-text 更长的样式 (取消 ellipsis) */
+.subagent-meta-text-title {
+  font-family: var(--font-text, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-size: 12px;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+}
+
+/* === MetaBlock 默认展开 === */
+.meta-block-flat {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 12px;
+  /* v0.6.x fix: 子元素溢出不超过父容器
+   * (默认 max-width: none, 长 tag 会撑到超容器外)
+   * v0.6.x 再修: width:100% 强制父容器宽度约束 (之前 max-width:100% 允许 100% 以上继承父) */
+  max-width: 100%;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-block-flat > .meta-kind-badge {
+  align-self: flex-start;
+  max-width: 100%;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* 列表滚动 — 替代 <details> 折叠 */
+.meta-list-scrollable {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  width: 100%;
+  max-width: 100%;
+  padding: 4px 0;
+  scrollbar-width: thin;
+  box-sizing: border-box;
+}
+
+/* === 路径 reveal 内联错误 + 可操作按钮 (v0.6.x) === */
+.meta-path-clickable-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* v0.6.x: 错误块改 layout: 上 错误描述, 下 操作按钮组
+ * 之前 ellipsis 2-line 用户看不到修法, 现在加 [复制路径][去设置][一键开启] */
+.meta-reveal-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: rgb(220, 38, 38);
+  background: rgba(220, 38, 38, 0.08);
+  border-left: 2px solid rgb(220, 38, 38);
+  padding: 6px 8px;
+  border-radius: 2px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-reveal-error-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.meta-reveal-error-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.meta-reveal-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.meta-reveal-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+.meta-reveal-error-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: rgba(220, 38, 38, 0.12);
+  color: rgb(220, 38, 38);
+  border: 1px solid rgba(220, 38, 38, 0.4);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.meta-reveal-error-btn:hover {
+  background: rgba(220, 38, 38, 0.2);
+  border-color: rgb(220, 38, 38);
+}
+.meta-reveal-error-btn:active {
+  transform: scale(0.96);
+}
+.meta-reveal-error-btn-primary {
+  background: var(--color-primary, #5b6bff);
+  color: white;
+  border-color: var(--color-primary, #5b6bff);
+}
+.meta-reveal-error-btn-primary:hover {
+  background: var(--color-primary-hover, #4a5be0);
+  border-color: var(--color-primary-hover, #4a5be0);
+}
+.meta-reveal-error-btn-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: rgb(180, 110, 0);
+  border-color: rgba(245, 158, 11, 0.5);
+}
+.meta-reveal-error-btn-warning:hover {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: rgb(245, 158, 11);
+}
+
+/* ===== RevealErrorToast 全局 toast 样式 ===== */
+.reveal-error-toast-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.reveal-error-toast {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--color-bg-elevated, #1f1f23);
+  border: 1px solid rgba(220, 38, 38, 0.5);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
+  animation: reveal-toast-in 0.2s ease-out;
+}
+@keyframes reveal-toast-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+.reveal-error-toast-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgb(220, 38, 38);
+  font-weight: 600;
+  font-size: 12px;
+}
+.reveal-error-toast-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.reveal-error-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.reveal-error-toast-msg {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.reveal-error-toast-path {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  background: var(--color-surface-1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+.reveal-error-toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.reveal-error-toast-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.reveal-error-toast-btn:hover {
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.08));
+  border-color: var(--color-primary);
+}
+.reveal-error-toast-btn-primary {
+  background: var(--color-primary, #5b6bff);
+  color: white;
+  border-color: var(--color-primary, #5b6bff);
+}
+.reveal-error-toast-btn-primary:hover {
+  background: var(--color-primary-hover, #4a5be0);
+}
+.reveal-error-toast-btn-close {
+  padding: 4px 6px;
+}
+
+/* === plan_mode 平面块 === */
+.meta-plan-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 0;
+}
+.meta-plan-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.meta-plan-filename {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === task_reminder 关联字段 === */
+.meta-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-task-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  margin: 4px 0;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-task-row-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.meta-task-id {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.meta-task-subject {
+  /* 长 subject (e.g. 'Phase 3: 全局/会话内搜索') 不撑破容器 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.meta-task-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 2px solid var(--color-border);
+  max-width: 100%;
+  min-width: 0;
+}
+.meta-task-activeform {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-primary, #5b6bff);
+  overflow-wrap: anywhere;
+}
+.meta-task-activeform-label {
+  display: inline-block;
+  margin-right: 4px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.meta-task-desc {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.meta-task-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-width: 100%;
+  min-width: 0;
+}
+.meta-task-graph-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+.meta-task-graph-label {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+.meta-task-ref {
+  padding: 0 5px;
+  background: var(--color-primary-bg, rgba(91, 107, 255, 0.1));
+  color: var(--color-primary, #5b6bff);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
 }

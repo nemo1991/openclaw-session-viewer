@@ -41,5 +41,24 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./src/test/setup.ts"],
     css: false,
+    // v0.7.0:coverage(v8)— 排除测试文件 / CSS / Tauri 桥 / generated types
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "json-summary"],
+      reportsDirectory: "./coverage",
+      // 排除:测试文件自身、setup、类型声明、Tauri command 桥
+      exclude: [
+        "node_modules/",
+        "src/test/**",
+        "**/*.test.{ts,tsx}",
+        "**/*.d.ts",
+        "src/vite-env.d.ts",
+        "src/test/setup.ts",
+        // Mock-only 文件通常不需覆盖
+        "**/mocks/**",
+        // Playwright e2e 不计入 unit coverage
+        "e2e/**",
+      ],
+    },
   },
 });

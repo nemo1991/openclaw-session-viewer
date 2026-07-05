@@ -238,6 +238,10 @@
   font-size: 11px;
   color: var(--color-accent);
   font-weight: 600;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-bg, transparent);
+  font-variant-numeric: tabular-nums;
 }
 
 .source-badge {

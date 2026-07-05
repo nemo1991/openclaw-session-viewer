@@ -56,6 +56,11 @@ export interface SessionMeta {
   hasTrajectory?: boolean;
   /** trajectory 文件大小(字节) */
   trajectorySizeBytes?: number;
+  // --- v0.5.0 subagent 关联 ---
+  /** 子 agent 文件数量(<sessionId>/subagents/agent-*.jsonl) */
+  subagentCount?: number;
+  /** 子 agent id 列表(已排序去重) */
+  subagentIds?: string[];
 }
 
 /** 归一化后的内容块 */
@@ -91,6 +96,26 @@ export interface NormalizedMessage {
   parentUuid?: string | null;
   /** 原始 type 字段,UI 用于分组/折叠 */
   rawType: string;
+}
+
+// --- v0.6.0: 单个子代理摘要(Agent 卡片内嵌展开) ---
+/**
+ * 单个子代理的轻量级摘要,在 Agent 卡片内嵌展开时调用,
+ * 避免 navigate 跳到独立子 session 详情页。
+ *
+ * 由 Rust `get_subagent_summary` 命令返回。
+ */
+export interface SubagentSummary {
+  agentId: string;
+  description: string | null;
+  agentType: string | null;
+  messageCount: number | null;
+  /** 工具使用分布,按 count 降序: `[["Bash", 8], ["Read", 5], ...]` */
+  toolDistribution: Array<[string, number]>;
+  firstTimestamp: string | null;
+  lastTimestamp: string | null;
+  /** 从 first 到 last 的秒数 */
+  durationSeconds: number | null;
 }
 
 /** 解析后的转录条目(含位置) */
@@ -189,13 +214,23 @@ export function normalizeClaudeRecord(
         blocks: [{ kind: "meta", label: "title", payload: record.title }],
         rawType: record.type,
       };
-    case "last-prompt":
+    case "last-prompt": {
+      // v0.6.0: 真实数据字段是 `lastPrompt` (camelCase), 不是 `prompt`。
+      // 优先取 lastPrompt, fallback 到 prompt (老版本兼容)。
+      const promptText = record.lastPrompt ?? record.prompt ?? "";
+      // leafUuid 指向最后一条 user message (实测 5/5 命中 type=user) — /resume 触发的恢复点
+      // 透传到 payload 里, UI 可点击跳到那条 message
+      const payload: Record<string, unknown> = { prompt: promptText };
+      if (record.leafUuid) {
+        payload.leafUuid = record.leafUuid;
+      }
       return {
         ...base,
         role: "meta",
-        blocks: [{ kind: "meta", label: "last-prompt", payload: record.prompt }],
+        blocks: [{ kind: "meta", label: "last-prompt", payload }],
         rawType: "last-prompt",
       };
+    }
     case "file-history-snapshot":
       return {
         ...base,

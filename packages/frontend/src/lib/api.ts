@@ -5,7 +5,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppSettings, SearchHit, SessionMeta } from "@ocsv/shared";
+import type { AppSettings, SearchHit, SessionMeta, SubagentSummary } from "@ocsv/shared";
 
 // ===== 会话 =====
 export const apiListSessions = (): Promise<SessionMeta[]> => invoke("list_sessions");
@@ -79,8 +79,54 @@ export const apiListSubagents = (
     jsonlPath: string;
     metaPath: string;
     meta?: Record<string, unknown>;
+    agentType?: string;
+    description?: string;
+    spawnDepth?: number;
+    messageCount?: number;
+    firstTimestamp?: string;
+    lastTimestamp?: string;
   }>
 > => invoke("list_subagents", { sessionDir });
+
+/** v0.6.0: 单个子代理的轻量级摘要(Agent 卡片内嵌展开用) */
+export const apiGetSubagentSummary = (
+  sessionDir: string,
+  agentId: string
+): Promise<SubagentSummary | null> => invoke("get_subagent_summary", { sessionDir, agentId });
+
+/** v0.5.0:便利 helper — 直接传 SessionMeta。
+ *
+ * ⚠️ 关键约定:后端 `list_subagents(session_dir)` 期望的是**父 session 目录**,
+ * 内部会 `dir.join("subagents")`。
+ * 而 SessionMeta.subagentDir 在后端 `build_claude_session_meta` 里被填成
+ * `<sessionId>/subagents` (已带 subagents/ 后缀,见 sessions.rs:371-381),
+ * 所以这里要去掉尾部的 "/subagents" 再传,否则后端会再 join 一次变成
+ * "<sessionId>/subagents/subagents" — 必然不存在 → 返回 [] → panel 空。
+ *
+ * 修复 commit: feat(subagent): 修 apiListSubagentsByMeta 路径双 join — panel 显示 N 行
+ */
+export const apiListSubagentsByMeta = (meta: {
+  subagentDir?: string | null;
+}): Promise<
+  Array<{
+    agentId: string;
+    jsonlPath: string;
+    metaPath: string;
+    meta?: Record<string, unknown>;
+    agentType?: string;
+    description?: string;
+    messageCount?: number;
+    firstTimestamp?: string;
+    lastTimestamp?: string;
+  }>
+> => {
+  if (!meta.subagentDir) return Promise.resolve([]);
+  // 把 ".../<sessionId>/subagents" 变回 ".../<sessionId>"
+  // (path 风格分隔,Windows 上前端的 path.sep 是 "/",Tauri 传来的是 "/")
+  const parent = meta.subagentDir.replace(/\/subagents\/?$/, "");
+  if (!parent || parent === meta.subagentDir) return Promise.resolve([]);
+  return apiListSubagents(parent);
+};
 
 // ===== 工具溢出 =====
 export const apiGetToolResultFile = (
@@ -162,8 +208,22 @@ export const apiSaveSettings = (settings: AppSettings): Promise<void> =>
 
 // ===== 文件系统 =====
 export const apiPickExportDir = (): Promise<string | null> => invoke("pick_export_dir");
-export const apiRevealInFinder = (path: string): Promise<void> =>
-  invoke("reveal_in_finder", { path });
+/**
+ * v0.6.0: reveal in Finder/Explorer 加 workspace 安全沙箱
+ *
+ * @param path 要 reveal 的文件路径
+ * @param workspaceRoot 调用方 session 的 workspaceGuess(null = 不约束, 由 allowRelaxed 决定)
+ * @param allowRelaxed 来自 settings.pathSecurity.allowRelaxed
+ *                     false (默认) → 路径必须在 workspaceRoot 子树内, 越界返回 Err
+ *                     true          → 放宽到"在任一已知 root 下" (assert_within_any_root 兜底)
+ *
+ * 错误: 后端返回 "PathSecurity: ..." 开头的 message, 前端 catch 后弹 toast
+ */
+export const apiRevealInFinder = (
+  path: string,
+  workspaceRoot: string | null | undefined,
+  allowRelaxed: boolean
+): Promise<void> => invoke("reveal_in_finder", { path, workspaceRoot, allowRelaxed });
 
 // ===== Trajectory (OpenClaw) =====
 
