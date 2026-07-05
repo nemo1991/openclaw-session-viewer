@@ -154,7 +154,7 @@ describe("findIdleGaps", () => {
     ];
     const gaps = findIdleGaps(entries, 5 * 60_000);
     expect(gaps).toHaveLength(1);
-    expect(gaps[0].durationMs).toBe(17 * 60_000);
+    expect(gaps[0]?.durationMs).toBe(17 * 60_000);
   });
 
   it("ignores entries without timestamp", () => {

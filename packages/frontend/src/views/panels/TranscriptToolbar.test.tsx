@@ -40,9 +40,9 @@ describe("TranscriptToolbar", () => {
     expect(screen.getByTestId("content-filter-tool-Bash")).toBeInTheDocument();
     expect(screen.getByTestId("content-filter-tool-Read")).toBeInTheDocument();
     expect(screen.getByTestId("content-filter-tool-Edit")).toBeInTheDocument();
-    expect(screen.getByTestId("content-filter-role-all")).toBeInTheDocument();
-    expect(screen.getByTestId("content-filter-role-user")).toBeInTheDocument();
-    expect(screen.getByTestId("content-filter-role-assistant")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-role-all")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-role-user")).toBeInTheDocument();
+    expect(screen.getByTestId("filter-role-assistant")).toBeInTheDocument();
     expect(screen.getByTestId("content-filter-has-thinking")).toBeInTheDocument();
     expect(screen.getByTestId("content-filter-has-tool_use")).toBeInTheDocument();
     expect(screen.getByTestId("content-filter-has-error")).toBeInTheDocument();
