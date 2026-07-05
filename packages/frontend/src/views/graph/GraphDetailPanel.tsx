@@ -71,17 +71,19 @@ export function GraphDetailPanel({
       .map((e) => e.node.token_total)
       .filter((n): n is number => typeof n === "number")
       .sort((a, b) => a - b);
-    const medTokens = tokensAll.length ? tokensAll[Math.floor(tokensAll.length / 2)] : 0;
+    const medTokens = tokensAll.length ? (tokensAll[Math.floor(tokensAll.length / 2)] ?? 0) : 0;
     const thinkingAll: number[] = entries
       .map((e) => e.node.thinking_count)
       .filter((n): n is number => typeof n === "number")
       .sort((a, b) => a - b);
-    const medThinking = thinkingAll.length ? thinkingAll[Math.floor(thinkingAll.length / 2)] : 0;
+    const medThinking = thinkingAll.length
+      ? (thinkingAll[Math.floor(thinkingAll.length / 2)] ?? 0)
+      : 0;
     const errorsAll: number[] = entries
       .map((e) => e.node.error_count)
       .filter((n): n is number => typeof n === "number")
       .sort((a, b) => a - b);
-    const medErrors = errorsAll.length ? errorsAll[Math.floor(errorsAll.length / 2)] : 0;
+    const medErrors = errorsAll.length ? (errorsAll[Math.floor(errorsAll.length / 2)] ?? 0) : 0;
     return { medTokens, medThinking, medErrors };
   }, [entries]);
 
