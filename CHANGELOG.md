@@ -6,6 +6,7 @@
 
 | 版本    | 日期       | 主题                                                         | Rust 测试 | TS 测试 | 合计 |
 | ------- | ---------- | ------------------------------------------------------------ | --------: | ------: | ---: |
+| [0.7.0] | 2026-07-05 | 会话详情筛选 + 聚合去噪 + React 19 + 完整 CI/CD              |       107 |     438 |  545 |
 | [0.6.1] | 2026-06-30 | 5 个紧急 UX 补丁 (reveal 闭环 + Settings 锁 + agent 越界)    |       107 |     308 |  456 |
 | [0.6.0] | 2026-06-29 | Claude 会话关联信息优雅展示 (子代理缩进 + 内嵌摘要 + reveal) |       105 |     264 |  410 |
 | [0.5.0] | 2026-06-29 | 主-子 agent 关联展示 (SubagentPanel)                         |        94 |     251 |  345 |
@@ -28,57 +29,89 @@
 
 > 测试数累计只增不减;Rust 单测在 [src-tauri/src/parser/blocks/](../src-tauri/src/parser/blocks/) 各 handler 文件里,TS 单测在 [packages/frontend/src/lib/](../packages/frontend/src/lib/) 跟 [packages/frontend/src/state/](../packages/frontend/src/state/) 跟 [packages/shared/src/](../packages/shared/src/),可视化组件测试在 [packages/frontend/src/components/\*.test.tsx](../packages/frontend/src/components/)。
 
-## [Unreleased]
+## [0.7.0] - 2026-07-05
 
-### 新增
+`experimental/embed-db` 分支收口:会话详情筛选 + 聚合去噪 + G1/G2/G3 Graph Explorer 合并 + React 19 升级 + 完整 CI/CD。
 
-- **Graph Explorer 合并到主项目** (M1 + M2 收口,commit `bc24a08` + `683e61d`)
-  - 新 tab `/graph` 挂在根路由下,3 个子 view `?view=graph|analytics|rag`
-  - **G1 Graph**: force-directed 图 + 节点点击跳主项目 `/session/:id` 原生 TranscriptView
-  - **G2 Analytics**: 6 chart (sessions-by-day / token-top / top-tools / model-avg-thinking / retry-rate / subagent-chain)
-  - **G3 RAG**: hash-embedding lite (32-dim) + cosine topK + 跨 tab prefill (`?q=query`)
-- **会话详情跳主项目原生路由** (复用 `SubagentPanel.tsx:79-110` 模板)
-  - main 节点: `navigate(/session/<sessionId>, { state: { session: <realMeta> } })`
-  - subagent 节点: `navigate(/session/<agentId>?path=<jsonlPath>, { state: { session: <virtualMeta>, subagentContext: {...} } })`
-  - F5 刷新后子会话仍能加载 (`?path=` 持久化兜底)
-- **display_title 系统** (zustand `titleStore` + localStorage `openclaw.titleOverrides.v1`)
-  - G1/G2/G3 共享一个显示名(自动启发式 + 用户自定义覆盖)
-  - 跨刷新 + 跨 tab 同步
-- **共享 `graphStore` (zustand)** — G1/G2/G3 共享 entries,单次加载
-- **新依赖** `react-force-graph-2d@^1.29` + `d3@^7.9` + `recharts@^2.15` 加到主项目 `package.json`
-- **新 CSS tokens** `tokens.css`: `--color-role-explore` / `design` / `validate` / `implement` / `other` / `tool-node` / `error-badge`
+### Graph Explorer 合并到主项目 (M1 + M2 收口,commit `bc24a08` + `683e61d`)
 
-### 改动
+- 新 tab `/graph` 挂在根路由下,3 个子 view `?view=graph|analytics|rag`
+- **G1 Graph**: force-directed 图 + 节点点击跳主项目 `/session/:id` 原生 TranscriptView
+- **G2 Analytics**: 6 chart (sessions-by-day / token-top / top-tools / model-avg-thinking / retry-rate / subagent-chain)
+- **G3 RAG**: hash-embedding lite (32-dim) + cosine topK + 跨 tab prefill (`?q=query`)
+- 会话详情跳主项目原生路由 (复用 `SubagentPanel.tsx:79-110` 模板) — F5 刷新子会话仍能加载
+- `display_title` 系统 (zustand `titleStore` + localStorage) — 跨刷新 + 跨 tab 同步
+- 共享 `graphStore` (zustand) — G1/G2/G3 共享 entries,单次加载
+- 新依赖 `react-force-graph-2d` + `d3` + `recharts` 加到主项目
 
-- `src/App.tsx` — 加 `/graph/*` 路由
-- `src/routes/SessionsRoute.tsx` — topbar 加 Graph 按钮 (Network icon)
-- `packages/frontend/public/sessions.ndjson` — 临时数据源 (M3 切 Tauri invoke)
-- `experiment/embed-db/web/` — 完整保留,双源对照不破
-- plan 文件 `openclaw-session-session-session-transient-kernighan.md` 更新到 M2 完成态
+### 会话详情内容维度筛选 (v0.7.0 P0-A, commit `7e5edaf` + `9b74bff` + `38f81c9`)
+
+3 维内容筛选 + URL 持久化 + 跨维 AND:
+
+- **tool 多选** — 从 `summarizeSession(entries)` 动态派生,跨工具过滤
+- **role 单选** — 3 选项:全部 / User / Assistant
+- **has-attribute 多选** — 4 toggle:thinking / tool_use / error / subagent
+- **v0.7.0 model 多选** — opus / sonnet / haiku 短标签,跨模型过滤
+- **v0.7.0 sidechain 3 选 1** — 主链 / 子链 / 全部,过滤 Agent/Task spawn 的子代理轨迹
+- URL 持久化: `?tool=A,B&role=X&has=Y,Z&model=A,B&sidechain=main`
+- `applyContentFilter` 纯函数 + `useTranscriptPipeline` hook 串联 time → content
+- 47 vitest + 9 Playwright E2E case 覆盖 5 维组合
+
+### 会话详情聚合 + 去噪 (commit `e380c30`)
+
+提升可读性,从 entries 派生聚合 + 去噪函数:
+
+- `sessionInsights.ts` (新) — `summarizeSession` / `findRepeatRuns` / `findIdleGaps` / `parseMessageText` / `formatIdleGap`
+- SessionSummaryStrip:阶段 / 工具 top 5 / thinking × N / 错误 × N / 连续重复 / 长间隔
+- `<IdleGap />` 标注 > 5min 间隔
+- 重复 run class:286 连续 Bash → 1 行紫色折叠 + 后续 0.78 opacity
+- `TextBlock` 应用 `parseMessageText` 去 `command-message` / `local-command` / `system-reminder` 噪音
+- 27 个 sessionInsights 单测
+
+### React 18 → 19.2.7 升级 (commit `f06414b` + `9374bfb`)
+
+解 248 个被阻塞测试 + 0 typecheck error:
+
+- React 19.2.7 + ReactDOM 19.2.7 + @types/react 19.2.17
+- lucide-react 0.460 → 0.469(支持 React 19 final)
+- 修 11 个 `noUncheckedIndexedAccess` / `RefObject<null>` 遗留 (`useTranscriptScroll` / `GraphDetailPanel` / `rag.ts`)
+- 修 3 个 testid / TextBlock / gaps[0] 索引类型 bug
+- vitest 149/336 → **397/397** (+248)
+
+### CI/CD 完善 (commit `e514d1e`)
+
+- vitest coverage v8 (text + html + json-summary) — 当前 **41.66% lines / 65.89% funcs / 31.52% branches**
+- frontend vitest 接入 CI (之前只跑 shared,漏掉 frontend 397+ 测试)
+- Playwright E2E 接入 CI (`pnpm exec playwright test` + 9 content-filter case)
+- coverage + Playwright 报告作为 artifact 上传 7 天
+- 集成 `transcriptFilterStore` / `useSessionUrlSync` 单元测试覆盖
 
 ### 复现 / 验收
 
 ```bash
-cd packages/frontend && pnpm dev    # 1420 — /graph?view=graph|analytics|rag
-cd experiment/embed-db/web && pnpm dev    # 4173 — 双源对照
+cd packages/frontend && pnpm test              # 438 / 438 通过
+cd packages/frontend && pnpm test:coverage     # 41.66% lines / 65.89% funcs
+cd packages/frontend && pnpm exec vite build   # 4.5s ✓
+cd packages/frontend && pnpm test:e2e          # Playwright (需先 pnpm exec playwright install chromium)
 ```
 
-`pnpm exec vite build` (跳过 tsc,主项目有 18 个 pre-existing React 18 类型错) → 0 error (718KB / 235KB gzip)。
+URL 示例:
 
-### 待办 (M3)
-
-- ingest crate 合并到 src-tauri + 新 `list_graph()` Tauri command
-- `graphStore.load()` 切到 invoke 拿数据
-- `git rm -r experiment/embed-db/`(用户决定时机)
-- 补 6 个测试文件 + e2e (M1/M2 跳过)
+- `?tool=Bash,Read&role=assistant&has=thinking&model=claude-opus-4-7&sidechain=main`
+- `?from=2026-06-25T10:00:00Z&to=2026-06-25T11:00:00Z&tool=Bash&line=42`
 
 ### 文档
 
-- 16 个 markdown 文件 0 emoji(699 → 0)
+- 16 个 markdown 文件 0 emoji (699 → 0)
 - `docs/experiments/README.md` / `embed-db-findings.md` 重写反映 M2 完成态
 - `docs/ARCHITECTURE.md` 加 Graph Explorer 模块边界段
 - `README.md` "高级"段 + 文档索引补 Graph Explorer
-- docs/experiments/embed-db-G1-graph-findings.md 末尾 addendum 加过时警告 + link 指向单一权威源
+
+### 待办 (M3,推到 v0.8.0)
+
+- ingest crate 合并到 src-tauri + 新 `list_graph()` Tauri command
+- `graphStore.load()` 切到 invoke 拿数据
+- `experiment/embed-db/` 保留作试验分支(按 [[embed-db-pivot]] 决策)
 
 ## [0.6.1] - 2026-06-30
 
