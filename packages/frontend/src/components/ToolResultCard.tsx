@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Check, X, ChevronDown, ChevronRight, FileText } from "lucide-react";
+import { useFileReveal } from "../hooks/useFileReveal";
 import "./ToolResultCard.css";
 
 interface Props {
@@ -7,6 +8,8 @@ interface Props {
   content: unknown;
   isError?: boolean;
   filePath?: string;
+  /** v0.6.x: 透传 session jsonl path → useFileReveal 推 workspaceRoot */
+  parentJsonlPath?: string;
 }
 
 const SHIKI_LANGS_BY_EXT: Record<string, string> = {
@@ -34,9 +37,12 @@ const SHIKI_LANGS_BY_EXT: Record<string, string> = {
 
 const PREVIEW_CHARS = 500;
 
-export function ToolResultCard({ toolUseId, content, isError, filePath }: Props) {
+export function ToolResultCard({ toolUseId, content, isError, filePath, parentJsonlPath }: Props) {
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
+  // v0.6.0: 文本截断的展开/折叠状态(独立于 card 自身的 open)
+  // 默认折叠显示 truncated 前 500 字符, 用户点 "查看完整" 展开看全 text
+  const [expanded, setExpanded] = useState(false);
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null);
 
   // v0.4.2: 异步 shiki 高亮
@@ -72,7 +78,26 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
   }, [open, filePath, content]);
 
   const text = stringifyContent(content);
-  const truncated = text.length > PREVIEW_CHARS ? text.slice(0, PREVIEW_CHARS) + "…" : text;
+  const isTruncated = text.length > PREVIEW_CHARS;
+  const truncated = isTruncated ? text.slice(0, PREVIEW_CHARS) + "…" : text;
+  // expanded ? 完整 : 截断 (独立于 card open)
+  const displayText = expanded ? text : truncated;
+  const { revealAndNotify } = useFileReveal(
+    parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
+  );
+
+  // v0.6.0: 文件路径变可点击 → reveal in Finder
+  // 默认 lock-down 模式: 路径必须在 workspace 内, 越界返回 PathSecurity 错误
+  const handleFilePathClick = async (e: ReactMouseEvent) => {
+    e.stopPropagation(); // 不触发 card 折叠切换
+    e.preventDefault();
+    if (!filePath) return;
+    const result = await revealAndNotify(filePath);
+    if (!result.ok) {
+      // 简单 console.warn, 后续接 toast 系统
+      console.warn("reveal 失败:", result.error);
+    }
+  };
 
   return (
     <div className={`tool-result-card ${isError ? "err" : ""}`}>
@@ -81,7 +106,12 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
         {isError ? <X size={12} /> : <Check size={12} />}
         <span>{isError ? "工具结果 (失败)" : "工具结果"}</span>
         {filePath && (
-          <span className="tool-result-file">
+          <span
+            className="tool-result-file file-path-clickable"
+            data-testid="file-path-reveal"
+            onClick={handleFilePathClick}
+            title={`${filePath} (点击 reveal in Finder)`}
+          >
             <FileText size={10} /> {filePath.split("/").slice(-2).join("/")}
           </span>
         )}
@@ -96,10 +126,20 @@ export function ToolResultCard({ toolUseId, content, isError, filePath }: Props)
               dangerouslySetInnerHTML={{ __html: highlightedHtml }}
             />
           ) : (
-            <pre className="tool-result-content">{truncated}</pre>
+            <pre className="tool-result-content">{displayText}</pre>
           )}
-          {text.length > PREVIEW_CHARS && (
-            <div className="tool-result-more">共 {text.length} 字符,点击折叠查看完整</div>
+          {isTruncated && (
+            // v0.6.0 修复: "查看完整" 文本变可点击按钮, 切换 expanded
+            <button
+              type="button"
+              className="tool-result-more-btn"
+              data-testid="tool-result-toggle"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded
+                ? `收起 (共 ${text.length} 字符)`
+                : `... 还有 ${text.length - PREVIEW_CHARS} 字符,点击查看完整`}
+            </button>
           )}
         </div>
       )}

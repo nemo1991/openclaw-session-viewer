@@ -64,6 +64,23 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
         .map(|s| s.to_string());
     let is_sidechain = obj.get("isSidechain").and_then(|v| v.as_bool());
 
+    // v0.6.0: subagentId 归一化
+    //
+    // 数据源: 子 session (`<main>/subagents/agent-<id>.jsonl`) 的 envelope 顶层有
+    //   { "isSidechain": true, "agentId": "a1d924c..." }
+    // 主 session envelope 顶层没 agentId 字段,且 isSidechain 始终 false。
+    //
+    // ⚠️ 关键安全: **只在 isSidechain=true 时信任 agentId**。
+    //   主 session 即使 envelope 写了 agentId(实测没有)也不填,避免子代理消息被误标
+    //   到主 session timeline 上。
+    let subagent_id = if is_sidechain == Some(true) {
+        obj.get("agentId")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+    } else {
+        None
+    };
+
     let mut msg = NormalizedMessage {
         id,
         role: "meta".to_string(),
@@ -73,7 +90,7 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
         stop_reason: None,
         token_usage: None,
         is_sidechain,
-        subagent_id: None,
+        subagent_id,
         parent_uuid,
         raw_type: r#type.clone(),
     };
@@ -198,13 +215,31 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
             });
         }
         "last-prompt" => {
-            let prompt = obj.get("prompt").cloned().unwrap_or(Value::Null);
+            // v0.6.0: 真实数据字段是 `lastPrompt` (camelCase), 兼容老版本 `prompt`
+            let prompt = obj
+                .get("lastPrompt")
+                .or_else(|| obj.get("prompt"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let leaf_uuid = obj
+                .get("leafUuid")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             let mut data = serde_json::Map::new();
             data.insert(
                 "label".to_string(),
                 Value::String("last-prompt".to_string()),
             );
-            data.insert("payload".to_string(), prompt);
+            // v0.6.0: payload 结构改成 { prompt, leafUuid? } 跟前端 normalize.ts 对齐
+            // (之前是裸 string, UI 拿不到 leafUuid 无法跳转)
+            let mut payload = serde_json::Map::new();
+            if !prompt.is_null() {
+                payload.insert("prompt".to_string(), prompt);
+            }
+            if let Some(lu) = leaf_uuid {
+                payload.insert("leafUuid".to_string(), Value::String(lu));
+            }
+            data.insert("payload".to_string(), Value::Object(payload));
             msg.blocks.push(NormalizedBlock {
                 kind: "meta".to_string(),
                 data,
@@ -529,5 +564,48 @@ mod tests {
         let v = json!({ "type": "user", "message": { "role": "user", "content": "x" } });
         let n = normalize(&v, 42).unwrap();
         assert_eq!(n.id, "idx-42");
+    }
+
+    // v0.6.0: subagentId 归一化 — 3 case
+
+    #[test]
+    fn test_subagent_id_filled_only_when_is_sidechain_true() {
+        // isSidechain=true 且 envelope 有 agentId → 填入
+        let v = json!({
+            "type": "user",
+            "isSidechain": true,
+            "agentId": "a1d924c184a57a7da",
+            "message": { "role": "user", "content": "..." }
+        });
+        let n = normalize(&v, 0).unwrap();
+        assert_eq!(n.subagent_id.as_deref(), Some("a1d924c184a57a7da"));
+        assert_eq!(n.is_sidechain, Some(true));
+    }
+
+    #[test]
+    fn test_subagent_id_ignored_when_is_sidechain_false() {
+        // isSidechain=false (主 session) 即便 envelope 写 agentId 也不填 —
+        // 避免子代理消息被误标到主 session timeline。
+        let v = json!({
+            "type": "user",
+            "isSidechain": false,
+            "agentId": "should_be_ignored",
+            "message": { "role": "user", "content": "..." }
+        });
+        let n = normalize(&v, 0).unwrap();
+        assert_eq!(n.subagent_id, None);
+        assert_eq!(n.is_sidechain, Some(false));
+    }
+
+    #[test]
+    fn test_subagent_id_none_when_is_sidechain_true_but_no_agent_id() {
+        // isSidechain=true 但 envelope 缺 agentId(老 Claude / 边界 case) → None
+        let v = json!({
+            "type": "user",
+            "isSidechain": true,
+            "message": { "role": "user", "content": "..." }
+        });
+        let n = normalize(&v, 0).unwrap();
+        assert_eq!(n.subagent_id, None);
     }
 }

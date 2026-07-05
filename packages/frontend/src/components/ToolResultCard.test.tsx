@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ToolResultCard } from "./ToolResultCard";
 
 // mock shiki 避免真高亮(测试只要看 "有 highlightedHtml" 即可)
@@ -89,15 +90,42 @@ describe("ToolResultCard", () => {
     expect(pre?.textContent).toBe("first\nsecond");
   });
 
-  it("长 content (>500 字符) → 截断 + '共 N 字符' 提示", () => {
+  it("长 content (>500 字符) → 截断 + '还有 N 字符, 点击查看完整' 按钮", () => {
     const long = "x".repeat(1000);
     render(<ToolResultCard toolUseId="t1" content={long} />);
-    const more = document.querySelector(".tool-result-more");
-    expect(more?.textContent).toContain("1000 字符");
+    const more = screen.getByTestId("tool-result-toggle");
+    // v0.6.0 修复: '还有 N 字符, 点击查看完整' 是可点击按钮(之前是 div 死链)
+    expect(more?.textContent).toContain("还有");
+    expect(more?.textContent).toContain("500");
+    expect(more?.textContent).toContain("查看完整");
     // pre 里的内容被截断
     const pre = document.querySelector(".tool-result-content");
     expect(pre?.textContent?.length).toBeLessThan(1000);
     expect(pre?.textContent?.endsWith("…")).toBe(true);
+  });
+
+  it("v0.6.0 bug 回归: 点 '查看完整' 按钮 → pre 显示完整 text (bug 报告 '点击折叠查看完整 无效')", async () => {
+    const long = "x".repeat(1000);
+    render(<ToolResultCard toolUseId="t1" content={long} />);
+    const btn = screen.getByTestId("tool-result-toggle");
+    const pre = document.querySelector(".tool-result-content");
+    // 初始: 截断
+    expect(pre?.textContent?.endsWith("…")).toBe(true);
+    expect(pre?.textContent?.length).toBeLessThan(1000);
+    // 点 → 展开
+    await userEvent.click(btn);
+    expect(pre?.textContent).toBe(long);
+    expect(pre?.textContent?.endsWith("…")).toBe(false);
+    // 按钮文字变 "收起"
+    expect(btn.textContent).toContain("收起");
+    // 再点 → 折叠
+    await userEvent.click(btn);
+    expect(pre?.textContent?.endsWith("…")).toBe(true);
+  });
+
+  it("短 content (<500 字符) → 不显示 '查看完整' 按钮", () => {
+    render(<ToolResultCard toolUseId="t1" content="short content" />);
+    expect(screen.queryByTestId("tool-result-toggle")).toBeNull();
   });
 
   it("有 filePath + 已知扩展名 → 走 shiki 高亮 (异步)", async () => {

@@ -2,11 +2,13 @@
 
 本文档记录项目开发过程中遇到的所有重要 bug、踩过的坑、调试经验。按问题类型分类。
 
+> **最近更新**:2026-07-04(第三轮精修,加 Graph Explorer 提示);原文末更新 2026-06-27(v0.4.5 重构后踩坑总结)。
+
 ---
 
-## 🚨 关键问题(必修)
+## 关键问题(必修)
 
-### 1. macOS: 直接运行裸二进制 → 窗口空白
+### 1. macOS: 直接运行裸二进制 窗口空白
 
 **症状**: 应用启动,标题栏正确显示,但内部完全空白。
 
@@ -15,10 +17,10 @@
 **复现**:
 
 ```bash
-# ❌ 不工作 — 窗口出现但内容空白
+#  不工作 — 窗口出现但内容空白
 ./src-tauri/target/release/openclaw-session-viewer
 
-# ✅ 工作
+#  工作
 open src-tauri/target/release/bundle/macos/OpenClaw*.app
 ```
 
@@ -35,14 +37,14 @@ ps -ef | awk '/openclaw-session-viewer/ && !/awk/ {print $2, $3}'
 
 ---
 
-### 2. Zustand: 整个 store 对象作为 useEffect 依赖 → 死循环
+### 2. Zustand: 整个 store 对象作为 useEffect 依赖 死循环
 
 **症状**: 点击搜索按钮后 1-2 秒崩溃,控制台报 `Maximum update depth exceeded`。
 
 **根因**:
 
 ```tsx
-// ❌ 错的写法
+//  错的写法
 const search = useSearchInSessionStore(); // 返回整个 state 对象
 useEffect(() => {
   search.search(entries); // 调用 action,触发 setState
@@ -52,14 +54,14 @@ useEffect(() => {
 死循环:
 
 ```
-state 变化 → search 引用变化 → useEffect 重跑 → search.search() 又 setState
-→ search 引用再变 → useEffect 再跑 → ... → React 抛错
+state 变化  search 引用变化  useEffect 重跑  search.search() 又 setState
+ search 引用再变  useEffect 再跑  ...  React 抛错
 ```
 
 **解决**: Zustand 的 selector 模式
 
 ```tsx
-// ✅ 正确
+//  正确
 const search = useSearchInSessionStore((s) => s.search);
 const open = useSearchInSessionStore((s) => s.open);
 useEffect(() => {
@@ -78,15 +80,15 @@ useEffect(() => {
 
 **根因**: 用 `key.replace(/-/g, "/")` 反推,但中文/数字混淆:
 
-- `/Users/alice/test` → `-Users-alice-test` ✓
-- `/Users/alice-projects/test` → `-Users-alice-projects-test` (看起来一样)
+- `/Users/alice/test` `-Users-alice-test`
+- `/Users/alice-projects/test` `-Users-alice-projects-test` (看起来一样)
 - 但反推: `-Users-alice-projects-test` 可能是 `/Users/alice/projects/test` 或 `/Users/alice-projects/test`
 
 **解决**: 接受不确定性,标记 `workspaceGuess` 为推测值。在 UI 上加 "(推测)" 提示,不要假装是真实路径。
 
 ---
 
-## 🐛 数据/Schema 相关
+## 数据/Schema 相关
 
 ### 4. OpenClaw content 块使用 camelCase
 
@@ -96,7 +98,7 @@ useEffect(() => {
 
 **修复**: 在 `ToolUseBlockHandler::matches()` 同时识别 5 个 alias (`tool_use`/`toolUse`/`tool_call`/`function_call`/`toolCall`),`ToolResultBlockHandler` 同理覆盖 `tool_result`/`toolResult`。
 
-**测试**: `parser/blocks/tool_use.rs` 每个 alias 各一个测试 + `arguments → input` 重命名测试。
+**测试**: `parser/blocks/tool_use.rs` 每个 alias 各一个测试 + `arguments  input` 重命名测试。
 
 ### 5. OpenClaw tool 结果 role 错误
 
@@ -139,7 +141,7 @@ export function normalizeClaudeRecord(
 
 ---
 
-## 🛠 开发/构建
+## 开发/构建
 
 ### 8. pnpm install 报 503
 
@@ -218,7 +220,7 @@ sudo apt install libwebkit2gtk-4.1-dev
 **解决**:
 
 - 选项 A:把版本号改到单独的 release commit(不带 `[skip ci]`)
-- 选项 B:已在 README/CHANGELOG 改完 → commit 不带 `[skip ci]` → 重新打 tag
+- 选项 B:已在 README/CHANGELOG 改完 commit 不带 `[skip ci]` 重新打 tag
 - 选项 C:`gh workflow run Release --ref v0.3.1` 手动触发(本次采用)
 
 **教训**:**任何触发发布/部署的关键 commit 都不要带 `[skip ci]`**。docs-only 改用 paths-ignore 即可,不要靠 commit message 标记。
@@ -235,13 +237,114 @@ sudo apt install libwebkit2gtk-4.1-dev
 sudo xattr -rd com.apple.quarantine "/Applications/OpenClaw Session Viewer.app"
 ```
 
-或右键 App → 打开 → 对话框点「打开」。
+或右键 App 打开 对话框点「打开」。
 
 **长期解决**: 接入 Apple Developer ID + notarization(未在路线图优先级内)。
 
 ---
 
-## 🧪 测试经验
+## v0.6.x 文件路径 reveal & 子代理 UI
+
+### 14. `reveal in Finder` 没反应 / 静默失败 (v0.6.0)
+
+**现象**: 点击 `Read` / `Edit` / `Write` 工具结果的 `filePath` 链接,Finder 没打开,UI 没任何反馈。
+
+**根因**: `reveal_in_finder` 失败时,旧实现只 `console.warn` 不给用户反馈,用户以为没点中。
+
+**修复**:
+
+- `MetaBlock.tsx` 加行内 `RevealErrorActions`: 显示人类语言化的错误描述 + 「复制路径」/「去设置」/「一键开启允许越界」三按钮
+- 「一键开启」会 **先弹 confirm 弹窗告知风险**, 确认后:
+  - toggle `settings.pathSecurity.allowRelaxed = true`
+  - **自动推断** `defaultExportDir = <.claude 上级>`(从 `path.match(/^(.*?\.claude)(\/|$)/)`)
+  - 重新调 reveal 实现 retry
+- `ToolResultCard.tsx` 的 filePath 链接也接入(原 `revealAndNotify` 走的是 `console.warn` 静默分支,改为 toast — v0.6.0 行内错误不变)
+
+### 15. agent_listing 芯片单行溢出 (v0.6.x)
+
+**现象**: v0.6.0 P0-B ship 后,用户截图反馈 agent_listing_delta 显示 6 个 chip 全部排成一行,最后一个被截成 `+ statusl`。
+
+**根因(三层)**:
+
+1. `.msg { overflow: hidden }` 是元凶 — 任何超出宽度的内容都被裁掉
+2. `.meta-block-flat` 只有 `max-width: 100%` 没有 `width: 100%`,允许继承父级宽度
+3. `.meta-tag { max-width: 240px }` 太宽,6 个 chip 总宽撑出但不触发 wrap
+
+**修复链路**:
+
+```css
+.msg {
+  /* 注释掉 overflow: hidden */
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-block-flat {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.meta-section,
+.meta-list {
+  width: 100%;
+  box-sizing: border-box;
+}
+.meta-tag {
+  max-width: 200px; /* 240  200 */
+  min-width: 0;
+  flex-shrink: 1;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+```
+
+同时 `MetaBlock.tsx` 加 `title={a}` 让 chip hover 显示完整名(即便 wrap 后字短)。
+
+### 16. `~/.claude/plans/*.md` reveal 被 PathSecurity 拒 (v0.6.0 v0.6.1)
+
+**现象**: 用户点 `.plan` 文件 reveal 按钮,看到 ` PathSecurity: 需提供 workspace_root (lock-down 模式)`。
+
+**根因**: `paths::assert_within_any_root` v0.6.0 实现只允许 `~/.claude/projects/` 子树,但 `.plan` 文件在 `~/.claude/plans/`,必然 fail。
+
+**修复**(两个 commit):
+
+- **`fs/paths.rs`**: `assert_within_any_root` 改为接受整 `~/.claude/` + 新 Rust 测试
+- **`SettingsRoute.tsx`**: 加「选择 `~/.claude` 作为默认导出目录」按钮(用户友好分支,不需要放开全局锁)
+- **`MetaBlock.tsx::unlockAndRetry`**: 自动从 path 推断 `.claude` 上级,作为 `defaultExportDir` 写入(防再被 lock-down 拒)
+
+### 17. BlockRenderer meta 入口漏传 parentJsonlPath (v0.6.1)
+
+**现象**: 用户报 `Plan` reveal 失败,但 `SettingsRoute` 加锁后**仍**失败。
+
+**根因**: `MessageBubble.tsx::BlockRenderer` 把 meta kind 派给 `MetaBlock` 时**没**透传 `parentJsonlPath`。结果 `useFileReveal` 拿不到 `sessionJsonlPath`,推导不出 `workspaceRoot`,lock-down 直接拒。
+
+**修复**:
+
+```tsx
+// 旧:
+return <MetaBlock block={block} label={...} />;
+// 新:
+return <MetaBlock block={block} label={...} parentJsonlPath={parentJsonlPath} />;
+```
+
+教训:**任何透传到 hook 的 prop,新加 entry point 时一定要继续透传**(hooks 依赖 prop prop 缺失 静默 fallback 到 null)。
+
+### 18. 设置页没有 reveal 相关设置 (v0.6.1)
+
+**现象**: 用户报"设置里没有 reveal 相关设置"。只看到「数据源」「API」「外观」,找不到`pathSecurity`。
+
+**根因**: v0.6.0 引入 `settings.pathSecurity`,但 UI 一直漏加对应的 input。文档 README 也没列。
+
+**修复**:
+
+- `SettingsRoute.tsx` 加 `path-security-section`(ShieldCheck icon + checkbox + hint 文本)
+- lock-down 模式下显示「选择 ~/.claude 作为默认导出目录」次要按钮
+- README + CHANGELOG 同步这条 UI
+
+---
+
+## 测试经验
 
 ### 12. 测试覆盖度低时漏掉实际 bug
 
@@ -264,7 +367,7 @@ await page.addInitScript(() => {
     invoke: async (cmd, args) => {
       /* mock */
     },
-    transformCallback: (cb) => cb, // ← 必须 mock,否则 listen() 报错
+    transformCallback: (cb) => cb, //  必须 mock,否则 listen() 报错
   };
 });
 ```
@@ -273,7 +376,7 @@ await page.addInitScript(() => {
 
 ---
 
-## 📝 总结
+## 总结
 
 按修复成本排序的高频错误类型:
 

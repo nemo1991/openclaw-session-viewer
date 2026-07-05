@@ -93,3 +93,101 @@
   font-size: 11px;
   font-weight: 500;
 }
+
+/* ===== Session Summary Strip (聚合 chip 行) ===== */
+.session-summary-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 6px 16px;
+  background: var(--color-bg-elevated, rgba(15, 23, 42, 0.45));
+  border-bottom: 1px solid var(--color-border, rgba(148, 163, 184, 0.12));
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  color: var(--color-text-muted, #94a3b8);
+}
+
+.ss-sep {
+  color: var(--color-text-faint, #475569);
+  margin: 0 2px;
+}
+
+.ss-phase {
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ss-phase-explore {
+  background: rgba(16, 185, 129, 0.18);
+  color: #6ee7b7;
+}
+.ss-phase-implement {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+.ss-phase-mixed {
+  background: rgba(99, 102, 241, 0.18);
+  color: #a5b4fc;
+}
+.ss-phase-short {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+}
+.ss-phase-detail {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.ss-tool {
+  background: var(--color-bg-hover, rgba(51, 65, 85, 0.4));
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--color-text, #e2e8f0);
+}
+.ss-tool-count {
+  color: #7dd3fc;
+  margin-left: 3px;
+  font-weight: 600;
+}
+.ss-tool-other {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.ss-subagent,
+.ss-thinking {
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.12);
+}
+.ss-thinking {
+  color: #c4b5fd;
+  background: rgba(168, 85, 247, 0.12);
+}
+
+.ss-error {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.ss-repeat,
+.ss-idle {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+/* v0.5.0:子会话返回按钮已合并到 .back-btn(见 SessionDetailRoute.tsx),
+ * 此处保留旧 .session-back-to-parent class 名以防其它地方引用,实际不再使用。 */

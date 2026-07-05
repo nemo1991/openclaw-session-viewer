@@ -11,11 +11,21 @@
  *
  * jumpToEntry 由调用方传入(从 useTranscriptScroll 取),保证滚动统一走
  * virtualizer(避免 scrollIntoView vs scrollToIndex 冲突 — v0.4.3 comment)。
+ *
+ * v0.7.0: 新增内容维度 URL 参数:
+ *   ?tool=A,B,C   (CSV,多选 tool)
+ *   ?role=user    (单值 role,undefined = 全部)
+ *   ?has=thinking,error (CSV,多选 has-attribute)
+ * URL 是 "可分享筛选"的入口 — 把 ?from&to&tool&role&has 当成可序列化的 filter snapshot。
+ *
+ * 设计:URL → store 单向同步(刷新页面 → 读 URL → set store),反向(store → URL)
+ *   由 SessionDetailRoute 单独的 effect 写,不在本 hook(避免循环依赖)。
  */
 
 import { useEffect } from "react";
 
 import { useTranscriptFilterStore } from "../state/transcriptFilterStore";
+import type { HasAttribute } from "../lib/filterEntries";
 
 interface UrlSyncOpts {
   /** 当前 location.search 字符串 */
@@ -26,15 +36,103 @@ interface UrlSyncOpts {
   jumpToEntry: (entryIndex: number) => void;
 }
 
+const HAS_VALUES: ReadonlySet<HasAttribute> = new Set([
+  "thinking",
+  "tool_use",
+  "error",
+  "subagent",
+]);
+
+/** 把 CSV 字符串解析成 has[] — 跳过非法值,空字符串 = [] */
+export function parseHasCsv(csv: string | null): HasAttribute[] {
+  if (!csv) return [];
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s): s is HasAttribute => HAS_VALUES.has(s as HasAttribute));
+}
+
+/** 同样的 CSV 思路,tool name 没有白名单(用户 session 可能有任意 tool)— 不做过滤 */
+export function parseToolCsv(csv: string | null): string[] {
+  if (!csv) return [];
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** v0.7.0: model CSV — 与 tool 同样不白名单(用户 session 可能有任意 model id)
+ *  但要求非空 + 长度 < 100(防 ?model=AAAAAAAA... 把 store 撑爆) */
+export function parseModelCsv(csv: string | null): string[] {
+  if (!csv) return [];
+  return csv
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s.length < 100);
+}
+
+/** 把 URL search 字符串一次性解析成 store 6 字段
+ *  供 useSessionUrlSync 调用,也便于纯函数测试。
+ *
+ *  注意:`?role=` 空值被当成 undefined(URLSearchParams.get 会返回 "",我们
+ *  转成 undefined 保持 store 的"未设置"语义)。
+ */
+function emptyToUndef(s: string | null): string | undefined {
+  if (s == null) return undefined;
+  const trimmed = s.trim();
+  return trimmed.length === 0 ? undefined : trimmed;
+}
+
+export function parseUrlSearch(search: string): {
+  from?: string;
+  to?: string;
+  role?: string;
+  tools: string[];
+  has: HasAttribute[];
+  models: string[];
+  sidechainMode: "all" | "main" | "sidechain";
+} {
+  const params = new URLSearchParams(search);
+  const scRaw = emptyToUndef(params.get("sidechain"));
+  const sidechainMode: "all" | "main" | "sidechain" =
+    scRaw === "main" || scRaw === "sidechain" ? scRaw : "all";
+  return {
+    from: emptyToUndef(params.get("from")),
+    to: emptyToUndef(params.get("to")),
+    role: emptyToUndef(params.get("role")),
+    tools: parseToolCsv(params.get("tool")),
+    has: parseHasCsv(params.get("has")),
+    models: parseModelCsv(params.get("model")),
+    sidechainMode,
+  };
+}
+
 export function useSessionUrlSync({ search, entriesLoaded, jumpToEntry }: UrlSyncOpts): void {
-  // 1. ?from=?to= → 立即同步 filter
+  // 1. URL → store: time + content filter 一次解析(避免多次 setState 抖动)
   useEffect(() => {
     const params = new URLSearchParams(search);
-    const from = params.get("from");
-    const to = params.get("to");
-    if (from || to) {
-      useTranscriptFilterStore.getState().setRange(from ?? undefined, to ?? undefined);
-    }
+    const from = params.get("from") ?? undefined;
+    const to = params.get("to") ?? undefined;
+    const role = params.get("role") ?? undefined;
+    const tools = parseToolCsv(params.get("tool"));
+    const has = parseHasCsv(params.get("has"));
+    const models = parseModelCsv(params.get("model"));
+    const scRaw = params.get("sidechain");
+    const sidechainMode: "all" | "main" | "sidechain" =
+      scRaw === "main" || scRaw === "sidechain" ? scRaw : "all";
+
+    const s = useTranscriptFilterStore.getState();
+    // 用 setState 一次性合并,避免多次单独 set 触发 pipeline 重算
+    useTranscriptFilterStore.setState({
+      from,
+      to,
+      preset: from || to ? "custom" : s.preset, // 没 URL 干预时保留现有 preset
+      role,
+      tools,
+      has,
+      models,
+      sidechainMode,
+    });
   }, [search]);
 
   // 2. ?line=N → 等 entries 流入后跳

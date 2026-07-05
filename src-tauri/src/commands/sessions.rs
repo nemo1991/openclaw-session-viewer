@@ -380,6 +380,36 @@ fn build_claude_session_meta(
                 .to_string()
         });
 
+    // --- v0.5.0:枚举 subagent_count / subagent_ids ---
+    // 用 std::fs::read_dir 直接枚举(O(条目数) μs 级,不开文件)
+    // 与下面 SubagentPanel 用 list_subagents 命令结果保持顺序一致
+    let (subagent_count, subagent_ids) = match &subagent_dir {
+        Some(dir) => {
+            let mut ids: Vec<String> = Vec::new();
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+                        continue;
+                    }
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        // 文件名形如 agent-<id> → 提取 id
+                        let id = stem.strip_prefix("agent-").unwrap_or(stem).to_string();
+                        if !ids.contains(&id) {
+                            ids.push(id);
+                        }
+                    }
+                }
+            }
+            ids.sort();
+            (
+                Some(ids.len() as u32),
+                if ids.is_empty() { None } else { Some(ids) },
+            )
+        }
+        None => (None, None),
+    };
+
     let _ = state; // 暂不缓存读取
 
     Ok(SessionMeta {
@@ -414,6 +444,9 @@ fn build_claude_session_meta(
         // Claude session 无 trajectory
         has_trajectory: None,
         trajectory_size_bytes: None,
+        // v0.5.0 subagent 关联
+        subagent_count,
+        subagent_ids,
     })
 }
 
@@ -553,6 +586,9 @@ fn build_openclaw_session_meta(
         // --- v0.4.0 trajectory 探测 ---
         has_trajectory: detect_trajectory(jsonl_path),
         trajectory_size_bytes: trajectory_size(jsonl_path),
+        // v0.5.0:OpenClaw 无 Claude 风格 subagent 机制
+        subagent_count: None,
+        subagent_ids: None,
     })
 }
 

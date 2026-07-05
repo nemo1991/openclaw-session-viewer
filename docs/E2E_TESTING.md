@@ -6,7 +6,7 @@
 
 ---
 
-## 📖 是什么 / 为什么
+## 是什么 / 为什么
 
 **Playwright** 是 Microsoft 出品的浏览器自动化框架,装 `@playwright/test` 后用 TypeScript 写测试,自动启真实 Chromium 跑用户场景。
 
@@ -22,15 +22,15 @@
 
 **两者互补不替代**。本次会话加了 **77 个组件测试**(覆盖 v0.4.x 主要新功能),E2E 补的是组件测试覆盖不到的部分:
 
-- 路由跳转 (`/session/:id` → `/session/:id/trajectory`)
+- 路由跳转 (`/session/:id` `/session/:id/trajectory`)
 - 键盘快捷键真实触发 (`Cmd+K` / `Cmd+F` / `n` / `p` / `Esc`)
-- 跨页状态保留(会话列表 → 详情 → 返回列表)
+- 跨页状态保留(会话列表 详情 返回列表)
 - 真实时间筛选交互(点 preset / 改 datetime-local)
 - 视觉回归 (screenshot 对比)
 
 ---
 
-## 🛠 当前配置 (e2e/)
+## 当前配置 (e2e/)
 
 | 文件                      | 作用                                                                |
 | ------------------------- | ------------------------------------------------------------------- |
@@ -65,7 +65,7 @@
 
 ---
 
-## 🚀 怎么用
+## 怎么用
 
 ### 命令
 
@@ -102,8 +102,8 @@ pnpm --filter @ocsv/frontend build
 # 2. 装浏览器(首次需要)
 pnpm exec playwright install chromium
 
-# 3. ⚠️ 如果 dev env 设了 http_proxy=127.0.0.1:8001 (xray 之类),
-#    Chromium 会读 env 走代理 → ERR_PROXY_CONNECTION_FAILED
+# 3.  如果 dev env 设了 http_proxy=127.0.0.1:8001 (xray 之类),
+#    Chromium 会读 env 走代理  ERR_PROXY_CONNECTION_FAILED
 #    shell 层清掉:
 env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
   pnpm exec playwright test
@@ -124,7 +124,7 @@ pnpm test:e2e
 
 ---
 
-## ✍️ 写新 E2E
+## 写新 E2E
 
 ### 模板 (基于真实用例)
 
@@ -169,19 +169,19 @@ test.describe("会话列表", () => {
 ### 推荐的 selector 策略
 
 ```ts
-// ✅ 优先 — 跟用户视角一致, 无障碍友好
+//  优先 — 跟用户视角一致, 无障碍友好
 page.getByRole("button", { name: "搜索" });
 page.getByText("保存");
 page.getByPlaceholder("搜索会话");
 page.getByLabel("主题");
 
-// ✅ 稳定 — 项目约定 data-testid
+//  稳定 — 项目约定 data-testid
 page.locator("[data-testid='session-card']");
 
-// ❌ 避免 — CSS class 容易变
+//  避免 — CSS class 容易变
 page.locator(".session-card");
 
-// ❌ 避免 — 嵌套位置不稳
+//  避免 — 嵌套位置不稳
 page.locator("div > div > div");
 ```
 
@@ -224,7 +224,7 @@ await page.evaluate(() => localStorage.setItem("key", "value"));
 
 ---
 
-## ⚠️ 已知坑 & 解决 (2026-06-27 全部踩过一遍)
+## 已知坑 & 解决 (2026-06-27 全部踩过一遍)
 
 ### 1. dev 环境的 `http_proxy` 不可用 — **真因是 xray 代理**
 
@@ -240,7 +240,7 @@ await page.evaluate(() => localStorage.setItem("key", "value"));
 - 本机 dev env 配了 `http_proxy=http://127.0.0.1:8001` (指向一个 xray 进程)
 - xray 监听 8001,只代理 V2Ray 白名单域名,localhost 收到直接返回 503
 - **Chrome.app 不读 `http_proxy` env**(macOS 上读 `scutil --proxy` 的 PAC),所以日常能通
-- **Playwright 启的 Chromium 进程读 `http_proxy` env** → 走 xray → 503
+- **Playwright 启的 Chromium 进程读 `http_proxy` env** 走 xray 503
 - 加 `--proxy-server=direct://` 等 Chromium flag **没用**,Chromium 启起来后 env 优先级仍高于 CLI flag
 
 **缓解**(按推荐度):
@@ -253,7 +253,7 @@ await page.evaluate(() => localStorage.setItem("key", "value"));
    Playwright 进程从一开始就无这些 env,Chromium 子进程也读不到
 2. CI 环境通常是干净的,直接跑就行
 
-### 2. ❌ 不要给 chromium 加 `--proxy-server=direct://`
+### 2. 不要给 chromium 加 `--proxy-server=direct://`
 
 **症状**: 加了之后 chromium 报 `ERR_CONNECTION_REFUSED`,localhost 完全连不上。
 
@@ -263,23 +263,23 @@ await page.evaluate(() => localStorage.setItem("key", "value"));
   ```bash
   $ lsof -nP -iTCP:4173 -sTCP:LISTEN
   COMMAND  PID  USER  FD  TYPE  DEVICE  NODE NAME
-  node     XX  user  18u IPv6  ...      TCP [::1]:4173 (LISTEN)  ← 只有 IPv6
+  node     XX  user  18u IPv6  ...      TCP [::1]:4173 (LISTEN)   只有 IPv6
   ```
-- 加 `--proxy-server=direct://` 让 Chromium 强制 IPv4 解析路径 → 连不上
+- 加 `--proxy-server=direct://` 让 Chromium 强制 IPv4 解析路径 连不上
 - 解决:**不加任何 proxy flag**,Chromium 默认行为 OK
 - URL 用 `localhost`(macOS 解析到 `::1`),**不要用 127.0.0.1**
 
 **参考踩坑命令**:
 
 ```bash
-# ✅ 通
-NO_PROXY='*' curl http://localhost:4173/  # → 200
-$CHROME --headless --dump-dom http://localhost:4173/  # → HTML
-chromium.launchPersistentContext('', { headless: true }) + localhost  # → 通
+#  通
+NO_PROXY='*' curl http://localhost:4173/  #  200
+$CHROME --headless --dump-dom http://localhost:4173/  #  HTML
+chromium.launchPersistentContext('', { headless: true }) + localhost  #  通
 
-# ❌ 不通
-$CHROME --proxy-server=direct:// --dump-dom http://127.0.0.1:4173/  # → 空 HTML (server 不在 IPv4)
-curl http://127.0.0.1:4173/  # → connection refused (server 只 listen ::1)
+#  不通
+$CHROME --proxy-server=direct:// --dump-dom http://127.0.0.1:4173/  #  空 HTML (server 不在 IPv4)
+curl http://127.0.0.1:4173/  #  connection refused (server 只 listen ::1)
 ```
 
 ### 3. `webServer` 不灵,用 `globalSetup` 替代
@@ -308,7 +308,7 @@ server = spawn("pnpm", ["--filter", "@ocsv/frontend", "preview", "--port", Strin
 
 **背景**: jsdom 不模拟 `<details>` 元素的原生 `open` 切换 (这是已知 jsdom 限制,跟 Playwright 无关)。
 
-**缓解**: 在 vitest 组件测试里手动 `details.open = true; dispatchEvent(new Event("toggle"))`,见 `UnknownBlockCard.test.tsx` 的 "大对象 → 折叠 details" case。
+**缓解**: 在 vitest 组件测试里手动 `details.open = true; dispatchEvent(new Event("toggle"))`,见 `UnknownBlockCard.test.tsx` 的 "大对象 折叠 details" case。
 
 Playwright 跑真实 Chromium 没问题,不用这个 workaround。
 
@@ -332,7 +332,7 @@ const realErrors = errors.filter(
     !e.includes("__TAURI__") &&
     !e.includes("tauri") &&
     !e.includes("window.__TAURI_INTERNALS__") &&
-    !e.includes("transformCallback") // ← 必须加
+    !e.includes("transformCallback") //  必须加
 );
 ```
 
@@ -353,7 +353,7 @@ await page.addInitScript((session) => {
 });
 ```
 
-### 6. SessionDetailRoute 没 location.state → 走 fallback 分支
+### 6. SessionDetailRoute 没 location.state 走 fallback 分支
 
 **背景**: `SessionDetailRoute` 读 `useLocation().state.session`,没值就走 `if (!meta) return <NotFound/>` 早返回,**不挂** `<SearchInSessionBar />` / `<FilterPanel />` / `<TranscriptView />`。
 
@@ -376,22 +376,23 @@ await page.addInitScript((session) => {
 
 ---
 
-## 🎯 路线图 (待补的 E2E)
+## 路线图 (待补的 E2E)
 
-| 模块       | 优先级 | 建议 case                                         |
-| ---------- | ------ | ------------------------------------------------- |
-| 路由跳转   | 高     | 会话列表 → 详情 → 返回列表,详情 → 轨迹页          |
-| 快捷键     | 高     | `Cmd+K` 搜索 / `Cmd+F` 会话内 / `n` / `p` / `Esc` |
-| 时间筛选   | 中     | preset 切换 / 自定义 datetime-local / URL 同步    |
-| 主题切换   | 中     | dark / light / system 切换 + localStorage 持久化  |
-| 时区设置   | 中     | 切换 IANA 名,刷新后保持                           |
-| 大模型分析 | 低     | mock Anthropic 响应,验证 token 计数               |
-| 导出       | 低     | Markdown / HTML 下载触发 + 文件内容               |
-| 视觉回归   | 低     | 全页 screenshot 对比 baseline                     |
+| 模块           | 优先级 | 建议 case                                                                                            |
+| -------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| 路由跳转       | 高     | 会话列表 详情 返回列表,详情 轨迹页                                                                   |
+| 快捷键         | 高     | `Cmd+K` 搜索 / `Cmd+F` 会话内 / `n` / `p` / `Esc`                                                    |
+| Graph Explorer | 中     | G1 节点点击跳 `/session/:id` (main + subagent) / G2 chart / G3 `?q=` prefill(mock `sessions.ndjson`) |
+| 时间筛选       | 中     | preset 切换 / 自定义 datetime-local / URL 同步                                                       |
+| 主题切换       | 中     | dark / light / system 切换 + localStorage 持久化                                                     |
+| 时区设置       | 中     | 切换 IANA 名,刷新后保持                                                                              |
+| 大模型分析     | 低     | mock Anthropic 响应,验证 token 计数                                                                  |
+| 导出           | 低     | Markdown / HTML 下载触发 + 文件内容                                                                  |
+| 视觉回归       | 低     | 全页 screenshot 对比 baseline                                                                        |
 
 ---
 
-## 📚 参考
+## 参考
 
 - [Playwright 官方文档](https://playwright.dev/docs/intro)
 - [Playwright Best Practices](https://playwright.dev/docs/best-practices)

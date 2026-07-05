@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Settings, Search, RefreshCw, Filter, Bot, MessageSquare } from "lucide-react";
+import { Settings, Search, RefreshCw, Filter, Bot, MessageSquare, Network } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 
 import { useSessionsStore } from "../state/sessionsStore";
@@ -138,6 +138,9 @@ export default function SessionsRoute() {
           </button>
           <button onClick={() => void refresh()} title="刷新">
             <RefreshCw size={16} />
+          </button>
+          <button onClick={() => navigate("/graph?view=graph")} title="Graph Explorer (G1/G2/G3)">
+            <Network size={16} />
           </button>
           <button onClick={() => navigate("/settings")} title={t("settings.title")}>
             <Settings size={16} />
@@ -277,7 +280,18 @@ export default function SessionsRoute() {
                         ● {t("sessions.liveBadge")}
                       </span>
                     )}
-                    {s.subagentDir && (
+                    {s.subagentDir && s.subagentCount && s.subagentCount > 0 && (
+                      <span
+                        className="subagent-badge"
+                        title={`包含 ${s.subagentCount} 个子代理`}
+                        data-testid="subagent-count-badge"
+                        data-count={s.subagentCount}
+                      >
+                        ⎇ {s.subagentCount}
+                      </span>
+                    )}
+                    {s.subagentDir && (!s.subagentCount || s.subagentCount === 0) && (
+                      // Fallback:subagentDir 存在但 count 缺失(老 backend / 旧 meta)
                       <span className="subagent-badge" title="包含子代理">
                         ⎇
                       </span>

@@ -163,3 +163,118 @@ describe("useTranscriptPipeline", () => {
     expect(screen.getByTestId("e-3")).toBeInTheDocument();
   });
 });
+
+// ===== v0.7.0: content filter integration =====
+
+import type { NormalizedBlockFE } from "../lib/api";
+
+function makeBlockEntry(
+  index: number,
+  blocks: Array<{ kind: string; name?: string }>,
+  role: string = "assistant"
+): TranscriptEntryOut {
+  return {
+    index,
+    byteOffset: index * 1000,
+    raw: {},
+    normalized: {
+      id: `b-${index}`,
+      role,
+      rawType: role,
+      timestamp: `2026-06-25T${String(10 + index).padStart(2, "0")}:00:00Z`,
+      blocks: blocks as NormalizedBlockFE[],
+    },
+  };
+}
+
+describe("useTranscriptPipeline — content filter", () => {
+  beforeEach(() => {
+    cleanup();
+    useTranscriptFilterStore.getState().clear();
+    useTranscriptStore.getState().reset();
+  });
+
+  it("toggleTool:只有 Bash tool_use 的 entry 保留", () => {
+    useTranscriptStore.setState({
+      entries: [
+        makeBlockEntry(0, [{ kind: "tool_use", name: "Bash" }]),
+        makeBlockEntry(1, [{ kind: "tool_use", name: "Read" }]),
+        makeBlockEntry(2, [{ kind: "text" }]),
+      ],
+    });
+    useTranscriptFilterStore.getState().toggleTool("Bash");
+    render(<Probe />);
+    expect(screen.getByTestId("count-filtered")).toHaveTextContent("1");
+  });
+
+  it("setRole('user'):仅保留 user role 的 entry", () => {
+    useTranscriptStore.setState({
+      entries: [
+        makeBlockEntry(0, [{ kind: "text" }], "user"),
+        makeBlockEntry(1, [{ kind: "text" }], "assistant"),
+        makeBlockEntry(2, [{ kind: "text" }], "user"),
+      ],
+    });
+    useTranscriptFilterStore.getState().setRole("user");
+    render(<Probe />);
+    expect(screen.getByTestId("count-filtered")).toHaveTextContent("2");
+  });
+
+  it("toggleHas('thinking'):保留含 thinking block 的 entry", () => {
+    useTranscriptStore.setState({
+      entries: [
+        makeBlockEntry(0, [{ kind: "thinking" }]),
+        makeBlockEntry(1, [{ kind: "text" }]),
+        makeBlockEntry(2, [{ kind: "thinking" }, { kind: "text" }]),
+      ],
+    });
+    useTranscriptFilterStore.getState().toggleHas("thinking");
+    render(<Probe />);
+    expect(screen.getByTestId("count-filtered")).toHaveTextContent("2");
+  });
+
+  it("clear():content filter 全清,filteredEntries === entries 引用", () => {
+    useTranscriptStore.setState({
+      entries: [makeBlockEntry(0, [{ kind: "text" }]), makeBlockEntry(1, [{ kind: "text" }])],
+    });
+    const { toggleTool, toggleHas, clear } = useTranscriptFilterStore.getState();
+    toggleTool("Bash");
+    toggleHas("thinking");
+    clear();
+    render(<Probe />);
+    expect(screen.getByTestId("count-filtered")).toHaveTextContent("2");
+  });
+
+  it("time + content 组合:time 在前 content 在后", () => {
+    const entries = [
+      // 0: 时间外 + Bash tool_use — time 过滤掉
+      makeBlockEntry(0, [{ kind: "tool_use", name: "Bash" }]),
+      // 1: 时间内 + Bash tool_use + thinking — 命中
+      makeBlockEntry(1, [{ kind: "thinking" }, { kind: "tool_use", name: "Bash" }]),
+      // 2: 时间内 + Read tool_use + thinking — tool 不匹配
+      makeBlockEntry(2, [{ kind: "thinking" }, { kind: "tool_use", name: "Read" }]),
+      // 3: 时间内 + Bash tool_use 但没 thinking — has 不匹配
+      makeBlockEntry(3, [{ kind: "text" }, { kind: "tool_use", name: "Bash" }]),
+    ];
+    // 强制 entry 时间(override default ts)
+    const e0 = entries[0]!;
+    const e1 = entries[1]!;
+    const e2 = entries[2]!;
+    const e3 = entries[3]!;
+    e0.normalized.timestamp = "2026-06-25T09:00:00Z"; // 1h 外(假设 now=14:00)
+    e1.normalized.timestamp = "2026-06-25T13:30:00Z";
+    e2.normalized.timestamp = "2026-06-25T13:40:00Z";
+    e3.normalized.timestamp = "2026-06-25T13:50:00Z";
+    useTranscriptStore.setState({ entries });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-25T14:00:00Z"));
+    useTranscriptFilterStore.getState().setPreset("1h");
+    useTranscriptFilterStore.getState().toggleTool("Bash");
+    useTranscriptFilterStore.getState().toggleHas("thinking");
+    render(<Probe />);
+    // time: [1, 2, 3],content: tool=Bash → [1, 3],has=thinking → [1]
+    expect(screen.getByTestId("count-filtered")).toHaveTextContent("1");
+    vi.useRealTimers();
+  });
+});

@@ -79,6 +79,23 @@ const zhCN = {
     trajectory: "运行轨迹",
     sortAsc: "从旧到新",
     sortDesc: "从新到旧",
+    // v0.5.0
+    subagentTrigger: "子代理 ({{count}})",
+    subagentPanel: {
+      title: "子代理 ({{count}})",
+      open: "展开",
+      close: "收起",
+      empty: "该会话无子代理",
+      openChild: "打开子会话详情",
+      backToParent: "返回父会话",
+      spawnDepth: "递归层级 {{depth}}",
+    },
+    subagentInlineSummary: {
+      messageCount: "{{n}} 条消息",
+      messages: "条",
+      moreTools: "还有 {{n}} 个工具未显示",
+    },
+    taskOpenDetail: "打开子代理详情",
   },
   trajectory: {
     title: "运行轨迹",
@@ -160,6 +177,14 @@ const zhCN = {
     pickDir: "选择…",
     save: "保存",
     saved: "已保存",
+    // v0.6.0: 文件路径 reveal 安全策略
+    pathSecurity: {
+      title: "文件路径安全",
+      hint: "从 Read / Edit / Write 工具结果点击文件路径会触发 reveal in Finder。默认仅允许 workspace 内, 越界会被拒绝。",
+      allowRelaxed: "允许 reveal 到任一已知会话主目录 (放宽到 ~/.claude / ~/.openclaw 子树)",
+      allowRelaxedHint:
+        "打开后 reveal 仍受 assert_within_any_root 兜底防 ~/.ssh 等敏感路径, 但允许跨 workspace",
+    },
   },
   blocks: {
     thinking: "思考",

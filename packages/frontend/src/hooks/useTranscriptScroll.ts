@@ -15,6 +15,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type { TranscriptEntryOut } from "../lib/api";
 import type { InSessionHit } from "../state/searchInSessionStore";
+import { useTranscriptStore } from "../state/transcriptStore";
 
 interface ScrollOpts {
   sortedEntries: TranscriptEntryOut[];
@@ -23,7 +24,8 @@ interface ScrollOpts {
 }
 
 export interface ScrollResult {
-  parentRef: React.RefObject<HTMLDivElement>;
+  // React 19: useRef<T>(null) → RefObject<T | null>;保持 nullable 与调用方一致
+  parentRef: React.RefObject<HTMLDivElement | null>;
   virtualizer: ReturnType<typeof useVirtualizer<HTMLDivElement, Element>>;
   /** 跳到指定 entry.index(URL ?line=N 用),内部走 virtualizer */
   jumpToEntry: (entryIndex: number) => void;
@@ -73,6 +75,30 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
     },
     [sortedEntries, virtualizer]
   );
+
+  // v0.6.0: 监听 useTranscriptStore.jumpTarget — 任意组件 (SubagentMetaBlock LeafJumpButton)
+  // 可触发跳到 entry.index (last-prompt.leafUuid 等场景)
+  //
+  // ⚠️ 之前 bug: useEffect deps 只有 [sortedEntries, virtualizer], 漏了 jumpTarget
+  // zustand state 改变不触发 effect 重跑, 按钮点了 effect 不响应。
+  // 修复: 用 zustand selector 订阅, 依赖 [target, sortedEntries, virtualizer]
+  const jumpTarget = useTranscriptStore((s) => s.jumpTarget);
+  useEffect(() => {
+    if (jumpTarget == null) return;
+    const idx = sortedEntries.findIndex((e) => e.index === jumpTarget);
+    if (idx < 0) {
+      // entries 还没加载 / 目标不在范围 — 不清空, 等 entries 加载完再试
+      // (TranscriptView 会在 entries 变化时重新触发这个 effect)
+      return;
+    }
+    const targetEntry = sortedEntries[idx];
+    if (!targetEntry) return;
+    virtualizer.scrollToIndex(idx, { align: "center" });
+    // v0.6.0: 跳到后高亮 1.5s — 视觉反馈
+    useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");
+    // 触发后清空, 避免重复触发
+    useTranscriptStore.setState({ jumpTarget: null });
+  }, [jumpTarget, sortedEntries, virtualizer]);
 
   return { parentRef, virtualizer, jumpToEntry };
 }

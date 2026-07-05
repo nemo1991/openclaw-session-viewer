@@ -1,6 +1,6 @@
 {
   "name": "openclaw-session-viewer",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
   "description": "跨平台桌面应用 - 浏览本地 OpenClaw / Claude Code 会话",
   "type": "module",
@@ -31,6 +31,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@vitest/coverage-v8": "^4.1.9",
     "husky": "^9.1.7",
     "jsdom": "^29.1.1",
     "lint-staged": "^17.0.8",
