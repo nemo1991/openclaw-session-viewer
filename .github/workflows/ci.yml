@@ -62,8 +62,57 @@ jobs:
         working-directory: packages/shared
         run: pnpm test
 
-      - name: Build frontend
+      # v0.7.0:Frontend vitest 跑(之前 CI 只跑 shared,漏掉 frontend 397+ 测试)
+      - name: Test (TS frontend)
+        working-directory: packages/frontend
+        run: pnpm test
+
+      # v0.7.0:vitest coverage(v8)— 跑全量测试,生成 text + html + json-summary
+      # HTML 报告作为 artifact 上传 7 天,便于 PR review 时点开看覆盖度
+      - name: Test (TS coverage)
+        working-directory: packages/frontend
+        run: pnpm test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: packages/frontend/coverage/
+          retention-days: 7
+
+      # v0.7.0:Playwright E2E(9 case:content-filter.spec.ts)
+      # 用 ubuntu 自带 chromium,装 playwright browsers via npx
+      - name: Install Playwright browsers
+        working-directory: packages/frontend
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Build for E2E
         run: pnpm build
+
+      - name: E2E (Playwright)
+        working-directory: packages/frontend
+        run: |
+          # 后台启动 vite preview(已在 build 后产物可服务)
+          pnpm exec vite preview --port 4173 --strictPort &
+          PREVIEW_PID=$!
+          # 等服务可用
+          for i in {1..30}; do
+            if curl -sf http://localhost:4173 > /dev/null; then break; fi
+            sleep 1
+          done
+          pnpm exec playwright test
+          TEST_EXIT=$?
+          kill $PREVIEW_PID 2>/dev/null || true
+          exit $TEST_EXIT
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: packages/frontend/playwright-report/
+          retention-days: 7
 
   lint:
     name: Lint & Format Check
