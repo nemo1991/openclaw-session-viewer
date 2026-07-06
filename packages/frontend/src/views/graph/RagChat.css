@@ -189,6 +189,12 @@
 .hit-workspace {
   color: var(--color-text);
   font-family: var(--font-mono);
+  /* v0.7.1:workspace 路径可能很长,加 max-width + ellipsis 防止撑破 hit-card */
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
 }
 .hit-score {
   margin-left: auto;
@@ -256,9 +262,10 @@
 
 .hit-snippet mark,
 .hit-prompt mark {
-  background: var(--color-primary-bg);
+  /* v0.7.1:用 color-mix 提 alpha (18% → 32%) 让 highlight 在浅/深模式下都清晰可见 */
+  background: color-mix(in srgb, var(--color-accent) 32%, transparent);
   color: var(--color-text);
-  font-weight: 600;
+  font-weight: 700;
   border-radius: 2px;
   padding: 0 2px;
 }

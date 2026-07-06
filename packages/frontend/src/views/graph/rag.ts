@@ -127,12 +127,16 @@ export function highlightSpans(
   text: string,
   tokens: string[]
 ): Array<{ start: number; end: number }> {
+  // v0.7.1:大小写无关匹配 — 之前只对 tokens 小写,text 不动,
+  // "openclaw" query 在 "OpenClaw" 文本里 indexOf 永远 -1 → 无高亮。
+  // ASCII / 中文(无大小写概念) index 位置一致,放心用 lowerText 找 span。
+  const lowerText = text.toLowerCase();
   const spans: Array<{ start: number; end: number }> = [];
   for (const tok of tokens) {
     if (tok.length === 0) continue;
     let from = 0;
     while (true) {
-      const idx = text.indexOf(tok, from);
+      const idx = lowerText.indexOf(tok, from);
       if (idx === -1) break;
       spans.push({ start: idx, end: idx + tok.length });
       from = idx + tok.length;
@@ -155,6 +159,31 @@ export function highlightHtml(text: string, tokens: string[]): string {
   }
   if (cursor < text.length) out += escapeHtml(text.slice(cursor));
   return out;
+}
+
+/**
+ * v0.7.1:用原 query 的 term 给 text 高亮,不用 matched_tokens(1-2 char hash token 太碎)。
+ *
+ * 之前用 matched_tokens(由 tokenize 拆出,1-char + 2-char)做 highlight:
+ * - 1-char token:在 text 里几乎每字都中,导致整段文字全部被 mark 包裹(噪音)
+ * - 2-char token:不重叠前缀串,会出现 "openclaw" query 在无关文字里高亮
+ *   "op"/"en"/"cl" 等子串,语义错位
+ *
+ * 正确做法:用原 query 拆 term(2+ 字符、按空白分),看 text 里有无实际包含
+ * — 这才是用户期望的"我搜的词出现在这里"的视觉反馈。
+ */
+export function highlightQueryHtml(text: string, query: string): string {
+  if (!query.trim()) return escapeHtml(text);
+  const terms = Array.from(
+    new Set(
+      query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((w) => w.length >= 2)
+    )
+  );
+  if (terms.length === 0) return escapeHtml(text);
+  return highlightHtml(text, terms);
 }
 
 function escapeHtml(s: string): string {

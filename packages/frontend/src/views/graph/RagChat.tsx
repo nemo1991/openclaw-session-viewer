@@ -23,7 +23,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { GraphEntry, SessionNode } from "./types";
 import { formatNum } from "./analytics";
-import { indexCorpus, topK, highlightHtml, type IndexedItem, type RetrievalHit } from "./rag";
+import { indexCorpus, topK, highlightQueryHtml, type IndexedItem, type RetrievalHit } from "./rag";
 import { useTitleStore } from "./titleStore";
 import { useGraphStore } from "./graphStore";
 import { parseFirstPrompt } from "./formatPrompt";
@@ -283,7 +283,12 @@ export function RagChat({
             key={h.item.node_id}
             hit={h}
             rank={i + 1}
-            onOpenSession={(id) => navigate(`/session/${encodeURIComponent(id)}`)}
+            query={query}
+            onOpenSession={(id, path) =>
+              navigate(
+                `/session/${encodeURIComponent(id)}${path ? `?path=${encodeURIComponent(path)}` : ""}`
+              )
+            }
           />
         ))}
       </div>
@@ -294,14 +299,15 @@ export function RagChat({
 function HitCard({
   hit,
   rank,
+  query,
   onOpenSession,
 }: {
   hit: RetrievalHit<SessionNode>;
   rank: number;
-  onOpenSession: (sessionId: string) => void;
+  query: string;
+  onOpenSession: (sessionId: string, jsonlPath: string) => void;
 }) {
   const n = hit.item;
-  const matched = hit.matched_tokens;
   const titles = useTitleStore();
   const title = titles.get(n.node_id, titles.auto(n));
   const parsed = parseFirstPrompt(n.first_prompt);
@@ -317,12 +323,16 @@ function HitCard({
             {title}
           </span>
           <span className="hit-source">{n.source}</span>
-          {n.workspace && <span className="hit-workspace">{n.workspace}</span>}
+          {n.workspace && (
+            <span className="hit-workspace" title={n.workspace}>
+              {n.workspace}
+            </span>
+          )}
           <span className="hit-score">cosine: {hit.score.toFixed(3)}</span>
           <button
             className="hit-open"
-            onClick={() => onOpenSession(n.session_id)}
-            title="跳到主项目 /session/:id"
+            onClick={() => onOpenSession(n.session_id, n.jsonl_path)}
+            title="跳到主项目 /session/:id (带 ?path= 走 SessionDetailRoute)"
           >
             打开会话
           </button>
@@ -337,9 +347,9 @@ function HitCard({
             <b>首问:</b>{" "}
             <span
               dangerouslySetInnerHTML={{
-                __html: highlightHtml(
+                __html: highlightQueryHtml(
                   hasOverflow && !expanded ? promptText.slice(0, 220) + "…" : promptText,
-                  matched
+                  query
                 ),
               }}
             />
@@ -361,7 +371,7 @@ function HitCard({
                 <b>片段 {i + 1}:</b>{" "}
                 <span
                   dangerouslySetInnerHTML={{
-                    __html: highlightHtml(s, matched),
+                    __html: highlightQueryHtml(s, query),
                   }}
                 />
               </div>
