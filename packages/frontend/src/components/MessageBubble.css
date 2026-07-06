@@ -16,13 +16,13 @@
 }
 
 /* v0.6.0: 子代理内部消息缩进
- * - 左侧紫色 accent border 标识 "这是子代理干的"
  * - 缩进 24px 跟主 session 视觉分离
  * - 0.92 opacity 让子代理消息不那么 "重", 父主 timeline 仍是焦点
+ * - v0.7.1 修:不再用 border-left 紫色统一标(子 session 视图下 user/assistant 全是
+ *   紫,看不出区别)— 改由 .msg-{role} 提供 role 颜色,subagent 只保留缩进 + ▸ 标记
  */
 .msg.msg-subagent {
   margin-left: 24px;
-  border-left: 3px solid var(--color-accent, #8250df);
   opacity: 0.92;
   position: relative;
 }
@@ -149,18 +149,25 @@
 
 .msg-user {
   background: var(--color-msg-user);
+  /* v0.7.1:role 颜色左侧色条 — user/assistant/tool 视觉一眼区分
+   * (3px 比 .msg 默认 1px 边框厚,优先级由 specificity 自然保证,
+   * .msg-subagent 不再覆盖此规则) */
+  border-left: 3px solid var(--color-primary);
 }
 
 .msg-assistant {
   background: var(--color-msg-assistant);
+  border-left: 3px solid var(--color-accent);
 }
 
 .msg-tool {
   background: var(--color-msg-tool);
+  border-left: 3px solid var(--color-warning);
 }
 
 .msg-system {
   background: var(--color-msg-system);
+  border-left: 3px solid var(--color-text-muted);
 }
 
 .msg-meta-line {
