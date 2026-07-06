@@ -1,17 +1,24 @@
 /**
- * useTranscriptScroll — 虚拟滚动 + 自动跟随 + 跳到命中
+ * useTranscriptScroll — 简化的 transcript 滚动 hook
  *
- * 解决 v0.4.x 累积的滚动相关问题:
- * 1. SessionDetailRoute 之前用 document.querySelector + scrollIntoView,
- *    与 virtualizer.scrollToIndex 冲突(v0.4.3 fix comment 提过),
- *    现在统一走 virtualizer.scrollToIndex
- * 2. 自动滚到底只在新 entry 流入 + 用户已在底部 50px + 无搜索命中 三条件全满足时触发
- * 3. jumpToEntry 用 local index(在 sortedEntries 里),不依赖 DOM,
- *    URL ?line=N 跳转稳定
+ * v0.7.0 重构:放弃 @tanstack/react-virtual,改用 flex column + 原生 scrollIntoView。
+ *
+ * 原 virtualizer 设计 3 个脆弱点:
+ * 1. position: absolute + transform translateY 定位,把元素踢出正常 layout flow
+ * 2. getBoundingClientRect() 只返 border-box,不含 margin → 间距 bug
+ * 3. measurement cache 按 index 存,filter 切换同 index 映射不同 entry → 高度错位
+ *
+ * 替代:flex column + gap 由浏览器原生 layout,filter / sort 变化 = React 重渲染,
+ * 自动重排,无需任何 measurement cache / remeasure 副作用。
+ *
+ * 保留的滚动语义:
+ * - 自动滚到底:用户已在底部 50px + 无搜索命中 + entries 增加
+ * - 跳到搜索命中:scrollIntoView({ block: "center" })
+ * - URL ?line=N 跳转:jumpToEntry
+ * - SubagentMetaBlock LeafJumpButton:jumpTarget
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type { TranscriptEntryOut } from "../lib/api";
 import type { InSessionHit } from "../state/searchInSessionStore";
@@ -26,36 +33,26 @@ interface ScrollOpts {
 export interface ScrollResult {
   // React 19: useRef<T>(null) → RefObject<T | null>;保持 nullable 与调用方一致
   parentRef: React.RefObject<HTMLDivElement | null>;
-  virtualizer: ReturnType<typeof useVirtualizer<HTMLDivElement, Element>>;
-  /** 跳到指定 entry.index(URL ?line=N 用),内部走 virtualizer */
+  /** 跳到指定 entry.index(URL ?line=N 用),内部走 scrollIntoView */
   jumpToEntry: (entryIndex: number) => void;
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 50;
 
+/** 滚到底 — 用 row 容器 (data-entry-index 属性) 找 DOM,没有时跳到 scroll bottom */
+function scrollToEntryIndex(parent: HTMLElement, entryIndex: number): boolean {
+  const row = parent.querySelector(`[data-entry-index="${entryIndex}"]`) as HTMLElement | null;
+  if (row) {
+    row.scrollIntoView({ block: "center", behavior: "smooth" });
+    return true;
+  }
+  return false;
+}
+
 export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): ScrollResult {
-  // React 18.3+ types: useRef<HTMLDivElement>(null) → MutableRefObject<HTMLDivElement | null>
-  // 显式标注 null 避免传给 ref={} 时类型不匹配
   const parentRef = useRef<HTMLDivElement | null>(null);
 
-  const virtualizer = useVirtualizer({
-    count: sortedEntries.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 120,
-    overscan: 10,
-  });
-
-  // v0.7.0 fix:filter / sort 变化时,sortedEntries 引用变(同一 index 可能映射到不同 entry),
-  // TanStack Virtual 内部 measurement cache 是按 index 存的 — 复用旧测量值会导致
-  // getVirtualItems() 用错的 start 计算 translateY,row 视觉叠加。
-  //
-  // 强制全量 remeasure(measure() 清空缓存 + 触发重新测量已 mount 的 row),
-  // 让 React 19 + 动态高度 chat 内容也能正确重排。
-  useEffect(() => {
-    virtualizer.measure();
-  }, [sortedEntries, virtualizer]);
-
-  // 自动滚到底(用户已在底部 + 无搜索命中)
+  // 自动滚到底(用户已在底部 + 无搜索命中 + entries 增加)
   useEffect(() => {
     if (currentHit) return;
     const el = parentRef.current;
@@ -73,42 +70,42 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
   // 跳到搜索命中
   useEffect(() => {
     if (!currentHit) return;
-    const idx = sortedEntries.findIndex((e) => e.index === currentHit.entryIndex);
-    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
-  }, [currentHit, sortedEntries, virtualizer]);
+    const el = parentRef.current;
+    if (!el) return;
+    scrollToEntryIndex(el, currentHit.entryIndex);
+  }, [currentHit, sortedEntries]);
 
-  // URL ?line=N 跳转(稳定依赖 sortedEntries + virtualizer)
+  // URL ?line=N 跳转(稳定依赖 sortedEntries,无 virtualizer)
   const jumpToEntry = useCallback(
     (entryIndex: number) => {
-      const idx = sortedEntries.findIndex((e) => e.index === entryIndex);
-      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
+      const el = parentRef.current;
+      if (!el) return;
+      scrollToEntryIndex(el, entryIndex);
     },
-    [sortedEntries, virtualizer]
+    [sortedEntries]
   );
 
-  // v0.6.0: 监听 useTranscriptStore.jumpTarget — 任意组件 (SubagentMetaBlock LeafJumpButton)
+  // v0.6.0:监听 useTranscriptStore.jumpTarget — 任意组件 (SubagentMetaBlock LeafJumpButton)
   // 可触发跳到 entry.index (last-prompt.leafUuid 等场景)
-  //
-  // ⚠️ 之前 bug: useEffect deps 只有 [sortedEntries, virtualizer], 漏了 jumpTarget
-  // zustand state 改变不触发 effect 重跑, 按钮点了 effect 不响应。
-  // 修复: 用 zustand selector 订阅, 依赖 [target, sortedEntries, virtualizer]
   const jumpTarget = useTranscriptStore((s) => s.jumpTarget);
   useEffect(() => {
     if (jumpTarget == null) return;
-    const idx = sortedEntries.findIndex((e) => e.index === jumpTarget);
-    if (idx < 0) {
+    const el = parentRef.current;
+    if (!el) return;
+    const found = scrollToEntryIndex(el, jumpTarget);
+    if (!found) {
       // entries 还没加载 / 目标不在范围 — 不清空, 等 entries 加载完再试
       // (TranscriptView 会在 entries 变化时重新触发这个 effect)
       return;
     }
-    const targetEntry = sortedEntries[idx];
-    if (!targetEntry) return;
-    virtualizer.scrollToIndex(idx, { align: "center" });
-    // v0.6.0: 跳到后高亮 1.5s — 视觉反馈
-    useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");
-    // 触发后清空, 避免重复触发
+    const targetEntry = sortedEntries.find((e) => e.index === jumpTarget);
+    // v0.6.0:跳到后高亮 1.5s — 视觉反馈
+    if (targetEntry) {
+      useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");
+    }
+    // 触发后清空,避免重复触发
     useTranscriptStore.setState({ jumpTarget: null });
-  }, [jumpTarget, sortedEntries, virtualizer]);
+  }, [jumpTarget, sortedEntries]);
 
-  return { parentRef, virtualizer, jumpToEntry };
+  return { parentRef, jumpToEntry };
 }

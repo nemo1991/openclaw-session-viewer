@@ -16,6 +16,11 @@ afterEach(() => {
   cleanup();
 });
 
+// ---- jsdom 没实现 scrollIntoView,useTranscriptScroll 需要 ----
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function () {};
+}
+
 // ---- Tauri API mock ----
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(() => Promise.resolve(undefined)),

@@ -11,19 +11,17 @@
   overflow-y: auto;
   padding: 16px 24px;
   scroll-behavior: smooth;
+  /* v0.7.0 重构:放弃 @tanstack/react-virtual 后,用 flex column + gap 处理
+   * 相邻 row 间距,浏览器原生 layout,不进任何 measurement cache。 */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
-/* v0.7.0 fix:virtualizer row 用 position: absolute + transform translateY 定位,
- * .msg { margin: 12px 0 } 的 margin 不被 getBoundingClientRect() 计入(只返回 border-box),
- * 导致相邻 bubble 紧贴无可见间距,filter 切换后用户报"会话叠到一起"。
- *
- * 解决:把间距从 .msg margin 移到 row wrapper 的 padding(top+bottom=12px each),
- * padding 属于 border-box,被 virtualizer measureElement() 测量 → 相邻 row 间有 24px 真实间距。
- *
- * .msg 的 margin 同时清掉,避免叠加成 48px 间距。 */
+/* v0.7.0:virtualizer 时代曾用 padding: 12px 0 让 measureElement() 测到间距,
+ * 现在用父容器 gap 处理,.transcript-row 无需 margin/padding。 */
 .transcript-row {
-  padding: 12px 0;
-  box-sizing: border-box;
+  /* 无 margin — 间距由父 .transcript-scroll 的 gap 处理 */
 }
 
 .transcript-loading,
