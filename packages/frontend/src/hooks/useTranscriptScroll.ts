@@ -1,24 +1,30 @@
 /**
- * useTranscriptScroll — 简化的 transcript 滚动 hook
+ * useTranscriptScroll — 虚拟滚动 + 自动跟随 + 跳到命中
  *
- * v0.7.0 重构:放弃 @tanstack/react-virtual,改用 flex column + 原生 scrollIntoView。
+ * v0.7.0 第二轮重构(性能回归后回归):
+ * 上一轮放弃 @tanstack/react-virtual,改 flex column + gap,结果 1000+ entry session
+ * 加载卡顿 + 筛选时浏览器顿 2s+ — 因为每条 entry 都是一个真实 DOM MessageBubble,
+ * React 一次性 mount/measure/paint 上千棵子树,主线程阻塞。
  *
- * 原 virtualizer 设计 3 个脆弱点:
- * 1. position: absolute + transform translateY 定位,把元素踢出正常 layout flow
- * 2. getBoundingClientRect() 只返 border-box,不含 margin → 间距 bug
- * 3. measurement cache 按 index 存,filter 切换同 index 映射不同 entry → 高度错位
+ * 之前 virtualizer 时代 3 个根本 bug(commit 952c3f7 / a8458b4 / f51fc6c 反复折腾):
+ * 1. position: absolute 元素没有 flex gap → 间距 bug
+ * 2. getBoundingClientRect 只返 border-box → margin 不被测到
+ * 3. measurement cache 按 index 存 → filter 后同 index 映射不同 entry,旧高度错位
  *
- * 替代:flex column + gap 由浏览器原生 layout,filter / sort 变化 = React 重渲染,
- * 自动重排,无需任何 measurement cache / remeasure 副作用。
+ * 这次的修法(根因级,不再补补丁):
+ * - row wrapper `padding: 12px 0`(border-box 内,getBoundingClientRect 测得到)
+ * - virtualizer `getItemKey: (i) => entries[i].normalized.id` — measurement cache 按
+ *   稳定 id 存,filter / sort 变化后同一个 entry 仍是同一个 cache 槽,不会被新 entry
+ *   的旧高度污染
+ * - row `key={entry.normalized.id}` — React 复用 DOM 节点,filter 后不 unmount/remount
+ * - 删 `virtualizer.measure()` 副作用(稳定 key 后不再需要)
  *
- * 保留的滚动语义:
- * - 自动滚到底:用户已在底部 50px + 无搜索命中 + entries 增加
- * - 跳到搜索命中:scrollIntoView({ block: "center" })
- * - URL ?line=N 跳转:jumpToEntry
- * - SubagentMetaBlock LeafJumpButton:jumpTarget
+ * scrollToIndex 行为保留:URL ?line=N / 搜索命中 / SubagentMetaBlock LeafJumpButton。
+ * fallback scrollIntoView 保留:scrollToIndex 失败时(目标 row 还没 mount)走原生滚动。
  */
 
 import { useCallback, useEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type { TranscriptEntryOut } from "../lib/api";
 import type { InSessionHit } from "../state/searchInSessionStore";
@@ -33,24 +39,29 @@ interface ScrollOpts {
 export interface ScrollResult {
   // React 19: useRef<T>(null) → RefObject<T | null>;保持 nullable 与调用方一致
   parentRef: React.RefObject<HTMLDivElement | null>;
-  /** 跳到指定 entry.index(URL ?line=N 用),内部走 scrollIntoView */
+  virtualizer: ReturnType<typeof useVirtualizer<HTMLDivElement, Element>>;
+  /** 跳到指定 entry.index(URL ?line=N 用),内部走 virtualizer */
   jumpToEntry: (entryIndex: number) => void;
 }
 
 const SCROLL_BOTTOM_THRESHOLD_PX = 50;
 
-/** 滚到底 — 用 row 容器 (data-entry-index 属性) 找 DOM,没有时跳到 scroll bottom */
-function scrollToEntryIndex(parent: HTMLElement, entryIndex: number): boolean {
-  const row = parent.querySelector(`[data-entry-index="${entryIndex}"]`) as HTMLElement | null;
-  if (row) {
-    row.scrollIntoView({ block: "center", behavior: "smooth" });
-    return true;
-  }
-  return false;
-}
-
 export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): ScrollResult {
   const parentRef = useRef<HTMLDivElement | null>(null);
+
+  // v0.7.0 第二轮:关键 3 个 option 一起保稳定虚拟化:
+  // - getItemKey 按 entry.normalized.id — measurement cache by id(非 by index)
+  // - overscan: 10 上下各 10 条,滚动不闪屏
+  // - estimateSize: 120 — 初始估算(后续 measureElement 自动修正)
+  const virtualizer = useVirtualizer({
+    count: sortedEntries.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 120,
+    overscan: 10,
+    // 关键:按稳定 id 取 key — measurement cache 跟着 id 走,
+    // filter / sort 改 entries 顺序后,同一个 entry 还是同一个 cache 槽。
+    getItemKey: (index) => sortedEntries[index]?.normalized.id ?? index,
+  });
 
   // 自动滚到底(用户已在底部 + 无搜索命中 + entries 增加)
   useEffect(() => {
@@ -70,19 +81,17 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
   // 跳到搜索命中
   useEffect(() => {
     if (!currentHit) return;
-    const el = parentRef.current;
-    if (!el) return;
-    scrollToEntryIndex(el, currentHit.entryIndex);
-  }, [currentHit, sortedEntries]);
+    const idx = sortedEntries.findIndex((e) => e.index === currentHit.entryIndex);
+    if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
+  }, [currentHit, sortedEntries, virtualizer]);
 
-  // URL ?line=N 跳转(稳定依赖 sortedEntries,无 virtualizer)
+  // URL ?line=N 跳转(稳定依赖 sortedEntries + virtualizer)
   const jumpToEntry = useCallback(
     (entryIndex: number) => {
-      const el = parentRef.current;
-      if (!el) return;
-      scrollToEntryIndex(el, entryIndex);
+      const idx = sortedEntries.findIndex((e) => e.index === entryIndex);
+      if (idx >= 0) virtualizer.scrollToIndex(idx, { align: "center" });
     },
-    [sortedEntries]
+    [sortedEntries, virtualizer]
   );
 
   // v0.6.0:监听 useTranscriptStore.jumpTarget — 任意组件 (SubagentMetaBlock LeafJumpButton)
@@ -90,22 +99,19 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
   const jumpTarget = useTranscriptStore((s) => s.jumpTarget);
   useEffect(() => {
     if (jumpTarget == null) return;
-    const el = parentRef.current;
-    if (!el) return;
-    const found = scrollToEntryIndex(el, jumpTarget);
-    if (!found) {
+    const idx = sortedEntries.findIndex((e) => e.index === jumpTarget);
+    if (idx < 0) {
       // entries 还没加载 / 目标不在范围 — 不清空, 等 entries 加载完再试
-      // (TranscriptView 会在 entries 变化时重新触发这个 effect)
       return;
     }
-    const targetEntry = sortedEntries.find((e) => e.index === jumpTarget);
+    const targetEntry = sortedEntries[idx];
+    if (!targetEntry) return;
+    virtualizer.scrollToIndex(idx, { align: "center" });
     // v0.6.0:跳到后高亮 1.5s — 视觉反馈
-    if (targetEntry) {
-      useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");
-    }
+    useTranscriptStore.getState().markJumped(targetEntry.normalized?.id ?? "");
     // 触发后清空,避免重复触发
     useTranscriptStore.setState({ jumpTarget: null });
-  }, [jumpTarget, sortedEntries]);
+  }, [jumpTarget, sortedEntries, virtualizer]);
 
-  return { parentRef, jumpToEntry };
+  return { parentRef, virtualizer, jumpToEntry };
 }
