@@ -2,9 +2,91 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
-## [0.7.1] - 2026-07-06
+## [0.7.2] - 2026-07-06
 
-v0.7.0 发布后用户实测发现 1000+ entry session 加载卡顿 + 筛选时浏览器顿 2s+。本版本 5 个 commit 全部围绕 transcript 滚动性能回归,根因修法替代前几轮补补丁的反复折腾。
+v0.7.1 发布后用户实测发现 4 个 G1/G2/G3 + 会话详情 UX 问题,本版本 5 个 commit 全部围绕 G1/G2/G3 视图修复 + 会话详情视觉分层。
+
+### Bug 修复
+
+#### 1. G1 布局散架(commit `fd7738d`)
+
+bc24a08 / 683e61d 合并 G1/G2/G3 到主项目时,GraphView.tsx 用了 `.graph-view` / `.graph-header` / `.graph-footer` / `.loading` / `.error` 等类名,但主项目**根本没 CSS 文件定义** — experiment 源的 App.css 合并时漏带过来,G1 视图布局直接散架。
+
+- 新建 `packages/frontend/src/views/graph/GraphView.css`(从 experiment App.css 移植 + token 化)
+- `import "./GraphView.css"` 接入
+
+#### 2. G1/G2/G3 浅色模式几乎全不可见(commit `fd7738d`)
+
+G2 `AnalyticsView.css` / G3 `RagChat.css` / G1 `GraphDetailPanel.css` 大量硬编码深色配色(`#f8fafc` 文本 / `#0f172a` 输入框 bg / `#1e293b` 边框 / `#94a3b8` muted),浅色模式下标题 / KPI / 卡片几乎全不可见。
+
+- 6 个新 panel tokens (`tokens.css`):`--color-panel` / `--color-panel-deep` / `--color-panel-border` / `--color-input-border` / `--color-canvas` / `--color-focus`,浅/深模式各自一套
+- 全部 hardcode → `var(--color-...)`
+- 透明叠加用 `color-mix(in srgb, var(--color-x) 18%, transparent)`(Tauri 2 WebView 都支持)
+
+#### 3. G1/G2/G3 tab hover 文字颜色变化不明显(commit `a6ad57a`)
+
+`GraphExplorerRoute.css` 用了 `var(--color-fg-muted)` / `var(--color-fg)` 这两个**根本不存在的 token**(实际定义是 `--color-text` / `--color-text-muted` / `--color-text-subtle`)。fallback 永远硬编码 `#64748b → #0f172a`,深色模式下两个都是深 slate,几乎看不出变化。
+
+- 改成 `var(--color-text-muted)` / `var(--color-text)`
+- 仓库搜全 `--color-fg*`:0 处残留
+
+#### 4. G3 搜索匹配高亮全段噪音(commit `271f665`)
+
+RagChat 用 `highlightHtml(text, hit.matched_tokens)` 高亮,但 `matched_tokens` 来自 `tokenize()` — 故意只返 1-char + 2-char substring(hash trick)。1-char token 几乎在 text 里处处出现 → 整段 first_prompt 全部被 `<mark>` 包裹,看不出匹配什么。
+
+- 新增 `highlightQueryHtml(text, query)`,用原 query 按空白分词(2+ 字符),直接 text 里查找
+- 修 `highlightSpans` 大小写敏感 bug(`text.toLowerCase()` 做匹配,slice 仍用原 text 保原大小写)
+- 长 workspace 路径加 `max-width: 240px; overflow: hidden; text-overflow: ellipsis` 防撑破布局
+- `<mark>` 背景色 alpha 18% → 32% 让高亮在浅/深模式都清晰可见
+
+#### 5. G3 "打开会话" 提示"无会话"(commit `271f665`)
+
+RagChat 调 `navigate('/session/<id>')`,没传 `?path=` 也没传 `state.session`,SessionDetailRoute meta 为 undefined → 走 `t("detail.notFound")` 分支。
+
+- 改成 `navigate('/session/<id>?path=<jsonlPath>')`,跟 G1 GraphDetailPanel subagent 跳转同一模板(GraphDetailPanel:198-211)
+
+#### 6. 会话详情左侧色条 user/assistant 都是紫色(commit `ece8c37`)
+
+`.msg.msg-subagent` 统一设 `border-left: 3px solid var(--color-accent)`,子 session 视图下所有消息都加 `.msg-subagent` class → 左侧全是紫色,看不出 user vs assistant。
+
+- 给 `.msg-user` / `.msg-assistant` / `.msg-tool` / `.msg-system` 各自加 role 颜色 `border-left: 3px`(user=primary 蓝,assistant=accent 紫,tool=warning 黄,system=text-muted 灰)
+- `.msg.msg-subagent` 删 `border-left`,只保留 `margin-left: 24px` + `▸ ::before` 标记 + `opacity: 0.92`
+
+### 测试
+
+新增 15 个 RAG 单测(`rag.test.ts`):
+
+- `highlightQueryHtml` 7 个(基础高亮 / 大小写 / 1-char 跳过 / XSS / 多次出现 / 空 query)
+- `highlightSpans` 2 个(顺序 / 空 token)
+- `tokenize` 3 个
+- `embed + cosine` 2 个 smoke
+- `topK` 1 个
+
+### 验证
+
+```bash
+cd packages/frontend && pnpm typecheck    # 0
+cd packages/frontend && pnpm test         # 453 / 453 (was 438, +15)
+cd packages/frontend && pnpm exec vite build  # ✓
+```
+
+### 文件变更
+
+| 文件                                                     | 改动                                                                      |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `packages/frontend/src/theme/tokens.css`                 | +6 panel tokens (浅 + 深)                                                 |
+| `packages/frontend/src/routes/GraphExplorerRoute.css`    | tab hover 改用 `--color-text*` tokens,清掉所有 hardcoded fallback         |
+| `packages/frontend/src/views/graph/GraphView.css`        | 新建 (从 experiment App.css 移植 + token 化)                              |
+| `packages/frontend/src/views/graph/GraphView.tsx`        | `import "./GraphView.css"`                                                |
+| `packages/frontend/src/views/graph/AnalyticsView.css`    | 全部 hardcode → tokens                                                    |
+| `packages/frontend/src/views/graph/RagChat.css`          | 全部 hardcode → tokens;`<mark>` alpha 18% → 32%;hit-workspace 加 ellipsis |
+| `packages/frontend/src/views/graph/GraphDetailPanel.css` | rgba → color-mix + tokens                                                 |
+| `packages/frontend/src/views/graph/rag.ts`               | 新增 `highlightQueryHtml`;`highlightSpans` 大小写无关                     |
+| `packages/frontend/src/views/graph/rag.test.ts`          | 新建,15 个单测                                                            |
+| `packages/frontend/src/views/graph/RagChat.tsx`          | 用 `highlightQueryHtml` + 透传 query;`navigate('?path=<jsonlPath>')`      |
+| `packages/frontend/src/components/MessageBubble.css`     | 4 个 role 加 `border-left: 3px solid <role-color>`;subagent 不再覆盖      |
+
+## 版本总览
 
 ### Bug 修复
 
@@ -60,6 +142,7 @@ cd packages/frontend && pnpm exec vite build  # ✓
 
 | 版本    | 日期       | 主题                                                         | Rust 测试 | TS 测试 | 合计 |
 | ------- | ---------- | ------------------------------------------------------------ | --------: | ------: | ---: |
+| [0.7.2] | 2026-07-06 | G1/G2/G3 视图修复 + 会话详情视觉分层 (5 commit, +15 单测)    |       107 |     453 |  560 |
 | [0.7.1] | 2026-07-06 | 修复 transcript 虚拟化性能回归 (1000+ entry 加载/筛选卡顿)   |       107 |     438 |  545 |
 | [0.7.0] | 2026-07-05 | 会话详情筛选 + 聚合去噪 + React 19 + 完整 CI/CD              |       107 |     438 |  545 |
 | [0.6.1] | 2026-06-30 | 5 个紧急 UX 补丁 (reveal 闭环 + Settings 锁 + agent 越界)    |       107 |     308 |  456 |
