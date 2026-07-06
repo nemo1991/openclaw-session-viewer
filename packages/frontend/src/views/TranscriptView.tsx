@@ -155,6 +155,7 @@ export function TranscriptView() {
                 data-entry-index={entry.index}
                 ref={virtualizer.measureElement}
                 className={[
+                  "transcript-row",
                   isCurrentHit ? "search-hit-current" : undefined,
                   isRepeatStart ? "msg-repeat-start" : undefined,
                   isRepeatContinuation ? "msg-repeat-cont" : undefined,

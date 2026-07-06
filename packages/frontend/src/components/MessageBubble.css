@@ -1,5 +1,7 @@
 .msg {
-  margin: 12px 0;
+  /* v0.7.0:margin 移到 .transcript-row wrapper(TranscriptView.css),
+   * 让 virtualizer measureElement 测到 border-box 包含间距,
+   * 否则 position:absolute row + margin 不被 getBoundingClientRect 计入 → 紧贴无间距 */
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-elevated);
