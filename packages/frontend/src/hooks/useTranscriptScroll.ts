@@ -45,6 +45,16 @@ export function useTranscriptScroll({ sortedEntries, currentHit }: ScrollOpts): 
     overscan: 10,
   });
 
+  // v0.7.0 fix:filter / sort 变化时,sortedEntries 引用变(同一 index 可能映射到不同 entry),
+  // TanStack Virtual 内部 measurement cache 是按 index 存的 — 复用旧测量值会导致
+  // getVirtualItems() 用错的 start 计算 translateY,row 视觉叠加。
+  //
+  // 强制全量 remeasure(measure() 清空缓存 + 触发重新测量已 mount 的 row),
+  // 让 React 19 + 动态高度 chat 内容也能正确重排。
+  useEffect(() => {
+    virtualizer.measure();
+  }, [sortedEntries, virtualizer]);
+
   // 自动滚到底(用户已在底部 + 无搜索命中)
   useEffect(() => {
     if (currentHit) return;
