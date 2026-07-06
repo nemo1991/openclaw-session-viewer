@@ -1,3 +1,13 @@
+/* GraphDetailPanel (G1 详情抽屉) 样式
+ *
+ * v0.7.1 修复:之前从 experiment/embed-db/web 合并过来时,所有颜色硬编码
+ * 深色 (slate-8xx + rgba 透明叠加),浅色模式下文字几乎不可见。
+ * 全部改用 theme tokens + color-mix 透明叠加,浅/深模式自动适配。
+ *
+ * 透明叠加用 color-mix(in srgb, var(--color-x) 18%, transparent)
+ * 兼容 Tauri 2 的 WebView(macOS WKWebView / Windows WebView2 都支持)。
+ */
+
 .graph-detail {
   position: absolute;
   top: 0;
@@ -5,21 +15,20 @@
   width: 380px;
   max-width: 92vw;
   height: 100%;
-  background: rgba(15, 23, 42, 0.96);
-  border-left: 1px solid rgba(148, 163, 184, 0.18);
-  backdrop-filter: blur(6px);
-  color: #e2e8f0;
+  background: var(--color-panel);
+  border-left: 1px solid var(--color-panel-border);
+  color: var(--color-text);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   font-size: 14px;
-  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-md);
   z-index: 5;
 }
 
 .detail-header {
   padding: 16px 18px 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid var(--color-panel-border);
   flex-shrink: 0;
 }
 
@@ -35,22 +44,22 @@
   font-size: 16px;
   line-height: 1.3;
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--color-text);
   word-break: break-word;
 }
 
 .detail-title-input {
   flex: 1;
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid #38bdf8;
+  background: var(--color-bg);
+  border: 1px solid var(--color-focus);
   border-radius: 4px;
   padding: 6px 8px;
-  color: #f1f5f9;
+  color: var(--color-text);
   font-size: 14px;
   font-family: inherit;
 }
 .detail-title-input:focus {
-  outline: 2px solid #38bdf8;
+  outline: 2px solid var(--color-focus);
   outline-offset: 1px;
 }
 
@@ -62,33 +71,32 @@
 }
 
 .icon-btn {
-  background: rgba(51, 65, 85, 0.4);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-panel-border);
   border-radius: 4px;
   padding: 4px 9px;
-  color: #cbd5e1;
+  color: var(--color-text);
   cursor: pointer;
   font-size: 12px;
   font-family: inherit;
   transition: all 0.12s;
 }
 .icon-btn:hover {
-  background: rgba(71, 85, 105, 0.5);
-  border-color: rgba(148, 163, 184, 0.4);
-  color: #f1f5f9;
+  background: var(--color-bg-hover);
+  filter: brightness(1.1);
 }
 .icon-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 .icon-btn.primary {
-  background: rgba(56, 189, 248, 0.18);
-  border-color: rgba(56, 189, 248, 0.5);
-  color: #7dd3fc;
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 .icon-btn.primary:hover:not(:disabled) {
-  background: rgba(56, 189, 248, 0.3);
-  border-color: rgba(56, 189, 248, 0.8);
+  background: var(--color-primary-bg);
+  filter: brightness(0.95);
 }
 
 .detail-body {
@@ -109,7 +117,7 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #64748b;
+  color: var(--color-text-subtle);
   margin-bottom: 6px;
   font-weight: 600;
 }
@@ -118,7 +126,7 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.55;
-  color: #cbd5e1;
+  color: var(--color-text);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -127,15 +135,15 @@
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-style: italic;
   word-break: break-word;
 }
 
 .detail-id {
   font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  color: #64748b;
+  font-family: var(--font-mono);
+  color: var(--color-text-subtle);
   word-break: break-all;
 }
 
@@ -158,26 +166,26 @@
   text-overflow: ellipsis;
 }
 .tag-main {
-  background: rgba(59, 130, 246, 0.18);
-  color: #93c5fd;
-  border-color: rgba(59, 130, 246, 0.5);
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 .tag-workspace {
-  background: rgba(168, 85, 247, 0.18);
-  color: #d8b4fe;
-  border-color: rgba(168, 85, 247, 0.5);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  font-family: var(--font-mono);
   max-width: 220px;
 }
 .tag-model {
-  background: rgba(14, 165, 233, 0.18);
-  color: #7dd3fc;
-  border-color: rgba(14, 165, 233, 0.5);
+  background: color-mix(in srgb, var(--color-focus) 18%, transparent);
+  color: var(--color-focus);
+  border-color: color-mix(in srgb, var(--color-focus) 50%, transparent);
 }
 .tag-local {
-  background: rgba(148, 163, 184, 0.18);
-  color: #cbd5e1;
-  border-color: rgba(148, 163, 184, 0.4);
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  border-color: var(--color-panel-border);
 }
 
 .detail-stats {
@@ -188,27 +196,27 @@
 }
 
 .stat {
-  background: rgba(30, 41, 59, 0.5);
+  background: var(--color-bg-hover);
   border-radius: 4px;
   padding: 8px 10px;
-  border: 1px solid rgba(148, 163, 184, 0.08);
+  border: 1px solid var(--color-panel-border);
 }
 .stat dt {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #64748b;
+  color: var(--color-text-subtle);
   margin: 0 0 3px;
 }
 .stat dd {
   font-size: 14px;
   font-weight: 600;
-  color: #e2e8f0;
+  color: var(--color-text);
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
 .stat-warn dd {
-  color: #fca5a5;
+  color: var(--color-error);
 }
 
 .stat-compare {
@@ -220,16 +228,16 @@
   vertical-align: middle;
 }
 .stat-compare-up {
-  color: #fbbf24;
+  color: var(--color-warning);
 }
 .stat-compare-down {
-  color: #22c55e;
+  color: var(--color-success);
 }
 
 .detail-cmd {
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  background: rgba(99, 102, 241, 0.18);
-  color: #a5b4fc;
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
   padding: 1px 6px;
   border-radius: 3px;
   font-size: 12px;
@@ -237,8 +245,8 @@
 
 .copy-btn {
   background: transparent;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  color: #94a3b8;
+  border: 1px solid var(--color-panel-border);
+  color: var(--color-text-muted);
   padding: 1px 6px;
   font-size: 10px;
   border-radius: 3px;
@@ -249,8 +257,8 @@
   letter-spacing: 0;
 }
 .copy-btn:hover {
-  color: #e2e8f0;
-  border-color: rgba(148, 163, 184, 0.5);
+  color: var(--color-text);
+  border-color: var(--color-text-muted);
 }
 
 .detail-sibling-list {
@@ -269,25 +277,25 @@
   gap: 2px;
   padding: 5px 8px;
   border-radius: 3px;
-  background: rgba(30, 41, 59, 0.4);
+  background: var(--color-bg-hover);
   cursor: pointer;
   font-size: 12px;
   border: 1px solid transparent;
 }
 .detail-sibling:hover {
-  background: rgba(56, 189, 248, 0.12);
-  border-color: rgba(56, 189, 248, 0.4);
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
 }
 .sibling-title {
-  color: #e2e8f0;
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sibling-meta {
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 10px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--font-mono);
 }
 
 .detail-subagent-list {
@@ -307,7 +315,7 @@
   gap: 8px;
   padding: 5px 8px;
   border-radius: 3px;
-  background: rgba(30, 41, 59, 0.4);
+  background: var(--color-bg-hover);
   font-size: 12px;
 }
 
@@ -319,7 +327,7 @@
 }
 
 .subagent-desc {
-  color: #cbd5e1;
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -335,7 +343,7 @@
     width: 100%;
     height: 60vh;
     border-left: none;
-    border-top: 1px solid rgba(148, 163, 184, 0.2);
+    border-top: 1px solid var(--color-panel-border);
     border-radius: 12px 12px 0 0;
   }
 }

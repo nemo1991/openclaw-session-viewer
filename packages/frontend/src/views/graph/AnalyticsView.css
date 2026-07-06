@@ -1,4 +1,10 @@
-/* Analytics view styles */
+/* Analytics view styles
+ *
+ * v0.7.1 修复:之前从 experiment/embed-db/web 合并过来时,所有颜色硬编码
+ * 深色 (slate-8xx + #f8fafc 文本),浅色模式下标题/KPI/卡片几乎全不可见。
+ * 全部改用 theme tokens,浅/深模式自动适配。
+ */
+
 .analytics-view {
   display: flex;
   flex-direction: column;
@@ -13,12 +19,12 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--color-panel-border);
   padding-bottom: 12px;
 }
 .analytics-header h2 {
   font-size: 14px;
-  color: #f8fafc;
+  color: var(--color-text);
   font-weight: 500;
 }
 
@@ -27,9 +33,9 @@
   gap: 6px;
 }
 .range-btn {
-  background: #1e293b;
-  color: #94a3b8;
-  border: 1px solid #334155;
+  background: var(--color-panel);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-input-border);
   border-radius: 4px;
   padding: 4px 10px;
   cursor: pointer;
@@ -37,9 +43,9 @@
   font-size: 12px;
 }
 .range-btn.active {
-  background: #3b82f6;
+  background: var(--color-primary);
   color: #fff;
-  border-color: #3b82f6;
+  border-color: var(--color-primary);
 }
 
 .kpi-row {
@@ -52,8 +58,8 @@
   grid-template-columns: repeat(8, 1fr);
 }
 .kpi {
-  background: #0f172a;
-  border: 1px solid #1e293b;
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-border);
   border-radius: 4px;
   padding: 10px 12px;
   display: flex;
@@ -61,40 +67,40 @@
   gap: 4px;
 }
 .kpi-good {
-  border-color: rgba(34, 197, 94, 0.4);
+  border-color: var(--color-success);
 }
 .kpi-good .kpi-value {
-  color: #86efac;
+  color: var(--color-success);
 }
 .kpi-warn {
-  border-color: rgba(245, 158, 11, 0.4);
+  border-color: var(--color-warning);
 }
 .kpi-warn .kpi-value {
-  color: #fcd34d;
+  color: var(--color-warning);
 }
 .kpi-bad {
-  border-color: rgba(239, 68, 68, 0.4);
+  border-color: var(--color-error);
 }
 .kpi-bad .kpi-value {
-  color: #fca5a5;
+  color: var(--color-error);
 }
 .kpi-label {
   font-size: 10px;
-  color: #64748b;
+  color: var(--color-text-subtle);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .kpi-value {
   font-size: 16px;
-  color: #f8fafc;
+  color: var(--color-text);
   font-weight: 600;
 }
 
 .range-count {
   display: inline-block;
   margin-left: 4px;
-  background: rgba(148, 163, 184, 0.18);
-  color: #94a3b8;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 8px;
@@ -114,8 +120,8 @@
 }
 
 .chart-card {
-  background: #0f172a;
-  border: 1px solid #1e293b;
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-border);
   border-radius: 4px;
   padding: 12px 14px;
   height: 240px;
@@ -127,7 +133,7 @@
 }
 .chart-card h3 {
   font-size: 12px;
-  color: #cbd5e1;
+  color: var(--color-text);
   font-weight: 500;
   margin-bottom: 8px;
   letter-spacing: 0.2px;
@@ -146,40 +152,41 @@
 .token-table td {
   text-align: left;
   padding: 6px 8px;
-  border-bottom: 1px solid #1e293b;
-  color: #cbd5e1;
+  border-bottom: 1px solid var(--color-panel-border);
+  color: var(--color-text);
 }
 .token-table th {
   font-weight: 600;
-  color: #f8fafc;
-  background: #020617;
+  color: var(--color-text);
+  background: var(--color-panel-deep);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
 .token-table td.num {
   text-align: right;
-  font-family: ui-monospace, monospace;
-  color: #f8fafc;
+  font-family: var(--font-mono);
+  color: var(--color-text);
   font-weight: 600;
 }
 .token-table tr:hover td {
-  background: rgba(59, 130, 246, 0.08);
+  background: var(--color-bg-hover);
 }
 .token-table tr.token-row-clickable {
   cursor: pointer;
 }
 .token-table tr.token-row-clickable:hover td {
-  background: rgba(56, 189, 248, 0.15);
+  background: var(--color-primary-bg);
 }
 .token-table tr.token-row-clickable:active td {
-  background: rgba(56, 189, 248, 0.25);
+  background: var(--color-primary-bg);
+  filter: brightness(0.95);
 }
 
 .title-override-badge {
   display: inline-block;
   margin-left: 4px;
   font-size: 10px;
-  color: #facc15;
+  color: var(--color-warning);
   opacity: 0.85;
 }

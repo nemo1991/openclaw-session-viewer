@@ -1,3 +1,11 @@
+/* RagChat (G3) 样式
+ *
+ * v0.7.1 修复:之前从 experiment/embed-db/web 合并过来时,所有颜色硬编码
+ * 深色 (#f8fafc 文本 / #0f172a 输入框 bg / #1e293b 边框 / #94a3b8 muted),
+ * 浅色模式下 hit card / search bar / 标题几乎全不可见。
+ * 全部改用 theme tokens,浅/深模式自动适配。
+ */
+
 .rag-chat {
   display: flex;
   flex-direction: column;
@@ -8,18 +16,18 @@
 }
 
 .rag-header {
-  border-bottom: 1px solid #1e293b;
+  border-bottom: 1px solid var(--color-panel-border);
   padding-bottom: 10px;
   margin-bottom: 14px;
 }
 .rag-header h2 {
   font-size: 14px;
-  color: #f8fafc;
+  color: var(--color-text);
   margin-bottom: 4px;
 }
 .rag-header .hint {
   font-size: 11px;
-  color: #64748b;
+  color: var(--color-text-subtle);
 }
 
 .rag-search {
@@ -30,18 +38,18 @@
 }
 .rag-search input[type="text"] {
   flex: 1;
-  background: #0f172a;
-  border: 1px solid #334155;
+  background: var(--color-panel);
+  border: 1px solid var(--color-input-border);
   border-radius: 4px;
   padding: 8px 12px;
-  color: #f8fafc;
+  color: var(--color-text);
   font-family: inherit;
   font-size: 13px;
 }
 .rag-search button.primary {
-  background: #3b82f6;
+  background: var(--color-primary);
   color: #fff;
-  border: 1px solid #3b82f6;
+  border: 1px solid var(--color-primary);
   border-radius: 4px;
   padding: 8px 18px;
   font-family: inherit;
@@ -56,13 +64,13 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-size: 11px;
 }
 .topn-control input[type="number"] {
-  background: #0f172a;
-  border: 1px solid #334155;
-  color: #f8fafc;
+  background: var(--color-panel);
+  border: 1px solid var(--color-input-border);
+  color: var(--color-text);
   font-family: inherit;
   padding: 4px;
   border-radius: 3px;
@@ -70,9 +78,9 @@
 }
 
 .rag-filter {
-  background: #0f172a;
-  border: 1px solid #334155;
-  color: #cbd5e1;
+  background: var(--color-panel);
+  border: 1px solid var(--color-input-border);
+  color: var(--color-text);
   font-family: inherit;
   font-size: 12px;
   padding: 6px 8px;
@@ -81,7 +89,7 @@
   max-width: 180px;
 }
 .rag-filter:focus {
-  outline: 1px solid #38bdf8;
+  outline: 1px solid var(--color-focus);
   outline-offset: 1px;
 }
 
@@ -94,15 +102,15 @@
 }
 .presets-label {
   font-size: 11px;
-  color: #64748b;
+  color: var(--color-text-subtle);
   text-transform: uppercase;
   letter-spacing: 0.4px;
   margin-right: 4px;
 }
 .presets button {
-  background: #1e293b;
-  color: #cbd5e1;
-  border: 1px solid #334155;
+  background: var(--color-panel);
+  color: var(--color-text);
+  border: 1px solid var(--color-input-border);
   border-radius: 3px;
   padding: 4px 10px;
   font-size: 11px;
@@ -110,12 +118,12 @@
   cursor: pointer;
 }
 .presets button:hover {
-  background: #334155;
+  background: var(--color-bg-hover);
 }
 
 .engine-timing {
   font-size: 11px;
-  color: #64748b;
+  color: var(--color-text-subtle);
   margin-bottom: 12px;
   font-style: italic;
 }
@@ -123,7 +131,7 @@
 .empty {
   padding: 30px;
   text-align: center;
-  color: #94a3b8;
+  color: var(--color-text-muted);
   font-style: italic;
 }
 
@@ -137,18 +145,18 @@
   display: grid;
   grid-template-columns: 32px 1fr;
   gap: 10px;
-  background: #0f172a;
-  border: 1px solid #1e293b;
-  border-left: 3px solid #a855f7;
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-border);
+  border-left: 3px solid var(--color-accent);
   border-radius: 4px;
   padding: 10px 12px;
 }
 
 .hit-rank {
   font-size: 18px;
-  color: #a855f7;
+  color: var(--color-accent);
   font-weight: 700;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   text-align: center;
 }
 
@@ -167,32 +175,32 @@
   align-items: center;
 }
 .hit-session {
-  color: #f8fafc;
-  font-family: ui-monospace, monospace;
+  color: var(--color-text);
+  font-family: var(--font-mono);
   font-weight: 600;
 }
 .hit-source {
-  background: #1e293b;
-  color: #94a3b8;
+  background: var(--color-bg-hover);
+  color: var(--color-text-muted);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 10px;
 }
 .hit-workspace {
-  color: #cbd5e1;
-  font-family: ui-monospace, monospace;
+  color: var(--color-text);
+  font-family: var(--font-mono);
 }
 .hit-score {
   margin-left: auto;
-  color: #22c55e;
+  color: var(--color-success);
   font-weight: 600;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 .hit-open {
-  background: rgba(56, 189, 248, 0.15);
-  border: 1px solid rgba(56, 189, 248, 0.4);
-  color: #7dd3fc;
+  background: var(--color-primary-bg);
+  border: 1px solid var(--color-primary);
+  color: var(--color-primary);
   font-size: 10px;
   padding: 2px 8px;
   border-radius: 3px;
@@ -200,14 +208,13 @@
   font-family: inherit;
 }
 .hit-open:hover {
-  background: rgba(56, 189, 248, 0.3);
-  border-color: rgba(56, 189, 248, 0.7);
+  background: var(--color-bg-hover);
 }
 
 .hit-expand {
   background: transparent;
   border: 0;
-  color: #7dd3fc;
+  color: var(--color-primary);
   font-size: 10px;
   font-family: inherit;
   margin-left: 6px;
@@ -215,12 +222,11 @@
   padding: 0 4px;
 }
 .hit-expand:hover {
-  color: #bae6fd;
   text-decoration: underline;
 }
 
 .hit-muted {
-  color: #64748b;
+  color: var(--color-text-subtle);
   font-style: italic;
 }
 
@@ -228,11 +234,11 @@
 .hit-snippet {
   font-size: 12px;
   line-height: 1.6;
-  color: #cbd5e1;
+  color: var(--color-text);
 }
 .hit-prompt b,
 .hit-snippet b {
-  color: #64748b;
+  color: var(--color-text-subtle);
   font-weight: 500;
   font-size: 10px;
   text-transform: uppercase;
@@ -244,14 +250,14 @@
   gap: 4px;
 }
 .hit-snippet {
-  border-left: 2px solid #1e293b;
+  border-left: 2px solid var(--color-panel-border);
   padding-left: 8px;
 }
 
 .hit-snippet mark,
 .hit-prompt mark {
-  background: rgba(168, 85, 247, 0.4);
-  color: #f8fafc;
+  background: var(--color-primary-bg);
+  color: var(--color-text);
   font-weight: 600;
   border-radius: 2px;
   padding: 0 2px;
@@ -262,8 +268,8 @@
   flex-wrap: wrap;
   gap: 12px;
   font-size: 11px;
-  color: #64748b;
-  border-top: 1px solid #1e293b;
+  color: var(--color-text-subtle);
+  border-top: 1px solid var(--color-panel-border);
   padding-top: 6px;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }

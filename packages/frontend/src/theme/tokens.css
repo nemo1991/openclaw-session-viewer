@@ -53,6 +53,16 @@
   --color-role-other: #94a3b8;
   --color-tool-node: #facc15;
   --color-error-badge: #ef4444;
+
+  /* v0.7.1: Graph Explorer 面板色 — G1/G2/G3 适配浅/深主题
+   * 浅色:panel 用略深的 neutral,深色:panel 跟 bg-elevated 同色
+   * 之前直接硬编码 #0f172a / #1e293b 等 slate-8xx 暗色,浅色模式几乎全不可见 */
+  --color-panel: #f6f8fa;
+  --color-panel-deep: #eaeef2;
+  --color-panel-border: #d0d7de;
+  --color-input-border: #d0d7de;
+  --color-canvas: #f6f8fa;
+  --color-focus: #0969da;
 }
 
 [data-theme="dark"] {
@@ -81,6 +91,14 @@
   /* v0.4.1: 深色主题 meta 块用更深的 panel 背景 */
   --color-surface-1: #161b22;
   --color-surface-2: #21262d;
+
+  /* v0.7.1: G1/G2/G3 panel 配色 — 深色模式与原 experiment 源配色一致 */
+  --color-panel: #0f172a;
+  --color-panel-deep: #020617;
+  --color-panel-border: #1e293b;
+  --color-input-border: #334155;
+  --color-canvas: #0a0f1e;
+  --color-focus: #38bdf8;
 
   --shadow-sm: 0 0 transparent;
   --shadow-md: 0 3px 6px rgba(0, 0, 0, 0.4);

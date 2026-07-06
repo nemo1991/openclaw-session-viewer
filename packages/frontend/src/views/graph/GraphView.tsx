@@ -26,6 +26,7 @@ import { buildForceGraph } from "./loader";
 import { GraphDetailPanel } from "./GraphDetailPanel";
 import { useTitleStore } from "./titleStore";
 import { useGraphStore } from "./graphStore";
+import "./GraphView.css";
 
 const ROLE_COLORS: Record<SubagentRole, string> = {
   Explore: "#10b981",
