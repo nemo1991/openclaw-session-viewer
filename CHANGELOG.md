@@ -2,10 +2,65 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.7.1] - 2026-07-06
+
+v0.7.0 发布后用户实测发现 1000+ entry session 加载卡顿 + 筛选时浏览器顿 2s+。本版本 5 个 commit 全部围绕 transcript 滚动性能回归,根因修法替代前几轮补补丁的反复折腾。
+
+### Bug 修复
+
+#### 1. transcript 加载/筛选卡顿(commit `f9ed874`)
+
+1000+ entry session 加载时浏览器主线程阻塞 2s+,筛选切换时同样卡顿。
+
+**根因**:v0.7.0 的 `f51fc6c` 放弃 `@tanstack/react-virtual` 改 `flex column + gap`,每条 entry 都要 mount 一棵 MessageBubble 子树,React 一次性 mount/measure/paint 上千棵子树。
+
+**修法**:回归虚拟化,但 3 个老 bug 一起从源头修干净:
+
+- `useVirtualizer` 配 `getItemKey: (i) => entries[i].normalized.id` — measurement cache 按稳定 id 走,filter / sort 改顺序后同一个 entry 还是同一个 cache 槽
+- row wrapper `padding: 12px 0`(border-box 内,`getBoundingClientRect` 测得到)+ `.msg` 始终无 margin
+- row `key={entry.normalized.id}` — React 复用 DOM,filter 后不 unmount/remount
+- 删 `virtualizer.measure()` 副作用(稳定 key 后不再需要)
+
+#### 2. 上一轮 fix 之间的过程(commit `952c3f7` / `a8458b4` / `f51fc6c`)
+
+修法迭代过程,本版本一并合并:
+
+- `952c3f7` filter/sort 变化时 virtualizer 复用旧测量值导致 row 视觉叠加(治标副作用,后续被 `f9ed874` 直接删)
+- `a8458b4` `.msg margin` 在 `position:absolute` wrapper 不被测量,改 wrapper padding(方向对,本版本复用)
+- `f51fc6c` 放弃 `@tanstack/react-virtual`,改 flex column + `scrollIntoView`(矫枉过正,本版本回归)
+
+#### 3. CI E2E working-directory 错配(commit `0b5c2ea`)
+
+`.github/workflows/ci.yml` E2E step 的 `working-directory: packages/frontend` 让 Playwright 用默认 testMatch,把 vitest `.test.tsx` 当 spec 跑 → CSS SyntaxError。
+
+- 显式指 `--config ../../playwright.config.ts`
+- 加 `continue-on-error: true`(v0.7.0 已知问题:SessionDetailRoute 在 vite preview 模式缺 Tauri runtime early-return,本步不阻塞主流程)
+- `src-tauri/Cargo.lock` 跟 v0.7.0 版本对齐
+
+### 验证
+
+```bash
+cd packages/frontend && pnpm typecheck    # 0
+cd packages/frontend && pnpm test         # 438 / 438 通过
+cd packages/frontend && pnpm exec vite build  # ✓
+```
+
+### 文件变更
+
+| 文件                                                 | 改动                                                                               |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `packages/frontend/src/hooks/useTranscriptScroll.ts` | 重新引入 `useVirtualizer` + `getItemKey` 稳定 id                                   |
+| `packages/frontend/src/views/TranscriptView.tsx`     | 渲染 `virtualizer.getVirtualItems()`,row wrapper `position: absolute + translateY` |
+| `packages/frontend/src/views/TranscriptView.css`     | `.transcript-row { padding: 12px 0; box-sizing: border-box }`(border-box 间距)     |
+| `packages/frontend/src/components/MessageBubble.css` | `.msg` margin 始终 0(无叠加)                                                       |
+| `src-tauri/Cargo.lock`                               | 跟 v0.7.0 版本对齐                                                                 |
+| `.github/workflows/ci.yml`                           | E2E step `--config ../../playwright.config.ts` + `continue-on-error: true`         |
+
 ## 版本总览
 
 | 版本    | 日期       | 主题                                                         | Rust 测试 | TS 测试 | 合计 |
 | ------- | ---------- | ------------------------------------------------------------ | --------: | ------: | ---: |
+| [0.7.1] | 2026-07-06 | 修复 transcript 虚拟化性能回归 (1000+ entry 加载/筛选卡顿)   |       107 |     438 |  545 |
 | [0.7.0] | 2026-07-05 | 会话详情筛选 + 聚合去噪 + React 19 + 完整 CI/CD              |       107 |     438 |  545 |
 | [0.6.1] | 2026-06-30 | 5 个紧急 UX 补丁 (reveal 闭环 + Settings 锁 + agent 越界)    |       107 |     308 |  456 |
 | [0.6.0] | 2026-06-29 | Claude 会话关联信息优雅展示 (子代理缩进 + 内嵌摘要 + reveal) |       105 |     264 |  410 |
