@@ -53,7 +53,7 @@ export function TranscriptView() {
   const { tz } = fmtOpts;
   const parentSessionId = useParams()?.sessionId; // v0.5.0:从 URL 拿 sessionId 透传给子代理按钮
 
-  const { parentRef } = useTranscriptScroll({ sortedEntries, currentHit });
+  const { parentRef, virtualizer } = useTranscriptScroll({ sortedEntries, currentHit });
 
   // ===== 聚合提示(去噪)— 跟 SessionDetailRoute header 用同一组函数 =====
   // 注意:这里只对"原 entries"(未排序、未过滤)算 repeat runs,因为排序会破坏
@@ -128,61 +128,83 @@ export function TranscriptView() {
           </div>
         )}
 
-        {/* v0.7.0 重构:放弃 @tanstack/react-virtual,改 flex column。
-         * 浏览器原生 gap 处理间距,filter / sort 变化 = React 重渲染,自动重排。
-         * 干掉 position:absolute + transform translateY + getBoundingClientRect 这套脆弱设计。 */}
-        {sortedEntries.map((entry, idx) => {
-          const isCurrentHit = currentHit?.entryIndex === entry.index;
-          const idleBefore = idleGapByAfterIndex.get(idx - 1);
-          const repeatRun = findRunForEntry(repeatRuns, entry.index);
-          const isRepeatStart = repeatRun !== null && repeatRun.startIndex === entry.index;
-          const isRepeatContinuation =
-            repeatRun !== null &&
-            entry.index > repeatRun.startIndex &&
-            entry.index < repeatRun.endIndex;
-          const isRepeatEnd =
-            repeatRun !== null && entry.index === repeatRun.endIndex && repeatRun.count >= 2;
-          return (
-            <div
-              key={entry.normalized.id || idx}
-              data-index={idx}
-              data-entry-index={entry.index}
-              className={[
-                "transcript-row",
-                isCurrentHit ? "search-hit-current" : undefined,
-                isRepeatStart ? "msg-repeat-start" : undefined,
-                isRepeatContinuation ? "msg-repeat-cont" : undefined,
-                isRepeatEnd ? "msg-repeat-end" : undefined,
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              {idleBefore !== undefined && (
-                <div className="transcript-idle-gap" data-testid="transcript-idle-gap">
-                  <span className="transcript-idle-line" />
-                  <span className="transcript-idle-label">间隔 {formatIdleGap(idleBefore)}</span>
-                  <span className="transcript-idle-line" />
-                </div>
-              )}
-              {isRepeatStart && repeatRun && repeatRun.count >= 2 && (
-                <div
-                  className="transcript-repeat-run"
-                  data-testid="transcript-repeat-run"
-                  title={`${repeatRun.tool} 连续 ${repeatRun.count} 次`}
-                >
-                  <span className="transcript-repeat-label">
-                    {repeatRun.tool} 连续 {repeatRun.count} 次
-                  </span>
-                </div>
-              )}
-              <MessageBubble
-                entry={entry}
-                parentJsonlPath={path ?? undefined}
-                parentSessionId={parentSessionId}
-              />
-            </div>
-          );
-        })}
+        {/* v0.7.0 第二轮:回归虚拟化(性能回归后修)。
+         * 上一轮放弃 virtualizer 改 flex column,f51fc6c 合并后 1000+ entry session
+         * 加载顿、筛选卡。恢复 useVirtualizer,但 3 个根因 bug 都修了:
+         * - wrapper padding: 12px 0(被 measureElement 测到)
+         * - getItemKey 用 entry.normalized.id(cache by id,不是 by index)
+         * - React key 用 entry.normalized.id(DOM 复用,不 unmount/remount)
+         * 见 useTranscriptScroll.ts 顶部注释。 */}
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: "100%",
+            position: "relative",
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const entry = sortedEntries[virtualRow.index];
+            if (!entry) return null;
+            const isCurrentHit = currentHit?.entryIndex === entry.index;
+            const idleBefore = idleGapByAfterIndex.get(virtualRow.index - 1);
+            const repeatRun = findRunForEntry(repeatRuns, entry.index);
+            const isRepeatStart = repeatRun !== null && repeatRun.startIndex === entry.index;
+            const isRepeatContinuation =
+              repeatRun !== null &&
+              entry.index > repeatRun.startIndex &&
+              entry.index < repeatRun.endIndex;
+            const isRepeatEnd =
+              repeatRun !== null && entry.index === repeatRun.endIndex && repeatRun.count >= 2;
+            return (
+              <div
+                key={entry.normalized.id || virtualRow.key}
+                data-index={virtualRow.index}
+                data-entry-index={entry.index}
+                ref={virtualizer.measureElement}
+                className={[
+                  "transcript-row",
+                  isCurrentHit ? "search-hit-current" : undefined,
+                  isRepeatStart ? "msg-repeat-start" : undefined,
+                  isRepeatContinuation ? "msg-repeat-cont" : undefined,
+                  isRepeatEnd ? "msg-repeat-end" : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {idleBefore !== undefined && (
+                  <div className="transcript-idle-gap" data-testid="transcript-idle-gap">
+                    <span className="transcript-idle-line" />
+                    <span className="transcript-idle-label">间隔 {formatIdleGap(idleBefore)}</span>
+                    <span className="transcript-idle-line" />
+                  </div>
+                )}
+                {isRepeatStart && repeatRun && repeatRun.count >= 2 && (
+                  <div
+                    className="transcript-repeat-run"
+                    data-testid="transcript-repeat-run"
+                    title={`${repeatRun.tool} 连续 ${repeatRun.count} 次`}
+                  >
+                    <span className="transcript-repeat-label">
+                      {repeatRun.tool} 连续 {repeatRun.count} 次
+                    </span>
+                  </div>
+                )}
+                <MessageBubble
+                  entry={entry}
+                  parentJsonlPath={path ?? undefined}
+                  parentSessionId={parentSessionId}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <footer className="transcript-footer" data-testid="transcript-footer">
