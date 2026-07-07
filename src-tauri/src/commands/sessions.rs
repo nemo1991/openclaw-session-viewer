@@ -99,76 +99,35 @@ fn agent_info_from_index(
 }
 
 /// 列出所有 Claude + OpenClaw 会话
+///
+/// v0.8.0: 改读 observer.db(由后台 sync_loop 维护)
+/// DB 同步完成后,这里就是个纯 SELECT,启动后秒出。
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<SessionMeta>> {
-    let mut out = Vec::new();
-
-    // 锁粒度小:只 wrap 路径访问,不要 wrap 整个 list_sessions
-    let paths_snapshot = state.paths.read().clone();
-
-    // 1) 先扫 default Claude live pids(只有默认 ~/.claude 有 sessions/<pid>.json 机制)
-    let live_pids = if let Some(c) = paths_snapshot.default_root.claude.as_ref() {
-        scan_live_pids(&c.sessions_dir).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
-
-    // 2) 扫所有 Claude 项目目录(default + 每个 custom_root)
-    for projects_dir in paths_snapshot.all_claude_projects_dirs() {
-        let claude_jsonls = match walker::list_jsonl_files(projects_dir) {
-            Ok(v) => v,
-            Err(e) => {
-                log::warn!("无法列出 Claude 项目目录 {:?}: {}", projects_dir, e);
-                continue;
-            }
+    let rows = state.db.with(|c| crate::db::schema::list_all_joined(c))?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let mut m = r.meta;
+        // 注入 override 字段
+        m.display_title = r.display_title;
+        m.hidden = r.hidden;
+        m.pinned = r.pinned;
+        m.archived = r.archived;
+        m.notes = r.notes;
+        m.tags = if r.tag_names.is_empty() {
+            None
+        } else {
+            Some(r.tag_names)
         };
-        for jsonl_path in claude_jsonls {
-            match build_claude_session_meta(&jsonl_path, &state, &live_pids) {
-                Ok(meta) => out.push(meta),
-                Err(e) => log::warn!("解析会话失败 {:?}: {}", jsonl_path, e),
-            }
-        }
+        out.push(m);
     }
-
-    // 3) 扫所有 OpenClaw agents 目录(default + 每个 custom_root)
-    for agents_dir in paths_snapshot.all_openclaw_agents_dirs() {
-        if !agents_dir.exists() {
-            continue;
-        }
-        let agents: Vec<_> = std::fs::read_dir(agents_dir)
-            .map(|d| d.filter_map(|e| e.ok()).collect())
-            .unwrap_or_default();
-        for agent_dir in agents {
-            let sessions_dir = agent_dir.path().join("sessions");
-            if !sessions_dir.exists() {
-                continue;
-            }
-            let agent_id = agent_dir.file_name().to_string_lossy().to_string();
-            let sessions_index = read_sessions_index(&sessions_dir.join("sessions.json"));
-            let (agent_label, agent_channel, agent_target) = agent_info_from_index(&sessions_index);
-            let oc_jsonls = walker::list_jsonl_files(&sessions_dir).unwrap_or_default();
-            for jsonl_path in oc_jsonls {
-                match build_openclaw_session_meta(
-                    &jsonl_path,
-                    &agent_id,
-                    agent_label.clone(),
-                    agent_channel.clone(),
-                    agent_target.clone(),
-                ) {
-                    Ok(meta) => out.push(meta),
-                    Err(e) => log::warn!("解析 OpenClaw 会话失败 {:?}: {}", jsonl_path, e),
-                }
-            }
-        }
-    }
-
-    // 按最后更新时间倒序
-    out.sort_by_key(|s| std::cmp::Reverse(s.mtime_ms));
-    log::info!("list_sessions: 返回 {} 个会话", out.len());
+    log::info!("list_sessions: 从 DB 返回 {} 个会话", out.len());
     Ok(out)
 }
 
 /// 获取单个会话的元数据
+///
+/// v0.8.0: 优先 DB,fallback 现场解析(防御 DB 损坏或还没同步的新 session)
 #[tauri::command]
 pub async fn get_session_meta(
     path: String,
@@ -179,22 +138,39 @@ pub async fn get_session_meta(
     // 路径安全:遍历所有 root 验证(支持 custom_root)
     paths::assert_within_any_root(&state.paths.read(), p)?;
 
-    // live_pids 只来自 default Claude(机制是 ~/.claude/sessions/<pid>.json)
+    // 1) 优先查 DB(joined)
+    if let Some(row) = state
+        .db
+        .with(|c| crate::db::schema::fetch_session_meta_by_path(c, &path))?
+    {
+        let mut m = row.meta;
+        m.display_title = row.display_title;
+        m.hidden = row.hidden;
+        m.pinned = row.pinned;
+        m.archived = row.archived;
+        m.notes = row.notes;
+        m.tags = if row.tag_names.is_empty() {
+            None
+        } else {
+            Some(row.tag_names)
+        };
+        return Ok(m);
+    }
+
+    // 2) Fallback:现场解析(可能在 DB 还没同步的新 session,或者 DB 损坏刚恢复)
     let live_pids = if let Some(c) = state.paths.read().default_root.claude.as_ref() {
-        scan_live_pids(&c.sessions_dir)?
+        scan_live_pids(&c.sessions_dir).unwrap_or_default()
     } else {
         HashMap::new()
     };
 
     if path.contains("openclaw") || path.contains(".openclaw") {
-        // 从路径反推 agentId: <root>/agents/<agentId>/sessions/<id>.jsonl
         let agent_id = p
             .ancestors()
             .nth(2)
             .and_then(|p| p.file_name())
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        // 读 agent 的 sessions.json 索引以补 agent 元信息
         let sessions_index = read_sessions_index(
             &p.ancestors()
                 .nth(1)
@@ -209,12 +185,16 @@ pub async fn get_session_meta(
 }
 
 /// 强制刷新 (忽略缓存)
+///
+/// v0.8.0: 不再走 cache,而是通知后台 sync_loop 重新跑一次,
+/// 然后返回 DB 当前结果(可能还是旧数据,sync 跑完后前端会收到 sessions-updated 事件再次刷新)
 #[tauri::command]
 pub async fn refresh_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<SessionMeta>> {
+    state.refresh_requested.notify_waiters();
     list_sessions(state).await
 }
 
-fn build_claude_session_meta(
+pub(crate) fn build_claude_session_meta(
     jsonl_path: &Path,
     state: &AppState,
     live_pids: &HashMap<String, u32>,
@@ -447,10 +427,17 @@ fn build_claude_session_meta(
         // v0.5.0 subagent 关联
         subagent_count,
         subagent_ids,
+        // v0.8.0 override 字段默认空(sync 后由后续 query 填充)
+        display_title: None,
+        hidden: false,
+        pinned: false,
+        archived: false,
+        notes: None,
+        tags: None,
     })
 }
 
-fn build_openclaw_session_meta(
+pub(crate) fn build_openclaw_session_meta(
     jsonl_path: &Path,
     agent_id: &str,
     agent_label: Option<String>,
@@ -589,6 +576,13 @@ fn build_openclaw_session_meta(
         // v0.5.0:OpenClaw 无 Claude 风格 subagent 机制
         subagent_count: None,
         subagent_ids: None,
+        // v0.8.0 override 字段默认空
+        display_title: None,
+        hidden: false,
+        pinned: false,
+        archived: false,
+        notes: None,
+        tags: None,
     })
 }
 
