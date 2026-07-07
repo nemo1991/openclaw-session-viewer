@@ -304,7 +304,10 @@ pub fn list_all_joined(conn: &Connection) -> AppResult<Vec<JoinedRow>> {
     Ok(rows)
 }
 
-/// 一次 JOIN 拿全量字段。tags 在 GROUP_CONCAT 拼成 "a,b,c"。
+/// 一次 JOIN 拿全量字段。
+///
+/// v0.8.1: GROUP BY 时聚合 mtime_ms 用 MAX(避免 SQLite 在 GROUP BY 里对
+/// 非聚合列取任意行导致 ORDER BY 0 全等 → 退化为 session_id 字典序)。
 const JOIN_SELECT_BASE: &str = r#"
 SELECT
   m.session_id, m.project_key, m.workspace_guess, m.source, m.agent_id,
@@ -312,6 +315,7 @@ SELECT
   m.thinking_count, m.tool_use_count, m.top_tools_json, m.total_tokens_json,
   m.primary_model, m.has_trajectory, m.trajectory_size,
   m.subagent_count, m.subagent_ids_json,
+  MAX(m.mtime_ms) AS mtime_ms,
   o.display_title, o.hidden, o.pinned, o.archived, o.notes,
   GROUP_CONCAT(t.name, ',') AS tag_names
 FROM session_meta m
@@ -333,10 +337,14 @@ pub struct JoinedRow {
 }
 
 fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
+    // 列序见 JOIN_SELECT_BASE。注意:m.mtime_ms 现在是聚合列,索引 19。
     let top_tools_json: Option<String> = row.get(12)?;
     let total_tokens_json: Option<String> = row.get(13)?;
     let subagent_ids_json: Option<String> = row.get(18)?;
-    let tag_names_csv: Option<String> = row.get(24)?;
+    // index 19 = MAX(m.mtime_ms) (v0.8.1 修复:之前 mtime_ms 未拉,mapping 硬填 0)
+    // 注:GROUP BY m.session_id 时 m.* 在 SQLite 是任意单值,但 mtime_ms 一致,
+    // MAX 兜底多版本共存的兜底。
+    let tag_names_csv: Option<String> = row.get(25)?;
     let tag_names: Vec<String> = tag_names_csv
         .map(|s| {
             s.split(',')
@@ -354,7 +362,7 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         agent_id: row.get(4)?,
         jsonl_path: row.get(5)?,
         size_bytes: row.get::<_, i64>(6)? as u64,
-        mtime_ms: 0, // mtime_ms 不在 JOIN 字段里(我们 SELECT 没拉),list_sessions 按 last_ts 排序不影响
+        mtime_ms: row.get::<_, i64>(19)? as u64,
         first_timestamp: row.get(7)?,
         last_timestamp: row.get(8)?,
         message_count: row.get::<_, i64>(9)? as u32,
@@ -385,11 +393,11 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
 
     Ok(JoinedRow {
         meta,
-        display_title: row.get(19)?,
-        hidden: row.get::<_, i64>(20)? != 0,
-        pinned: row.get::<_, i64>(21)? != 0,
-        archived: row.get::<_, i64>(22)? != 0,
-        notes: row.get(23)?,
+        display_title: row.get(20)?,
+        hidden: row.get::<_, i64>(21)? != 0,
+        pinned: row.get::<_, i64>(22)? != 0,
+        archived: row.get::<_, i64>(23)? != 0,
+        notes: row.get(24)?,
         tag_names,
     })
 }
