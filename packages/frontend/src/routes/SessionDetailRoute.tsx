@@ -10,13 +10,28 @@
  * - data-testid 给 E2E 用
  */
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, Download, Sparkles, Search, Activity } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  Sparkles,
+  Search,
+  Activity,
+  Pin,
+  EyeOff,
+  Archive,
+  Edit2,
+  Link2,
+  StickyNote,
+  X,
+  Tag as TagIcon,
+} from "lucide-react";
 
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useSessionsStore } from "../state/sessionsStore";
+import { useOverrides } from "../state/overridesStore";
 import { useLivePids } from "../hooks/useLivePids";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
 import { useTranscriptPipeline } from "../hooks/useTranscriptPipeline";
@@ -186,6 +201,69 @@ export default function SessionDetailRoute() {
   // sessions 可能在子会话详情页打开时尚未加载,此时 click 触发一次 load 再 navigate。
   const sessions = useSessionsStore((s) => s.sessions);
   const loadSessions = useSessionsStore((s) => s.load);
+
+  // v0.8.0: override (rename/hide/pin/archive/notes/tags/links)
+  const overrides = useOverrides();
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [notesEditing, setNotesEditing] = useState(false);
+  const [notesDraft, setNotesDraft] = useState("");
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [linkTarget, setLinkTarget] = useState("");
+  const [linkNote, setLinkNote] = useState("");
+
+  // sessionId 切换时重置 notes 草稿
+  useEffect(() => {
+    if (meta) {
+      setNotesDraft(overrides.snap.notes[meta.sessionId] ?? "");
+    }
+  }, [meta?.sessionId, overrides.snap.notes]);
+
+  const currentTitle = meta
+    ? (overrides.snap.renames[meta.sessionId] ?? meta.title ?? meta.sessionId.slice(0, 8))
+    : "";
+
+  const startTitleEdit = () => {
+    setTitleDraft(currentTitle);
+    setTitleEditing(true);
+  };
+  const commitTitle = async () => {
+    setTitleEditing(false);
+    if (!meta) return;
+    const trimmed = titleDraft.trim();
+    if (!trimmed || trimmed === currentTitle) return;
+    try {
+      await overrides.rename(meta.sessionId, trimmed);
+    } catch (e) {
+      console.error("rename failed", e);
+    }
+  };
+
+  const commitNotes = async () => {
+    setNotesEditing(false);
+    if (!meta) return;
+    try {
+      await overrides.setNotes(meta.sessionId, notesDraft);
+    } catch (e) {
+      console.error("setNotes failed", e);
+    }
+  };
+
+  const addLink = async () => {
+    if (!meta || !linkTarget.trim()) return;
+    try {
+      await overrides.addLink(meta.sessionId, linkTarget.trim(), linkNote.trim() || undefined);
+      setLinkDialogOpen(false);
+      setLinkTarget("");
+      setLinkNote("");
+    } catch (e) {
+      console.error("addLink failed", e);
+    }
+  };
+
+  const sessionTags = meta ? (overrides.snap.tags[meta.sessionId] ?? []) : [];
+  const linksTo = meta ? (overrides.snap.linksTo[meta.sessionId] ?? []) : [];
+  const linksFrom = meta ? (overrides.snap.linksFrom[meta.sessionId] ?? []) : [];
   const handleBackToParent = async () => {
     if (!subCtx) return;
     // 先确保 sessions 列表有数据(若没 mount 过,load 一次)
@@ -237,7 +315,50 @@ export default function SessionDetailRoute() {
           )}
         </button>
         <div className="session-header-info">
-          <h1>{meta.title || meta.sessionId.slice(0, 8)}</h1>
+          <h1>
+            {titleEditing ? (
+              <input
+                className="title-rename-input"
+                autoFocus
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitTitle();
+                  if (e.key === "Escape") setTitleEditing(false);
+                }}
+                onBlur={() => void commitTitle()}
+                maxLength={80}
+              />
+            ) : (
+              <span onDoubleClick={startTitleEdit} title="双击重命名">
+                {currentTitle}
+              </span>
+            )}
+            {meta.archived && (
+              <span className="badge-archived" title="已归档">
+                🗄️ 已归档
+              </span>
+            )}
+            {meta.pinned && (
+              <span className="badge-pinned" title="已置顶">
+                📌
+              </span>
+            )}
+            {meta.hidden && (
+              <span className="badge-hidden" title="已隐藏">
+                🙈
+              </span>
+            )}
+          </h1>
+          {sessionTags.length > 0 && (
+            <div className="session-tags-row">
+              {sessionTags.map((t: { id: number; name: string; color: string | null }) => (
+                <span key={t.id} className="tag-chip" title={`tag: ${t.name}`}>
+                  {t.name}
+                </span>
+              ))}
+            </div>
+          )}
           <div className="session-header-meta">
             <span>{meta.workspaceGuess || meta.projectKey}</span>
             {meta.primaryModel && <span className="model-pill">{meta.primaryModel}</span>}
@@ -284,6 +405,36 @@ export default function SessionDetailRoute() {
         <div className="session-header-actions">
           <button onClick={() => showSearchBar()} title={t("search.inSession")}>
             <Search size={14} />
+          </button>
+          <button
+            onClick={() => overrides.togglePinned(meta.sessionId, !meta.pinned)}
+            className={meta.pinned ? "primary" : ""}
+            title={meta.pinned ? "取消置顶" : "置顶"}
+          >
+            <Pin size={14} />
+          </button>
+          <button
+            onClick={() => overrides.toggleHide(meta.sessionId, !meta.hidden)}
+            className={meta.hidden ? "primary" : ""}
+            title={meta.hidden ? "取消隐藏" : "隐藏"}
+          >
+            <EyeOff size={14} />
+          </button>
+          <button
+            onClick={() => overrides.setArchived(meta.sessionId, !meta.archived)}
+            className={meta.archived ? "primary" : ""}
+            title={meta.archived ? "取消归档" : "归档"}
+          >
+            <Archive size={14} />
+          </button>
+          <button onClick={startTitleEdit} title="重命名">
+            <Edit2 size={14} />
+          </button>
+          <button onClick={() => setNotesEditing((v) => !v)} title="笔记">
+            <StickyNote size={14} />
+          </button>
+          <button onClick={() => setLinkDialogOpen(true)} title="链接到其他 session">
+            <Link2 size={14} />
           </button>
           {meta.hasTrajectory && (
             <button
@@ -332,6 +483,100 @@ export default function SessionDetailRoute() {
         repeats={sessionInsights.repeats}
         idles={sessionInsights.idles}
       />
+
+      {/* v0.8.0: notes 编辑面板 + links 列表 */}
+      {(notesEditing || overrides.snap.notes[meta.sessionId]) && (
+        <div className="session-notes-panel" data-testid="session-notes-panel">
+          <div className="notes-header">
+            <StickyNote size={14} />
+            <span>笔记</span>
+            {notesEditing && (
+              <button onClick={() => void commitNotes()} className="notes-save">
+                保存
+              </button>
+            )}
+            {!notesEditing && (
+              <button
+                onClick={() => {
+                  setNotesDraft(overrides.snap.notes[meta.sessionId] ?? "");
+                  setNotesEditing(true);
+                }}
+              >
+                编辑
+              </button>
+            )}
+          </div>
+          {notesEditing ? (
+            <textarea
+              autoFocus
+              value={notesDraft}
+              onChange={(e) => setNotesDraft(e.target.value)}
+              placeholder="Markdown 笔记..."
+              rows={6}
+            />
+          ) : (
+            <pre className="notes-display">{overrides.snap.notes[meta.sessionId]}</pre>
+          )}
+        </div>
+      )}
+
+      {(linksTo.length > 0 || linksFrom.length > 0) && (
+        <div className="session-links-panel">
+          {linksTo.length > 0 && (
+            <div className="links-group">
+              <h4>链接到 →</h4>
+              {linksTo.map((l: any) => (
+                <div key={l.toSession} className="link-item">
+                  <span>{l.toSession.slice(0, 12)}…</span>
+                  {l.note && <span className="link-note">({l.note})</span>}
+                  <button
+                    onClick={() => overrides.removeLink(meta.sessionId, l.toSession)}
+                    title="删除链接"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {linksFrom.length > 0 && (
+            <div className="links-group">
+              <h4>被链接 ←</h4>
+              {linksFrom.map((l: any) => (
+                <div key={l.fromSession} className="link-item">
+                  <span>{l.fromSession.slice(0, 12)}…</span>
+                  {l.note && <span className="link-note">({l.note})</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {linkDialogOpen && (
+        <div className="link-dialog-backdrop" onClick={() => setLinkDialogOpen(false)}>
+          <div className="link-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>链接到其他 session</h3>
+            <input
+              autoFocus
+              placeholder="目标 session id"
+              value={linkTarget}
+              onChange={(e) => setLinkTarget(e.target.value)}
+            />
+            <input
+              placeholder="备注(可选)"
+              value={linkNote}
+              onChange={(e) => setLinkNote(e.target.value)}
+            />
+            <div className="link-dialog-actions">
+              <button onClick={() => setLinkDialogOpen(false)}>取消</button>
+              <button onClick={() => void addLink()} className="primary">
+                添加
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="error">
