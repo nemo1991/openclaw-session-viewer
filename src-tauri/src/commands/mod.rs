@@ -4,6 +4,7 @@ pub mod analyze;
 pub mod export;
 pub mod fs_cmd;
 pub mod live;
+pub mod overrides;
 pub mod search;
 pub mod sessions;
 pub mod settings;
