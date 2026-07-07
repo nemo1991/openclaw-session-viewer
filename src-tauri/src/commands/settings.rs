@@ -127,7 +127,10 @@ pub async fn save_settings(
     // 3. 清缓存
     state.session_meta_cache.invalidate_all().await;
 
-    // 4. 通知前端刷新会话列表
+    // 4. v0.8.0: 通知后台 sync_loop 重新扫描(因 paths 变了)
+    state.paths_change.notify_waiters();
+
+    // 5. 通知前端刷新会话列表
     let _ = app.emit("sessions-updated", ());
 
     log::info!("settings 已保存: {} 个自定义根目录", runtime_roots.len());
