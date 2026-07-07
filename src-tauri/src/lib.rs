@@ -178,6 +178,7 @@ pub fn run() {
             commands::overrides::set_pinned,
             commands::overrides::set_archived,
             commands::overrides::set_notes,
+            commands::overrides::remove_rename, // v0.8.1: 撤销 DB rename
             commands::overrides::list_overrides,
             commands::overrides::list_tags,
             commands::overrides::create_tag,
