@@ -55,6 +55,8 @@ interface OverridesState {
   togglePinned: (sid: string, pinned: boolean) => Promise<void>;
   setArchived: (sid: string, archived: boolean) => Promise<void>;
   setNotes: (sid: string, notes: string) => Promise<void>;
+  /** v0.8.1: 撤销 DB rename(只清 DB;legacy mirror 保留兼容) */
+  removeRename: (sid: string) => Promise<void>;
   createTag: (name: string, color?: string) => Promise<Tag>;
   deleteTag: (tagId: number) => Promise<void>;
   setSessionTags: (sid: string, tagIds: number[]) => Promise<void>;
@@ -122,6 +124,17 @@ export const useOverrides = create<OverridesState>((set, get) => ({
 
   setNotes: async (sid, notes) => {
     await api.apiSetNotes(sid, notes);
+    await get().refresh();
+  },
+
+  removeRename: async (sid) => {
+    await api.apiRemoveRename(sid);
+    // 也清 legacy mirror,让"自动名"按钮立刻回落到 auto 计算
+    const legacy = loadLegacyTitles();
+    if (sid in legacy) {
+      delete legacy[sid];
+      saveLegacyTitles(legacy);
+    }
     await get().refresh();
   },
 

@@ -134,6 +134,28 @@ pub async fn set_notes(
     Ok(())
 }
 
+/// v0.8.1: 撤销 display_title — 把 session_override.display_title 置 NULL,
+/// 保留 row(其它字段如 pinned/notes 仍生效)。供 GraphDetailPanel 的
+/// "自动名"按钮走,而不是只清 legacy localStorage。
+#[tauri::command]
+pub async fn remove_rename(
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+    sid: String,
+) -> AppResult<()> {
+    let now = now_ms();
+    state.db.with(|c| {
+        c.execute(
+            "INSERT INTO session_override (session_id, updated_at) VALUES (?1, ?2)
+             ON CONFLICT(session_id) DO UPDATE SET display_title = NULL, updated_at = excluded.updated_at",
+            params![sid, now],
+        )?;
+        Ok::<_, AppError>(())
+    })?;
+    let _ = app.emit("overrides-changed", ());
+    Ok(())
+}
+
 /// 通用 UPSERT helper:`INSERT ... ON CONFLICT DO UPDATE SET <set_clause>`
 fn upsert_override_field(
     c: &Connection,
@@ -142,45 +164,80 @@ fn upsert_override_field(
     value: Option<String>,
     now: i64,
 ) -> AppResult<()> {
-    // 检查 session 是否存在(FK 约束要求 parent row)
-    let exists: bool = c
-        .query_row(
-            "SELECT 1 FROM session_meta WHERE session_id = ?1",
-            params![sid],
-            |_| Ok(true),
-        )
-        .optional()
-        .map_err(AppError::from)?
-        .unwrap_or(false);
+    upsert_override_field_inner(AnyTx::Conn(c), sid, set_clause, value, now)
+}
+
+/// v0.8.1: tx 版本 — 沿用同一逻辑,但走 Transaction 的 execute(继承外层 tx)
+fn upsert_override_field_in_tx(
+    tx: &rusqlite::Transaction<'_>,
+    sid: &str,
+    set_clause: Option<&str>,
+    value: Option<String>,
+    now: i64,
+) -> AppResult<()> {
+    upsert_override_field_inner(AnyTx::Tx(tx), sid, set_clause, value, now)
+}
+
+/// Conn | Tx 区分标签 —— 用 monomorphization 避免 trait object dyn 不兼容
+enum AnyTx<'a, 'b> {
+    Conn(&'a Connection),
+    Tx(&'a rusqlite::Transaction<'b>),
+}
+
+fn upsert_override_field_inner<'a, 'b>(
+    any: AnyTx<'a, 'b>,
+    sid: &str,
+    set_clause: Option<&str>,
+    value: Option<String>,
+    now: i64,
+) -> AppResult<()> {
+    // 检查 session 是否存在
+    let exists: bool = match any {
+        AnyTx::Conn(c) => c
+            .query_row(
+                "SELECT 1 FROM session_meta WHERE session_id = ?1",
+                params![sid],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false),
+        AnyTx::Tx(tx) => tx
+            .query_row(
+                "SELECT 1 FROM session_meta WHERE session_id = ?1",
+                params![sid],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false),
+    };
+
     if !exists {
-        // session 还没同步进 DB → 仍然写 override(下次 sync 不会 cascade delete,因为没有 FK 命中)
-        // 实际上 FK 约束在 INSERT override 时就会失败。我们用 OR IGNORE + INSERT override 后
-        // 兜底再次写?这里更简单:把 session_meta 塞一条 placeholder。
-        c.execute(
-            "INSERT OR IGNORE INTO session_meta
+        // 占位 row(防止 FK 失败)
+        let placeholder_sql = "INSERT OR IGNORE INTO session_meta
                (session_id, project_key, source, jsonl_path, size_bytes, mtime_ms, line_count, synced_at)
-             VALUES (?1, '(unknown)', 'claude', '(unknown)', 0, 0, 0, ?2)",
-            params![sid, now],
-        )?;
+             VALUES (?1, '(unknown)', 'claude', '(unknown)', 0, 0, 0, ?2)";
+        match any {
+            AnyTx::Conn(c) => c.execute(placeholder_sql, params![sid, now])?,
+            AnyTx::Tx(tx) => tx.execute(placeholder_sql, params![sid, now])?,
+        };
     }
 
     // 对每个字段分支做对应 UPSERT
     match (set_clause, value) {
         (Some(clause), Some(v)) => {
+            let col = match clause {
+                "display_title = excluded.display_title" => "display_title",
+                "hidden = excluded.hidden" => "hidden",
+                "pinned = excluded.pinned" => "pinned",
+                "archived = excluded.archived" => "archived",
+                "notes = excluded.notes" => "notes",
+                _ => return Err(AppError::Other("未支持的字段".into())),
+            };
             let sql = format!(
                 "INSERT INTO session_override (session_id, {}, updated_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT(session_id) DO UPDATE SET {}, updated_at = excluded.updated_at",
-                match clause {
-                    "display_title = excluded.display_title" => "display_title",
-                    "hidden = excluded.hidden" => "hidden",
-                    "pinned = excluded.pinned" => "pinned",
-                    "archived = excluded.archived" => "archived",
-                    "notes = excluded.notes" => "notes",
-                    _ => return Err(AppError::Other("未支持的字段".into())),
-                },
-                clause
+                col, clause
             );
-            // hidden/pinned/archived 字段类型 INTEGER
             let is_int = matches!(
                 clause,
                 "hidden = excluded.hidden"
@@ -189,26 +246,35 @@ fn upsert_override_field(
             );
             if is_int {
                 let n: i64 = v.parse().unwrap_or(0);
-                c.execute(&sql, params![sid, n.to_string(), now])?;
+                match any {
+                    AnyTx::Conn(c) => c.execute(&sql, params![sid, n.to_string(), now])?,
+                    AnyTx::Tx(tx) => tx.execute(&sql, params![sid, n.to_string(), now])?,
+                };
             } else {
-                c.execute(&sql, params![sid, v, now])?;
+                match any {
+                    AnyTx::Conn(c) => c.execute(&sql, params![sid, v, now])?,
+                    AnyTx::Tx(tx) => tx.execute(&sql, params![sid, v, now])?,
+                };
             }
         }
         (Some(clause), None) => {
-            // 清空字段(如清空 notes)
             let sql = format!(
                 "INSERT INTO session_override (session_id, updated_at) VALUES (?1, ?2)
                  ON CONFLICT(session_id) DO UPDATE SET {}, updated_at = excluded.updated_at",
                 clause
             );
-            c.execute(&sql, params![sid, now])?;
+            match any {
+                AnyTx::Conn(c) => c.execute(&sql, params![sid, now])?,
+                AnyTx::Tx(tx) => tx.execute(&sql, params![sid, now])?,
+            };
         }
         _ => {
-            // 空调用 → 仅确保 row 存在
-            c.execute(
-                "INSERT OR IGNORE INTO session_override (session_id, updated_at) VALUES (?1, ?2)",
-                params![sid, now],
-            )?;
+            let sql =
+                "INSERT OR IGNORE INTO session_override (session_id, updated_at) VALUES (?1, ?2)";
+            match any {
+                AnyTx::Conn(c) => c.execute(sql, params![sid, now])?,
+                AnyTx::Tx(tx) => tx.execute(sql, params![sid, now])?,
+            };
         }
     }
     Ok(())
@@ -444,18 +510,22 @@ pub async fn set_session_tags(
 ) -> AppResult<()> {
     let now = now_ms();
     state.db.with(|c| {
+        // v0.8.1: 整个 DELETE + INSERT 序列包到一个事务里 — 之前 N 个
+        // INSERT 各 auto-commit,中间被 list_overrides 看到会闪烁成"无 tag"。
+        let tx = c.transaction()?;
         // 占位 row(防止 FK 失败)
-        upsert_override_field(c, &sid, None, None, now)?;
-        c.execute(
+        upsert_override_field_in_tx(&tx, &sid, None, None, now)?;
+        tx.execute(
             "DELETE FROM session_tag WHERE session_id = ?1",
             params![sid],
         )?;
         for tid in &tag_ids {
-            c.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO session_tag (session_id, tag_id) VALUES (?1, ?2)",
                 params![sid, tid],
             )?;
         }
+        tx.commit()?;
         Ok::<_, AppError>(())
     })?;
     let _ = app.emit("overrides-changed", ());
@@ -620,15 +690,18 @@ pub async fn import_overrides(
     }
     let mut count = 0usize;
     state.db.with(|c| {
+        // v0.8.1: 整段 import 包到一个事务里 — 之前 N 个 INSERT/UPDATE
+        // 分别 auto-commit,中途中断会留半截。
+        let tx = c.transaction()?;
         // tags 先建(name → id 映射)
         let mut tag_id_by_name: HashMap<String, i64> = HashMap::new();
         for t in &exp.tags {
-            c.execute(
+            tx.execute(
                 "INSERT OR IGNORE INTO tag (name, color) VALUES (?1, ?2)",
                 params![t.name, t.color],
             )?;
             let id: i64 =
-                c.query_row("SELECT id FROM tag WHERE name = ?1", params![t.name], |r| {
+                tx.query_row("SELECT id FROM tag WHERE name = ?1", params![t.name], |r| {
                     r.get(0)
                 })?;
             tag_id_by_name.insert(t.name.clone(), id);
@@ -636,38 +709,38 @@ pub async fn import_overrides(
 
         // renames
         for (sid, title) in &exp.renames {
-            apply_rename(c, sid, title, &mode)?;
+            apply_rename(&tx, sid, title, &mode)?;
             count += 1;
         }
         // hidden / pinned / archived
         for sid in &exp.hidden {
-            apply_bool(c, sid, "hidden", true, &mode)?;
+            apply_bool(&tx, sid, "hidden", true, &mode)?;
             count += 1;
         }
         for sid in &exp.pinned {
-            apply_bool(c, sid, "pinned", true, &mode)?;
+            apply_bool(&tx, sid, "pinned", true, &mode)?;
             count += 1;
         }
         for sid in &exp.archived {
-            apply_bool(c, sid, "archived", true, &mode)?;
+            apply_bool(&tx, sid, "archived", true, &mode)?;
             count += 1;
         }
         // notes
         for (sid, note) in &exp.notes {
-            apply_notes(c, sid, note, &mode)?;
+            apply_notes(&tx, sid, note, &mode)?;
             count += 1;
         }
         // session_tags
         for (sid, names) in &exp.session_tags {
             // 占位 override row
-            upsert_override_field(c, sid, None, None, now_ms())?;
-            c.execute(
+            upsert_override_field_in_tx(&tx, sid, None, None, now_ms())?;
+            tx.execute(
                 "DELETE FROM session_tag WHERE session_id = ?1",
                 params![sid],
             )?;
             for name in names {
                 if let Some(&tid) = tag_id_by_name.get(name) {
-                    c.execute(
+                    tx.execute(
                         "INSERT OR IGNORE INTO session_tag (session_id, tag_id) VALUES (?1, ?2)",
                         params![sid, tid],
                     )?;
@@ -677,7 +750,7 @@ pub async fn import_overrides(
         }
         // links
         for link in &exp.links {
-            c.execute(
+            tx.execute(
                 "INSERT OR REPLACE INTO session_link (from_session, to_session, note, created_at)
                  VALUES (?1, ?2, ?3, ?4)",
                 params![
@@ -689,6 +762,7 @@ pub async fn import_overrides(
             )?;
             count += 1;
         }
+        tx.commit()?;
         Ok::<_, AppError>(())
     })?;
     let _ = app.emit("overrides-changed", ());
@@ -731,15 +805,25 @@ fn apply_bool(
     sid: &str,
     field: &str,
     val: bool,
-    _mode: &ImportMode,
+    mode: &ImportMode,
 ) -> AppResult<()> {
     let now = now_ms();
     upsert_override_field(c, sid, None, None, now)?;
     let n: i64 = if val { 1 } else { 0 };
-    let sql = format!(
-        "UPDATE session_override SET {} = ?2, updated_at = ?3 WHERE session_id = ?1",
-        field
-    );
+    // v0.8.1: 此前 _mode 被无视,Keepboth 也会覆盖 hidden/pinned/archived。
+    // Keepboth 语义:"本地无显式 override 时采纳导入值"; 显式定义为本行 NULL
+    // (未在该字段上 write 过)。
+    let sql = match mode {
+        ImportMode::Keepboth => format!(
+            "UPDATE session_override SET {} = ?2, updated_at = ?3
+             WHERE session_id = ?1 AND {} IS NULL",
+            field, field
+        ),
+        ImportMode::Overwrite | ImportMode::Merge => format!(
+            "UPDATE session_override SET {} = ?2, updated_at = ?3 WHERE session_id = ?1",
+            field
+        ),
+    };
     c.execute(&sql, params![sid, n, now])?;
     Ok(())
 }

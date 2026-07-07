@@ -59,6 +59,10 @@ export const apiSetArchived = (sid: string, archived: boolean): Promise<void> =>
   invoke("set_archived", { sid, archived });
 export const apiSetNotes = (sid: string, notes: string): Promise<void> =>
   invoke("set_notes", { sid, notes });
+// v0.8.1: 撤销 display_title(DB rename)。注意:legacy titleStore 是另一个本地
+// 存储,这里只清 DB;legacy mirror 保留兼容老路径。
+export const apiRemoveRename = (sid: string): Promise<void> =>
+  invoke("remove_rename", { sid });
 export const apiListOverrides = (): Promise<OverrideSnapshot> => invoke("list_overrides");
 
 // ===== Tag commands =====

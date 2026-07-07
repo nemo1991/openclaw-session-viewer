@@ -142,6 +142,18 @@ export function GraphDetailPanel({
     }
   };
 
+  // v0.8.1: 撤销重命名 — 优先清 DB remove_rename,再 fallback 清 legacy。
+  // 之前版本只 clear legacy,导致 DB override 仍优先,按钮无效。
+  const revertToAutoTitle = () => {
+    if (sessionSid && overrides.snap.renames[sessionSid]) {
+      void overrides.removeRename(sessionSid);
+    }
+    // 无论 DB 是否写过,legacy 也要清(G1 旧路径下的 mirror 残留)
+    if (titles.hasOverride(node.id)) {
+      titles.clear(node.id);
+    }
+  };
+
   const copyToClipboard = (text: string, label: string) => {
     if (navigator.clipboard) {
       void navigator.clipboard.writeText(text).then(() => {
@@ -264,21 +276,11 @@ export function GraphDetailPanel({
               <button className="icon-btn" onClick={startEdit} title="编辑显示名">
                 重命名
               </button>
-              {titles.hasOverride(node.id) && (
+              {(titles.hasOverride(node.id) ||
+                (sessionSid && Boolean(overrides.snap.renames[sessionSid]))) && (
                 <button
                   className="icon-btn"
-                  onClick={() => {
-                    if (sessionSid && overrides.snap.renames[sessionSid]) {
-                      // v0.8.0: 撤销 DB override,fallback 用自动名
-                      // (没有专门 remove_rename 命令,用空字符串 + setNotes 模式?我们加一个 remove 命令更干净)
-                      // 简化:重新 set 一个特殊 marker 不可行;这里直接清 localStorage legacy,
-                      // DB override 保持但下面会优先 legacy → 不行
-                      // 退而求其次:clear legacy + reload titleStore 让 snap 优先级保持
-                      titles.clear(node.id);
-                    } else {
-                      titles.clear(node.id);
-                    }
-                  }}
+                  onClick={revertToAutoTitle}
                   title="撤销自定义,回到自动命名"
                 >
                   自动名
