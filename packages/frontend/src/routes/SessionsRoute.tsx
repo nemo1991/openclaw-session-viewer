@@ -1,11 +1,23 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Settings, Search, RefreshCw, Filter, Bot, MessageSquare, Network } from "lucide-react";
+import {
+  Settings,
+  Search,
+  RefreshCw,
+  Filter,
+  Bot,
+  MessageSquare,
+  Network,
+  Pin,
+  EyeOff,
+  Archive,
+} from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 
 import { useSessionsStore } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
+import { useOverrides } from "../state/overridesStore";
 import { useKey } from "../lib/keymap";
 import { formatBytes, formatTime } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
@@ -14,15 +26,10 @@ import type { SessionMeta } from "@ocsv/shared";
 import "./SessionsRoute.css";
 
 interface Group {
-  /** 二级分组 key(workspace 或 agentId) */
   key: string;
-  /** 顶层标题:对 OpenClaw 是 agent,带 label;对 Claude 是 workspace 路径 */
   title: string;
-  /** 副标题(channel / target / workspaceGuess) */
   subtitle?: string;
-  /** 顶层 icon:Bot (agent) | MessageSquare (workspace) */
   kind: "agent" | "workspace";
-  /** 该组下的 session 列表 */
   sessions: SessionMeta[];
 }
 
@@ -42,23 +49,25 @@ export default function SessionsRoute() {
     availableAgentIds,
   } = useSessionsStore();
   const search = useSearchStore();
+  const overrides = useOverrides();
+  const [showHidden, setShowHidden] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [editingSid, setEditingSid] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // v0.2.5: 监听 sessions-updated 事件(custom_roots 变更后后端热重载会发)
+  // v0.2.5: 监听 sessions-updated 事件
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     listen("sessions-updated", () => {
       void refresh();
     }).then((u) => {
-      if (cancelled) {
-        u();
-      } else {
-        unlisten = u;
-      }
+      if (cancelled) u();
+      else unlisten = u;
     });
     return () => {
       cancelled = true;
@@ -76,14 +85,32 @@ export default function SessionsRoute() {
   });
 
   const filtered = filteredSessions();
-  const agents = availableAgentIds();
 
-  // 二级分组:OpenClaw 按 agentId(顶层)→ workspaceGuess(二级,可空);Claude 按 workspaceGuess(顶层)
+  // 应用 override 过滤:hidden 默认隐藏(除非勾 showHidden),archived 默认隐藏
+  const visible = useMemo(() => {
+    return filtered.filter((s) => {
+      if (!showHidden && overrides.snap.hidden[s.sessionId]) return false;
+      if (!showArchived && overrides.snap.archived[s.sessionId]) return false;
+      return true;
+    });
+  }, [filtered, showHidden, showArchived, overrides.snap.hidden, overrides.snap.archived]);
+
+  // Pinned 顶部独立分组
+  const pinned = useMemo(
+    () => visible.filter((s) => overrides.snap.pinned[s.sessionId]),
+    [visible, overrides.snap.pinned]
+  );
+  const nonPinned = useMemo(
+    () => visible.filter((s) => !overrides.snap.pinned[s.sessionId]),
+    [visible, overrides.snap.pinned]
+  );
+
+  // 二级分组:OpenClaw 按 agentId → workspaceGuess;Claude 按 workspaceGuess
   const grouped = useMemo<Group[]>(() => {
     const byAgent = new Map<string, Group>();
     const byWorkspace = new Map<string, Group>();
 
-    for (const s of filtered) {
+    for (const s of nonPinned) {
       if (s.source === "openclaw") {
         const agentId = s.agentId ?? "(未知 agent)";
         let g = byAgent.get(agentId);
@@ -115,7 +142,6 @@ export default function SessionsRoute() {
       }
     }
 
-    // 按该组最近 mtime 倒序
     const sortByLatest = (a: Group, b: Group) => {
       const aLatest = Math.max(...a.sessions.map((s) => s.mtimeMs));
       const bLatest = Math.max(...b.sessions.map((s) => s.mtimeMs));
@@ -124,7 +150,30 @@ export default function SessionsRoute() {
     return [...Array.from(byAgent.values()), ...Array.from(byWorkspace.values())].sort(
       sortByLatest
     );
-  }, [filtered]);
+  }, [nonPinned]);
+
+  const agents = availableAgentIds();
+
+  // title 显示优先级:display_title > title > sessionId.slice(0,8)
+  const displayTitleOf = (s: SessionMeta) =>
+    overrides.snap.renames[s.sessionId] ?? s.title ?? s.sessionId.slice(0, 8);
+
+  const startRename = (s: SessionMeta) => {
+    setEditingSid(s.sessionId);
+    setDraftTitle(displayTitleOf(s));
+  };
+
+  const commitRename = async (s: SessionMeta) => {
+    if (!editingSid) return;
+    const trimmed = draftTitle.trim();
+    setEditingSid(null);
+    if (!trimmed || trimmed === displayTitleOf(s)) return;
+    try {
+      await overrides.rename(s.sessionId, trimmed);
+    } catch (e) {
+      console.error("rename failed", e);
+    }
+  };
 
   return (
     <div className="sessions-page">
@@ -199,7 +248,6 @@ export default function SessionsRoute() {
               {t("sessions.source.openclaw")}
             </label>
 
-            {/* v0.2.4: 按 agent 过滤 */}
             {agents.length > 1 && (
               <>
                 <h4 style={{ marginTop: 16 }}>{t("sessions.filter.agent")}</h4>
@@ -226,6 +274,24 @@ export default function SessionsRoute() {
               </>
             )}
 
+            <h4 style={{ marginTop: 16 }}>显示</h4>
+            <label>
+              <input
+                type="checkbox"
+                checked={showHidden}
+                onChange={(e) => setShowHidden(e.target.checked)}
+              />
+              显示隐藏项
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+              />
+              显示归档
+            </label>
+
             <input
               type="text"
               className="search-box"
@@ -243,15 +309,45 @@ export default function SessionsRoute() {
               {t("app.error")}: {error}
             </div>
           )}
-          {!loading && filtered.length === 0 && (
+          {!loading && visible.length === 0 && (
             <div className="empty">
               {sessions.length === 0 ? t("sessions.empty") : t("sessions.noMatch")}
             </div>
           )}
 
           <div className="sessions-count">
-            {t("sessions.totalCount", { count: filtered.length })}
+            共 {visible.length} 个
+            {(overrides.snap.hidden &&
+              Object.keys(overrides.snap.hidden).length > 0 &&
+              !showHidden) ||
+            (overrides.snap.archived &&
+              Object.keys(overrides.snap.archived).length > 0 &&
+              !showArchived)
+              ? " (已过滤)"
+              : ""}
           </div>
+
+          {pinned.length > 0 && (
+            <section className="pinned-section" data-testid="pinned-section">
+              <h3 className="pinned-section-title">
+                <Pin size={12} /> 置顶 ({pinned.length})
+              </h3>
+              {pinned.map((s) => (
+                <SessionCard
+                  key={`${s.source}-${s.sessionId}`}
+                  s={s}
+                  navigate={navigate}
+                  overrides={overrides}
+                  fmtOpts={fmtOpts}
+                  editingSid={editingSid}
+                  draftTitle={draftTitle}
+                  setDraftTitle={setDraftTitle}
+                  startRename={startRename}
+                  commitRename={commitRename}
+                />
+              ))}
+            </section>
+          )}
 
           {grouped.map((group) => (
             <section key={group.key} className={`workspace-group group-${group.kind}`}>
@@ -264,88 +360,18 @@ export default function SessionsRoute() {
                 </span>
               </h2>
               {group.sessions.map((s) => (
-                <article
+                <SessionCard
                   key={`${s.source}-${s.sessionId}`}
-                  className="session-card"
-                  onClick={() =>
-                    navigate(`/session/${encodeURIComponent(s.sessionId)}`, {
-                      state: { session: s },
-                    })
-                  }
-                >
-                  <div className="session-card-title">
-                    {s.title || s.sessionId.slice(0, 8)}
-                    {s.livePid && (
-                      <span className="live-badge" title="运行中">
-                        ● {t("sessions.liveBadge")}
-                      </span>
-                    )}
-                    {s.subagentDir && s.subagentCount && s.subagentCount > 0 && (
-                      <span
-                        className="subagent-badge"
-                        title={`包含 ${s.subagentCount} 个子代理`}
-                        data-testid="subagent-count-badge"
-                        data-count={s.subagentCount}
-                      >
-                        ⎇ {s.subagentCount}
-                      </span>
-                    )}
-                    {s.subagentDir && (!s.subagentCount || s.subagentCount === 0) && (
-                      // Fallback:subagentDir 存在但 count 缺失(老 backend / 旧 meta)
-                      <span className="subagent-badge" title="包含子代理">
-                        ⎇
-                      </span>
-                    )}
-                    <span className={`source-badge source-${s.source}`}>
-                      {s.source === "claude" ? "Claude" : "OpenClaw"}
-                    </span>
-                  </div>
-                  <div className="session-card-meta">
-                    <span title={s.lastMessageAt ?? s.lastTimestamp ?? ""}>
-                      {formatTime(s.lastMessageAt ?? s.lastTimestamp, fmtOpts)}
-                    </span>
-                    <span>·</span>
-                    <span>{formatBytes(s.sizeBytes)}</span>
-                    <span>·</span>
-                    <span>{t("sessions.messages", { count: s.messageCount })}</span>
-                    {s.primaryModel && (
-                      <>
-                        <span>·</span>
-                        <span className="model-badge">{s.primaryModel}</span>
-                      </>
-                    )}
-                    {s.agentChannel && (
-                      <>
-                        <span>·</span>
-                        <span className="agent-channel-badge">{s.agentChannel}</span>
-                      </>
-                    )}
-                  </div>
-                  {s.firstPrompt && (
-                    <div className="session-preview" title={s.firstPrompt}>
-                      {s.firstPrompt}
-                    </div>
-                  )}
-                  {(s.thinkingCount || s.toolUseCount || (s.topTools && s.topTools.length > 0)) && (
-                    <div className="session-stats">
-                      {s.thinkingCount && s.thinkingCount > 0 && (
-                        <span className="stat-chip stat-thinking" title="思考块">
-                          🧠 {s.thinkingCount}
-                        </span>
-                      )}
-                      {s.toolUseCount && s.toolUseCount > 0 && (
-                        <span className="stat-chip stat-tools" title="工具调用">
-                          🔧 {s.toolUseCount}
-                        </span>
-                      )}
-                      {s.topTools?.map((t) => (
-                        <span key={t} className="tool-chip" title={t}>
-                          {t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </article>
+                  s={s}
+                  navigate={navigate}
+                  overrides={overrides}
+                  fmtOpts={fmtOpts}
+                  editingSid={editingSid}
+                  draftTitle={draftTitle}
+                  setDraftTitle={setDraftTitle}
+                  startRename={startRename}
+                  commitRename={commitRename}
+                />
               ))}
             </section>
           ))}
@@ -355,4 +381,180 @@ export default function SessionsRoute() {
       {search.open && <SearchPalette />}
     </div>
   );
+}
+
+function SessionCard({
+  s,
+  navigate,
+  overrides,
+  fmtOpts,
+  editingSid,
+  draftTitle,
+  setDraftTitle,
+  startRename,
+  commitRename,
+}: {
+  s: SessionMeta;
+  navigate: ReturnType<typeof useNavigate>;
+  overrides: ReturnType<typeof useOverrides.getState>;
+  fmtOpts: ReturnType<typeof useFormatOpts>;
+  editingSid: string | null;
+  draftTitle: string;
+  setDraftTitle: (v: string) => void;
+  startRename: (s: SessionMeta) => void;
+  commitRename: (s: SessionMeta) => Promise<void>;
+}) {
+  const displayTitle = overrides.snap.renames[s.sessionId] ?? s.title ?? s.sessionId.slice(0, 8);
+  const isEditing = editingSid === s.sessionId;
+  const isPinned = overrides.snap.pinned[s.sessionId];
+  const isHidden = overrides.snap.hidden[s.sessionId];
+  const isArchived = overrides.snap.archived[s.sessionId];
+  const sessionTags = overrides.snap.tags[s.sessionId] ?? [];
+
+  return (
+    <article
+      className={`session-card${isHidden ? " is-hidden" : ""}${isPinned ? " is-pinned" : ""}${
+        isArchived ? " is-archived" : ""
+      }`}
+      onClick={() => {
+        if (!isEditing) {
+          navigate(`/session/${encodeURIComponent(s.sessionId)}`, { state: { session: s } });
+        }
+      }}
+    >
+      {isArchived && (
+        <div className="archived-banner">
+          <Archive size={12} /> 已归档
+        </div>
+      )}
+      <div className="session-card-title">
+        {isEditing ? (
+          <input
+            className="title-rename-input"
+            autoFocus
+            value={draftTitle}
+            onChange={(e) => setDraftTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void commitRename(s);
+              if (e.key === "Escape") setDraftTitle(displayTitle);
+            }}
+            onBlur={() => void commitRename(s)}
+            maxLength={80}
+            onClick={(e) => e.stopPropagation()}
+          />
+        ) : (
+          <span
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              startRename(s);
+            }}
+            title="双击重命名"
+          >
+            {displayTitle}
+          </span>
+        )}
+        {s.livePid && (
+          <span className="live-badge" title="运行中">
+            ● {t_live()}
+          </span>
+        )}
+        {s.subagentDir && s.subagentCount && s.subagentCount > 0 && (
+          <span className="subagent-badge" title={`包含 ${s.subagentCount} 个子代理`}>
+            ⎇ {s.subagentCount}
+          </span>
+        )}
+        <span className={`source-badge source-${s.source}`}>
+          {s.source === "claude" ? "Claude" : "OpenClaw"}
+        </span>
+        <span className="override-badges">
+          {isPinned && <span className="badge-pinned">📌</span>}
+          {isHidden && <span className="badge-hidden">隐藏</span>}
+        </span>
+      </div>
+      <div className="session-card-meta">
+        <span title={s.lastMessageAt ?? s.lastTimestamp ?? ""}>
+          {formatTime(s.lastMessageAt ?? s.lastTimestamp, fmtOpts)}
+        </span>
+        <span>·</span>
+        <span>{formatBytes(s.sizeBytes)}</span>
+        <span>·</span>
+        <span>{s.messageCount} 条</span>
+        {s.primaryModel && (
+          <>
+            <span>·</span>
+            <span className="model-badge">{s.primaryModel}</span>
+          </>
+        )}
+        {s.agentChannel && (
+          <>
+            <span>·</span>
+            <span className="agent-channel-badge">{s.agentChannel}</span>
+          </>
+        )}
+      </div>
+      {s.firstPrompt && (
+        <div className="session-preview" title={s.firstPrompt}>
+          {s.firstPrompt}
+        </div>
+      )}
+      {sessionTags.length > 0 && (
+        <div className="session-tags-row">
+          {sessionTags.map((t: { id: number; name: string; color: string | null }) => (
+            <span key={t.id} className="tag-chip" title={`tag: ${t.name}`}>
+              {t.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {(s.thinkingCount || s.toolUseCount || (s.topTools && s.topTools.length > 0)) && (
+        <div className="session-stats">
+          {s.thinkingCount && s.thinkingCount > 0 && (
+            <span className="stat-chip stat-thinking" title="思考块">
+              🧠 {s.thinkingCount}
+            </span>
+          )}
+          {s.toolUseCount && s.toolUseCount > 0 && (
+            <span className="stat-chip stat-tools" title="工具调用">
+              🔧 {s.toolUseCount}
+            </span>
+          )}
+          {s.topTools?.map((t) => (
+            <span key={t} className="tool-chip" title={t}>
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="session-card-actions" onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={() => overrides.togglePinned(s.sessionId, !isPinned)}
+          className={isPinned ? "is-active" : ""}
+          title={isPinned ? "取消置顶" : "置顶"}
+        >
+          <Pin size={11} />
+        </button>
+        <button
+          onClick={() => overrides.toggleHide(s.sessionId, !isHidden)}
+          className={isHidden ? "is-active" : ""}
+          title={isHidden ? "取消隐藏" : "隐藏"}
+        >
+          <EyeOff size={11} />
+        </button>
+        <button
+          onClick={() => overrides.setArchived(s.sessionId, !isArchived)}
+          className={isArchived ? "is-active" : ""}
+          title={isArchived ? "取消归档" : "归档"}
+        >
+          <Archive size={11} />
+        </button>
+        <button onClick={() => startRename(s)} title="重命名">
+          ✎
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function t_live(): string {
+  return "运行中";
 }
