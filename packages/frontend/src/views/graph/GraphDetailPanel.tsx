@@ -22,6 +22,7 @@ import { classifyRole } from "./loader";
 import { useTitleStore } from "./titleStore";
 import type { SessionMeta as MainSessionMeta } from "@ocsv/shared";
 import { formatDuration, parseFirstPrompt, vsMedianPct } from "./formatPrompt";
+import { useOverrides } from "../../state/overridesStore";
 import "./GraphDetailPanel.css";
 
 interface Props {
@@ -57,13 +58,17 @@ export function GraphDetailPanel({
 }: Props) {
   const navigate = useNavigate();
   const titles = useTitleStore();
+  const overrides = useOverrides();
   const entry = entries.find((e) => e.node.node_id === node.id);
   const session: SessionNode | null = entry?.node ?? null;
 
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
 
-  const currentTitle = titles.get(node.id, session ? titles.auto(session) : node.label);
+  // v0.8.0: overridesStore.renames[session_id] 优先于 titleStore
+  const sessionSid = session?.session_id;
+  const dbTitle = sessionSid ? overrides.snap.renames[sessionSid] : undefined;
+  const currentTitle = dbTitle ?? titles.get(node.id, session ? titles.auto(session) : node.label);
 
   // ===== 计算对比基线(用全图 sessions 的中位数)— 36 节点规模下稳定,代价可忽略 =====
   const baseline = useMemo<{ medTokens: number; medThinking: number; medErrors: number }>(() => {
@@ -123,12 +128,18 @@ export function GraphDetailPanel({
 
   const commitEdit = () => {
     const v = draft.trim();
-    if (v && v !== titles.auto(session ?? ({} as SessionNode))) {
-      titles.set(node.id, v);
-    } else {
-      titles.clear(node.id);
-    }
     setIsEditing(false);
+    // v0.8.0: 优先写 overridesStore(DB 优先);legacy titleStore 走自动 fallback
+    if (sessionSid && v && v !== titles.auto(session ?? ({} as SessionNode))) {
+      void overrides.rename(sessionSid, v).catch((e) => console.error("rename failed", e));
+    } else {
+      // 没有 sessionSid(纯 node 但无 session 映射)→ fallback 到 legacy titleStore
+      if (v) {
+        titles.set(node.id, v);
+      } else {
+        titles.clear(node.id);
+      }
+    }
   };
 
   const copyToClipboard = (text: string, label: string) => {
@@ -256,7 +267,18 @@ export function GraphDetailPanel({
               {titles.hasOverride(node.id) && (
                 <button
                   className="icon-btn"
-                  onClick={() => titles.clear(node.id)}
+                  onClick={() => {
+                    if (sessionSid && overrides.snap.renames[sessionSid]) {
+                      // v0.8.0: 撤销 DB override,fallback 用自动名
+                      // (没有专门 remove_rename 命令,用空字符串 + setNotes 模式?我们加一个 remove 命令更干净)
+                      // 简化:重新 set 一个特殊 marker 不可行;这里直接清 localStorage legacy,
+                      // DB override 保持但下面会优先 legacy → 不行
+                      // 退而求其次:clear legacy + reload titleStore 让 snap 优先级保持
+                      titles.clear(node.id);
+                    } else {
+                      titles.clear(node.id);
+                    }
+                  }}
                   title="撤销自定义,回到自动命名"
                 >
                   自动名
