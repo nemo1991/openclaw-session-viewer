@@ -4,6 +4,7 @@
 //! - `error`      — 统一错误类型,可序列化到前端
 //! - `fs`         — 路径解析、目录遍历
 //! - `cache`      — mtime 缓存
+//! - `db`         — v0.8.0 SQLite 关系型数据库(observer.db)
 //! - `parser`     — JSONL 流式解析 + 记录归一化
 //! - `commands`   — Tauri 命令
 //! - `llm`        — Anthropic API 客户端
@@ -11,9 +12,11 @@
 use std::sync::Arc;
 
 use tauri::Manager;
+use tokio::sync::Notify;
 
 mod cache;
 mod commands;
+mod db;
 mod error;
 mod fs;
 mod llm;
@@ -43,16 +46,32 @@ pub struct AppState {
     pub session_meta_cache: cache::mtime::MetaCache,
     /// 全局 AbortController: 分析中止信号
     pub analyze_aborts: RwLock<HashMap<String, Arc<parking_lot::Mutex<bool>>>>,
+    // --- v0.8.0: SQLite 关系型数据库 ---
+    /// observer.db 连接池
+    pub db: db::DbPool,
+    /// settings 变更通知(save_settings 末尾 notify_one)→ sync_loop 重新跑
+    pub paths_change: Arc<Notify>,
+    /// 手动刷新通知(前端 refresh_sessions 命令调用)→ sync_loop 重新跑
+    pub refresh_requested: Arc<Notify>,
 }
 
 impl AppState {
-    pub fn new(app_home: PathBuf, paths: AppPaths, settings: AppSettings) -> AppResult<Self> {
+    pub fn new(
+        app_home: PathBuf,
+        app_config_dir: PathBuf,
+        paths: AppPaths,
+        settings: AppSettings,
+    ) -> AppResult<Self> {
+        let db = db::open(&app_config_dir)?;
         Ok(Self {
             app_home,
             paths: RwLock::new(paths),
             settings: RwLock::new(settings),
             session_meta_cache: cache::mtime::MetaCache::new(),
             analyze_aborts: RwLock::new(HashMap::new()),
+            db,
+            paths_change: Arc::new(Notify::new()),
+            refresh_requested: Arc::new(Notify::new()),
         })
     }
 }
@@ -90,6 +109,10 @@ pub fn run() {
         .setup(|app| {
             // 解析路径
             let home = dirs::home_dir().ok_or(error::AppError::NoHomeDir)?;
+            let app_config_dir = app
+                .path()
+                .app_config_dir()
+                .map_err(|e| AppError::Other(e.to_string()))?;
 
             // 启动时读 settings(custom_roots 需要)
             // 用与 get_settings 一样的逻辑,但不通过 Tauri command(避免循环依赖)
@@ -98,7 +121,7 @@ pub fn run() {
             let paths = AppPaths::new(home.clone(), &runtime_roots);
 
             log::info!(
-                "应用启动: claude_home={}, openclaw_home={:?}, custom_roots={}",
+                "应用启动: claude_home={}, openclaw_home={:?}, custom_roots={}, db={:?}",
                 paths
                     .default_root
                     .claude
@@ -110,11 +133,21 @@ pub fn run() {
                     .openclaw
                     .as_ref()
                     .map(|o| o.home.display().to_string()),
-                paths.custom_roots.len()
+                paths.custom_roots.len(),
+                app_config_dir.join("observer.db")
             );
 
-            let state = AppState::new(home, paths, settings)?;
-            app.manage(Arc::new(state));
+            let state = AppState::new(home, app_config_dir, paths, settings)?;
+            let state_arc = Arc::new(state);
+
+            // v0.8.0: spawn 后台同步循环 — 永不返回
+            let sync_state = Arc::clone(&state_arc);
+            let sync_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                db::sync::run_sync_loop(sync_state, sync_app).await;
+            });
+
+            app.manage(state_arc);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -139,6 +172,26 @@ pub fn run() {
             commands::settings::save_settings,
             commands::fs_cmd::pick_export_dir,
             commands::fs_cmd::reveal_in_finder,
+            // v0.8.0
+            commands::overrides::rename_session,
+            commands::overrides::hide_session,
+            commands::overrides::set_pinned,
+            commands::overrides::set_archived,
+            commands::overrides::set_notes,
+            commands::overrides::list_overrides,
+            commands::overrides::list_tags,
+            commands::overrides::create_tag,
+            commands::overrides::delete_tag,
+            commands::overrides::set_session_tags,
+            commands::overrides::add_session_link,
+            commands::overrides::remove_session_link,
+            commands::overrides::list_session_links,
+            commands::overrides::get_sync_status,
+            commands::overrides::rebuild_db,
+            commands::overrides::export_overrides,
+            commands::overrides::import_overrides,
+            commands::overrides::record_search,
+            commands::overrides::list_search_history,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 启动失败");

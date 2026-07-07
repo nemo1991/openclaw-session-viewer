@@ -76,6 +76,25 @@ pub struct SessionMeta {
     /// 子 agent id 列表(去重,与 list_subagents 返回顺序一致)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subagent_ids: Option<Vec<String>>,
+    // --- v0.8.0 DB 同步后填充 + 用户 override ---
+    /// 用户重写的显示名(覆盖 `title` 优先级 1)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_title: Option<String>,
+    /// 用户标记为隐藏(列表过滤时排除)
+    #[serde(default)]
+    pub hidden: bool,
+    /// 用户标记为置顶(列表顶部独立分组)
+    #[serde(default)]
+    pub pinned: bool,
+    /// 用户标记为归档(默认隐藏,详情页 banner 提示)
+    #[serde(default)]
+    pub archived: bool,
+    /// 用户自由笔记(Markdown)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// tag 名列表(已 join session_tag)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
