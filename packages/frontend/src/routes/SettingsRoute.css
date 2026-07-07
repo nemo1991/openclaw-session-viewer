@@ -205,3 +205,86 @@
 .data-source-row button.danger:hover {
   background: rgba(255, 80, 80, 0.1);
 }
+
+/* v0.8.0: 数据库管理面板 */
+
+.db-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.db-panel .db-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  background: var(--color-bg-elevated);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.db-panel .db-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.db-panel .db-stats .db-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.db-panel .db-stats .db-value {
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: var(--font-mono);
+}
+
+.db-panel .db-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.db-panel .db-actions button {
+  font-size: 12px;
+  padding: 4px 10px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.db-panel .db-actions button:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-primary);
+}
+
+.db-panel .db-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.db-panel .import-group {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.db-panel .import-group button {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.db-panel .db-hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 4px 0;
+}
