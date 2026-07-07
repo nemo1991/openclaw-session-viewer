@@ -61,6 +61,19 @@ export interface SessionMeta {
   subagentCount?: number;
   /** 子 agent id 列表(已排序去重) */
   subagentIds?: string[];
+  // --- v0.8.0 用户 override + 关系型 DB 同步结果 ---
+  /** 用户重写的显示名(覆盖 title 优先级 1) */
+  displayTitle?: string;
+  /** 用户标记为隐藏 */
+  hidden?: boolean;
+  /** 用户标记为置顶 */
+  pinned?: boolean;
+  /** 用户标记为归档 */
+  archived?: boolean;
+  /** 用户自由笔记(Markdown) */
+  notes?: string;
+  /** tag 名列表 */
+  tags?: string[];
 }
 
 /** 归一化后的内容块 */
