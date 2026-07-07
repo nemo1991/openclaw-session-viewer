@@ -70,6 +70,9 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
     let mut total: u32 = 0;
     let mut done: u32 = 0;
     let mut failed: u32 = 0;
+    // v0.8.1: 收集本轮 walk 出的真实 jsonl_path,尾部 orphan sweep 用。
+    // 保留 set 是为了不让孤儿清扫把真实文件误判为孤儿。
+    let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // 1) Claude projects_dir
     for projects_dir in paths_snapshot.all_claude_projects_dirs() {
@@ -81,6 +84,7 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
             }
         };
         for path in jsonls {
+            seen_paths.insert(path.to_string_lossy().to_string());
             total += 1;
             match sync_one_file(state, &path, "claude", None, None, None, None).await {
                 Ok(_) => done += 1,
@@ -118,6 +122,7 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                 Err(_) => continue,
             };
             for path in jsonls {
+                seen_paths.insert(path.to_string_lossy().to_string());
                 total += 1;
                 match sync_one_file(
                     state,
@@ -139,6 +144,43 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                 emit_progress(app, total, done, failed, Some(&path));
             }
         }
+    }
+
+    // v0.8.1: orphan sweep — 删除已被磁盘删除的 session_meta 行。
+    // 安全条件:该行不在 seen_paths 内,且 session_id 没有任何 override
+    // (placeholder rows: 用户对未同步的 session 做 rename 时,INSERT 一行
+    // session_meta with jsonl_path='(unknown)';这种孤儿是用户意图,不能清)。
+    // 用 jsonl_path='(unknown)' OR jsonl_path NOT IN (seen_paths) 都会误删
+    // placeholder — 改用 NOT EXISTS 子查询排除有 override 的行。
+    let orphan_deleted: usize = state
+        .db
+        .with(|c| {
+            // 把 seen_paths 转成 N 个 `?` 占位 + 同步的 Vec<String> 用于绑参
+            let placeholders: Vec<&str> = seen_paths.iter().map(|_| "?").collect();
+            if placeholders.is_empty() {
+                return Ok::<usize, AppError>(0);
+            }
+            let in_clause = placeholders.join(",");
+            let sql = format!(
+                "DELETE FROM session_meta
+                 WHERE jsonl_path NOT IN ({in_clause})
+                   AND session_id NOT IN (SELECT session_id FROM session_override)"
+            );
+            // 按位置绑参
+            let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            for p in &seen_paths {
+                params_dyn.push(Box::new(p.clone()));
+            }
+            let refs: Vec<&dyn rusqlite::ToSql> = params_dyn
+                .iter()
+                .map(|b| &**b as &dyn rusqlite::ToSql)
+                .collect();
+            let n = c.execute(&sql, refs.as_slice())?;
+            Ok::<_, AppError>(n)
+        })
+        .unwrap_or(0);
+    if orphan_deleted > 0 {
+        log::info!("sync orphan sweep: 删除 {orphan_deleted} 条已被磁盘移除的 session_meta 行");
     }
 
     let now = SystemTime::now()
@@ -341,13 +383,18 @@ fn read_agent_info_from_index(
 /// 重建 DB(删除数据行,重新 sync)
 pub async fn rebuild_db(state: &AppState, app: &AppHandle) -> AppResult<()> {
     log::warn!("rebuild_db: 清空 session_meta / override / tag / link / history");
+    // v0.8.1: 整段包到一个事务里 — 之前 6 条 DELETE 分别 auto-commit,
+    // 中途崩溃会留半截(例如 session_meta 已删但 session_override 还在),
+    // 下次启动 integrity_check 不报(没损坏,只是逻辑错)。
     state.db.with(|c| {
-        c.execute("DELETE FROM session_tag", [])?;
-        c.execute("DELETE FROM tag", [])?;
-        c.execute("DELETE FROM session_link", [])?;
-        c.execute("DELETE FROM search_history", [])?;
-        c.execute("DELETE FROM session_override", [])?;
-        c.execute("DELETE FROM session_meta", [])?;
+        let tx = c.transaction()?;
+        tx.execute("DELETE FROM session_tag", [])?;
+        tx.execute("DELETE FROM tag", [])?;
+        tx.execute("DELETE FROM session_link", [])?;
+        tx.execute("DELETE FROM search_history", [])?;
+        tx.execute("DELETE FROM session_override", [])?;
+        tx.execute("DELETE FROM session_meta", [])?;
+        tx.commit()?;
         Ok::<_, AppError>(())
     })?;
     sync_once(state, app).await;
