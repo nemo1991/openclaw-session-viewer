@@ -84,3 +84,10 @@ impl From<tauri::Error> for AppError {
         AppError::Other(e.to_string())
     }
 }
+
+/// v0.8.0: SQLite 错误统一包成 Other(保留 message)
+impl From<rusqlite::Error> for AppError {
+    fn from(e: rusqlite::Error) -> Self {
+        AppError::Other(format!("SQLite: {e}"))
+    }
+}
