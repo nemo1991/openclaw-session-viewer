@@ -292,3 +292,143 @@
 .error {
   color: var(--color-error);
 }
+
+/* v0.8.0: 用户视角(override) 相关样式 */
+
+.session-card.is-hidden {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.session-card.is-pinned {
+  border-left: 3px solid var(--color-accent);
+}
+
+.session-card.is-archived {
+  background: color-mix(in srgb, var(--color-bg-elevated) 60%, transparent);
+  border-style: dotted;
+}
+
+.session-card-title .title-rename-input {
+  flex: 1;
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  outline: none;
+}
+
+.session-card-title .override-badges {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.session-card-title .badge-pinned,
+.session-card-title .badge-archived,
+.session-card-title .badge-hidden {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.session-card-title .badge-pinned {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  color: var(--color-accent);
+}
+
+.session-card-title .badge-archived {
+  background: color-mix(in srgb, var(--color-text-muted) 25%, transparent);
+  color: var(--color-text-muted);
+}
+
+.session-card-title .badge-hidden {
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 25%, transparent);
+  color: var(--color-warning, #f59e0b);
+}
+
+.session-card-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 4px;
+  margin-left: auto;
+}
+
+.session-card-actions button {
+  font-size: 11px;
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.session-card-actions button:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.session-card-actions button.is-active {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.session-tags-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.tag-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+
+.pinned-section {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+.pinned-section .pinned-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-accent);
+  margin: 0 0 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.archived-banner {
+  background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
+  border: 1px solid var(--color-border);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+}
+
+.filter-section .filter-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  margin: 4px 0;
+  color: var(--color-text);
+}
