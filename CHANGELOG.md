@@ -2,6 +2,79 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.0] - 2026-07-07
+
+v0.8.0 引入**嵌入式 SQLite 数据库**(observer.db),把会话元数据从文件系统提升为一等公民数据。后台增量同步 + 用户 override 维度(rename/hide/pin/archive/notes/tags/links)+ 搜索历史 + Export/Import overrides,贯穿每个涉及展示的页面。
+
+分支:`feature/session-db`(从 main 切);16 个 commit 全部围绕 v0.8.0 的 db 后端、前端 store、UI 改造。
+
+### 新增
+
+#### 后端:db 模块 + 16 个新 Tauri commands
+
+- `rusqlite 0.31` (bundled) 嵌入式 SQLite,DB 文件位于 `app.path().app_config_dir() / "observer.db"`,跨平台统一(macOS `~/Library/Application Support/<bundleId>`、Linux `~/.config/<bundleId>`、Windows `%APPDATA%/<bundleId>`)
+- 新模块 `src-tauri/src/db/{mod,schema,sync}.rs`:
+  - `mod.rs`:`DbPool`(parking_lot Mutex 包裹 Connection)+ `open()` 含 `PRAGMA integrity_check` 损坏自愈(失败 rename 为 `observer.db.corrupt-<ts>` 后重建)
+  - `schema.rs`:一次性全表 schema(session_meta / session_override / tag / session_tag / session_link / search_history / sync_state)+ 4 个索引 + JOIN 查询 + upsert helpers
+  - `sync.rs`:`run_sync_loop`(tokio::spawn),应用启动触发一次全量,阻塞等 `paths_change` (settings 变更) / `refresh_requested` (手动刷新),单文件按 (size, mtime, line_count) 三元组判断增量,单文件失败不影响整体进度,emit `sync-progress` 事件
+- `AppState` 新增字段:`db: DbPool` / `paths_change: Arc<Notify>` / `refresh_requested: Arc<Notify>`
+- 16 个新 Tauri commands(`src-tauri/src/commands/overrides.rs`):
+  - `rename_session` / `hide_session` / `set_pinned` / `set_archived` / `set_notes`
+  - `list_tags` / `create_tag` / `delete_tag` / `set_session_tags`
+  - `add_session_link` / `remove_session_link` / `list_session_links`
+  - `list_overrides` (一次拉全量 OverrideSnapshot) / `get_sync_status` / `rebuild_db`
+  - `export_overrides` (overrides.json) / `import_overrides` (mode = KeepBoth | Overwrite | Merge)
+  - `record_search` / `list_search_history` (最近 100 条)
+- `list_sessions` 改读 DB(秒出),`get_session_meta` 优先 DB + 文件 fallback(防御 DB 损坏或还没同步的新 session)
+- `refresh_sessions` 触发后台 notify + 返回 DB 当前结果
+- `save_settings` 末尾 notify `paths_change` 让 sync_loop 重跑
+
+#### 前端:override / sync / 搜索基建
+
+- `lib/overridesApi.ts`(新)— Tauri commands 包装 + TS interface
+- `state/overridesStore.ts`(新)— zustand store + `useOverridesBridge`(App.tsx mount 时 refresh + listen `overrides-changed`)
+- `titleStore` 兼容层:`getTitle/setTitle` 优先 snap,fallback legacy localStorage(GB 不可用时回退;后续 v0.9.x 删除)
+- `components/SyncBanner.tsx`(新)— 顶栏右上角 toast,listen `sync-progress`,4 个 phase(scanning / syncing / done / error)
+- `shared SessionMeta` 新增可选字段:`displayTitle / hidden / pinned / archived / notes / tags`
+
+#### UI 改造:override 贯穿每个展示页面
+
+- **SessionsRoute**(主列表):
+  - 双击行标题 inline rename(Enter 提交,Esc 取消,失焦提交)
+  - 每行底部 action bar:📌 / 🙈 / 🗄️ / ✎ 4 个按钮,active 状态高亮
+  - 侧栏 filter 新增"☑ 显示隐藏项 / 显示归档"复选框(默认关)
+  - Pinned 顶部独立分组(紫色边框)
+  - 已归档 session 显示"已归档" banner
+  - tags 徽标 chip 行
+- **SessionDetailRoute**(详情页):
+  - 双击 h1 inline rename,header 显示已置顶/已归档/已隐藏 badge + tags chip
+  - 右上角 action bar 新增:📌/🙈/🗄️/✎/📝/🔗 按钮
+  - Markdown 笔记编辑面板(Markdown textarea + 保存/编辑按钮 + pre 显示)
+  - 链接到/被链接列表(`+ Link to session…` 模态输入目标 sid + 可选备注)
+- **GraphDetailPanel**(G1 节点详情):
+  - 标题读 `overridesStore.snap.renames[session_id] ?? titleStore legacy`
+  - 重命名走 `overridesStore.rename()`(DB 优先),legacy 路径 fallback
+- **SearchPalette**(Cmd+K 全局搜索):
+  - 显示最近 10 条搜索历史(`search_history` 表)
+  - 每条搜索自动 `record_search` + 刷新历史列表
+- **SettingsRoute**(设置页):
+  - 新增"数据库 (observer.db)" section:同步状态、上次同步时间、5s 自动刷新
+  - 一键 Rebuild DB(confirm 后清表重跑 sync)
+  - Export overrides → JSON + 3 种 Import 冲突模式(KeepBoth / Overwrite / Merge)
+
+### 测试
+
+- 新增 3 个 Rust 单测覆盖 rename / pinned / placeholder_meta 路径
+- 前端测试 453 / 453 通过(无新增,因为前端改造以 UI 为主)
+- 完整 `cargo test --lib`:110 / 110 通过
+- 完整 `pnpm -r test`:453 / 453 通过
+
+### 兼容性 / 迁移
+
+- `titleStore` 旧 `ocsv.titleOverrides.v1` 数据在第一次 `rename_session` 时自动 mirror 到 `ocsv.titles.legacy.v1`(覆盖读路径,DB 优先)
+- DB 损坏时自动 rename 重建,sync_state 记录 last_error,SettingsRoute 显示"rebuilt at ..."
+- 跳转详情页不受 hide 影响(`/session/:id?path=...` 直链由 `get_session_meta` 单独服务)
+
 ## [0.7.2] - 2026-07-06
 
 v0.7.1 发布后用户实测发现 4 个 G1/G2/G3 + 会话详情 UX 问题,本版本 5 个 commit 全部围绕 G1/G2/G3 视图修复 + 会话详情视觉分层。
