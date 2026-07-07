@@ -75,6 +75,34 @@ v0.8.0 引入**嵌入式 SQLite 数据库**(observer.db),把会话元数据从�
 - DB 损坏时自动 rename 重建,sync_state 记录 last_error,SettingsRoute 显示"rebuilt at ..."
 - 跳转详情页不受 hide 影响(`/session/:id?path=...` 直链由 `get_session_meta` 单独服务)
 
+## [0.8.1] - 2026-07-07
+
+v0.8.0 draft release 跑通发布 pipeline 后,我们跑了 4 个独立 code-review agent(后端正确性 + 前端集成 + 测试覆盖 + schema/sync 风险)+ 我自己读源印证,揪出 5 个会让用户在生产版本遇上的问题。本版本是 5 个必修的最小补丁,**不改 schema、不改 API、retag v0.8.1**。
+
+### 修复
+
+1. **列表永远不是"最近修改"在最上**(CRITICAL) — `list_all_joined` 的 `ORDER BY m.mtime_ms DESC` 因为 mapper 硬编 `mtime_ms=0`,排序退化为 session_id 字典序,前端 `SessionsRoute.sortByLatest`(`Math.max(...0)=0`)同样失效。修复:JOIN 里 `MAX(m.mtime_ms) AS mtime_ms`,mapper:19 读出来真值,**注意列索引顺移一位**。
+2. **G1 "自动名"按钮空操作** — 用户报"按钮点了没反应"。原代码注释里自己写"我们加一个 remove 命令更干净",但事实只清 legacy localStorage,DB override 仍优先。修复:新增 `remove_rename` command(把 `display_title` 置 NULL,保留其它 override 字段),前端 GraphDetailPanel 改用 `overrides.removeRename()`。
+3. **DELETE 永不清理** — `sync_once` 收尾只看磁盘,**从不删 DB 行**;jsonl 文件被 `rm` 后行留几年。修复:每次 sync 收集 `seen_paths`,尾部 `DELETE FROM session_meta WHERE jsonl_path NOT IN (...) AND session_id NOT IN (SELECT session_id FROM session_override)` — 后半句保护用户对未同步 session 做 rename 时创建的 placeholder 行。
+4. **多语句操作半截失败污染 DB** — `rebuild_db` / `set_session_tags` / `import_overrides` 之前 N 条 INSERT/UPDATE 各 auto-commit,中途 app 崩溃或 OOM 会留半截(例如 350 renames 入了 200 tags 没入)。修复:三处全部包到 `Connection::transaction()`,并加 `_in_tx` helper 复用 `upsert_override_field` 逻辑(避免 dyn 兼容问题用 monomorphized enum-tag)。
+5. **`apply_bool` 默默忽略 mode** — `Keepboth` 模式下 hidden/pinned/archived 仍被无条件覆盖,与 rename / notes 路径语义不一致。修复:Keepboth 加 `AND {field} IS NULL` 条件;Overwrite/Merge 保持。
+
+### 验证
+
+- `cargo fmt -- --check`:clean
+- `cargo test --lib`:110/110 passed
+- `pnpm -r test`:32 files, 453 tests, all passed
+- `pnpm typecheck`:clean
+- `pnpm --filter @ocsv/frontend build`:built in 5.21s
+
+### 已识别但未修
+
+后两类 17 项(详见 `docs/REVIEW-v0.8.0.md` 不在本次范围),给 v0.8.2/+ 的事项:
+
+- **HIGH:** `Mutex<Connection>` 串行化读、notify_waiters coalescing 丢命令、每文件 emit 风暴、scan_live_pids per-file 10× 慢、`export_overrides` 包含 hidden + notes(隐私泄漏)、last_error 永不写、PRAGMA WAL 失败静默
+- **MEDIUM:** placeholder jsonl_path UNIQUE 移动文件炸、GROUP_CONCAT 撞 tag 名字逗号、save_settings 任何字段修改触发 re-walk、`refresh_sessions` 触发即返旧值、sid 输入验证、`list_overrides` 全量含 hidden/archived 浪费 IPC、`add_session_link` OR REPLACE 改 created_at、apply_notes Keepboth IS NOT NULL 含空串
+- **TEST GAP:** `db/sync.rs` / `db/schema.rs` 0 tests,前端 `overridesStore` / `SyncBanner` / `SearchPalette` / `DatabasePanel` 0 tests
+
 ## [0.7.2] - 2026-07-06
 
 v0.7.1 发布后用户实测发现 4 个 G1/G2/G3 + 会话详情 UX 问题,本版本 5 个 commit 全部围绕 G1/G2/G3 视图修复 + 会话详情视觉分层。
