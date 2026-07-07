@@ -191,3 +191,220 @@
 
 /* v0.5.0:子会话返回按钮已合并到 .back-btn(见 SessionDetailRoute.tsx),
  * 此处保留旧 .session-back-to-parent class 名以防其它地方引用,实际不再使用。 */
+
+/* v0.8.0: 用户视角(override) — inline rename + badges + notes + links */
+
+.session-header-info .title-rename-input {
+  font-size: 20px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border: 1px solid var(--color-primary);
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  outline: none;
+  min-width: 240px;
+}
+
+.session-header-info h1 .badge-pinned,
+.session-header-info h1 .badge-archived,
+.session-header-info h1 .badge-hidden {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  margin-left: 6px;
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.session-header-info h1 .badge-pinned {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  color: var(--color-accent);
+}
+
+.session-header-info h1 .badge-archived {
+  background: color-mix(in srgb, var(--color-text-muted) 25%, transparent);
+  color: var(--color-text-muted);
+}
+
+.session-header-info h1 .badge-hidden {
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 25%, transparent);
+  color: var(--color-warning, #f59e0b);
+}
+
+.session-header-info .session-tags-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.session-header-info .tag-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+
+.session-notes-panel {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin: 8px 16px 12px 16px;
+}
+
+.session-notes-panel .notes-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.session-notes-panel .notes-header button {
+  font-size: 11px;
+  margin-left: auto;
+  margin-left: 4px;
+  padding: 2px 8px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.session-notes-panel .notes-header .notes-save {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
+
+.session-notes-panel textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  padding: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.session-notes-panel .notes-display {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--color-text);
+}
+
+.session-links-panel {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.session-links-panel .links-group h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin: 0 0 4px 0;
+  letter-spacing: 0.4px;
+}
+
+.session-links-panel .link-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  padding: 2px 6px;
+  background: var(--color-bg-hover);
+  border-radius: 3px;
+  margin-bottom: 2px;
+}
+
+.session-links-panel .link-item button {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.session-links-panel .link-item button:hover {
+  color: var(--color-error, #ef4444);
+}
+
+.session-links-panel .link-note {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.link-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.link-dialog {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.link-dialog h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.link-dialog input {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.link-dialog .link-dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.link-dialog .link-dialog-actions button {
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.link-dialog .link-dialog-actions button.primary {
+  background: var(--color-primary);
+  color: white;
+  border-color: var(--color-primary);
+}
