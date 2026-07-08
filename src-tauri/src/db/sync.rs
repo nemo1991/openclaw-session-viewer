@@ -152,33 +152,47 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
     // session_meta with jsonl_path='(unknown)';这种孤儿是用户意图,不能清)。
     // 用 jsonl_path='(unknown)' OR jsonl_path NOT IN (seen_paths) 都会误删
     // placeholder — 改用 NOT EXISTS 子查询排除有 override 的行。
-    let orphan_deleted: usize = state
-        .db
-        .with(|c| {
-            // 把 seen_paths 转成 N 个 `?` 占位 + 同步的 Vec<String> 用于绑参
-            let placeholders: Vec<&str> = seen_paths.iter().map(|_| "?").collect();
-            if placeholders.is_empty() {
-                return Ok::<usize, AppError>(0);
-            }
-            let in_clause = placeholders.join(",");
-            let sql = format!(
-                "DELETE FROM session_meta
-                 WHERE jsonl_path NOT IN ({in_clause})
-                   AND session_id NOT IN (SELECT session_id FROM session_override)"
-            );
-            // 按位置绑参
-            let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            for p in &seen_paths {
-                params_dyn.push(Box::new(p.clone()));
-            }
-            let refs: Vec<&dyn rusqlite::ToSql> = params_dyn
-                .iter()
-                .map(|b| &**b as &dyn rusqlite::ToSql)
-                .collect();
-            let n = c.execute(&sql, refs.as_slice())?;
-            Ok::<_, AppError>(n)
-        })
-        .unwrap_or(0);
+    // v0.8.2: failsafe — failed > 0 时跳过整轮 orphan sweep。
+    // 之前 f2 (v0.8.1) 加 sweep 修的是另一类 orphan(磁盘已删),但踩到一个
+    // 副作用:如果 sync_one 失败(本轮是 f19 的 NOT NULL bug),seen_paths 装了
+    // 文件路径但 DB 行没 UPSERT,sweep 会看到"DB 没这行"+"seen_paths 有" 的
+    // 不一致状态。逻辑上 sweep 应该不删,但 fail-safe 起见直接 skip,避免任何
+    // 边界 case 把磁盘还在的 session_meta 行误删(影响:列表会话消失)。
+    let orphan_deleted: usize = if failed > 0 {
+        log::warn!(
+            "sync 跳过 orphan sweep: 本轮 failed={failed}/{total}, \
+             保留所有 session_meta 行(磁盘文件仍在,下轮重试)"
+        );
+        0
+    } else {
+        state
+            .db
+            .with(|c| {
+                // 把 seen_paths 转成 N 个 `?` 占位 + 同步的 Vec<String> 用于绑参
+                let placeholders: Vec<&str> = seen_paths.iter().map(|_| "?").collect();
+                if placeholders.is_empty() {
+                    return Ok::<usize, AppError>(0);
+                }
+                let in_clause = placeholders.join(",");
+                let sql = format!(
+                    "DELETE FROM session_meta
+                     WHERE jsonl_path NOT IN ({in_clause})
+                       AND session_id NOT IN (SELECT session_id FROM session_override)"
+                );
+                // 按位置绑参
+                let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+                for p in &seen_paths {
+                    params_dyn.push(Box::new(p.clone()));
+                }
+                let refs: Vec<&dyn rusqlite::ToSql> = params_dyn
+                    .iter()
+                    .map(|b| &**b as &dyn rusqlite::ToSql)
+                    .collect();
+                let n = c.execute(&sql, refs.as_slice())?;
+                Ok::<_, AppError>(n)
+            })
+            .unwrap_or(0)
+    };
     if orphan_deleted > 0 {
         log::info!("sync orphan sweep: 删除 {orphan_deleted} 条已被磁盘移除的 session_meta 行");
     }

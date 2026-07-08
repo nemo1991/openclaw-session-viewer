@@ -249,14 +249,17 @@ pub fn upsert_session_meta(
             m.first_timestamp,
             m.last_timestamp,
             m.message_count as i64,
-            m.thinking_count.map(|v| v as i64),
-            m.tool_use_count.map(|v| v as i64),
+            // v0.8.2: NOT NULL DEFAULT 0 列必须给 0 而非 NULL。
+            // 之前 .map(|v| v as i64) 在 None 时传 NULL,触发 NOT NULL 失败,
+            // sync_one 整体失败 → orphan sweep 把 session_meta 行误删(见 CHANGELOG [0.8.2])
+            m.thinking_count.map(|v| v as i64).unwrap_or(0),
+            m.tool_use_count.map(|v| v as i64).unwrap_or(0),
             top_tools_json,
             total_tokens_json,
             m.primary_model,
             m.has_trajectory.unwrap_or(false) as i32,
             m.trajectory_size_bytes.map(|v| v as i64),
-            m.subagent_count.map(|v| v as i64),
+            m.subagent_count.map(|v| v as i64).unwrap_or(0),
             subagent_ids_json,
         ],
     )?;
