@@ -4,7 +4,7 @@
 
 import { create } from "zustand";
 import type { SessionMeta } from "@ocsv/shared";
-import { apiListSessions, apiRefreshSessions } from "../lib/api";
+import { apiListSessions, apiRefreshSessions, extractErrorMessage } from "../lib/api";
 
 interface SessionsFilter {
   query: string;
@@ -47,7 +47,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       const s = await apiListSessions();
       set({ sessions: s, loading: false });
     } catch (e) {
-      set({ error: String(e), loading: false });
+      set({ error: extractErrorMessage(e), loading: false });
     }
   },
   refresh: async () => {
@@ -55,7 +55,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       const s = await apiRefreshSessions();
       set({ sessions: s });
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: extractErrorMessage(e) });
     }
   },
   setFilter: (f) => set({ filter: { ...get().filter, ...f } }),

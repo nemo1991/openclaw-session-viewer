@@ -64,7 +64,11 @@ export default function SessionsRoute() {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
     listen("sessions-updated", () => {
-      void refresh();
+      // v0.8.3: 必须用 load() (apiListSessions) 而非 refresh() (apiRefreshSessions).
+      // refresh_sessions 后端会 notify refresh_requested → sync_loop 再跑 → 再
+      // emit sessions-updated → 无限循环(已观测 364 次/90s,CPU 飙升)。
+      // load() 走只读 list_sessions,不触发 sync,断回路。
+      void load();
     }).then((u) => {
       if (cancelled) u();
       else unlisten = u;
