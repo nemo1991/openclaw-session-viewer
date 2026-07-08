@@ -2,6 +2,70 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.3] - 2026-07-08
+
+v0.8.2 修好 NOT NULL 之后,启动报"出错了: [object Object]"且 log 显示每秒数十次 sync。本版本修两个耦合 bug:`sessions-updated` listen 触发 refresh 风暴 + 多处 `String(e)` 错把 Tauri error 对象转成 `[object Object]`。
+
+### 修复
+
+#### 1. sync_loop 每秒数十次重复触发(HIGH — CPU 飙升 / 终端不可用)
+
+dev log 抓到 90 秒里 364 次 `sync_loop: 手动刷新触发`,0 次 `paths 变更`。
+回路:`sync_once_and_emit` 末尾 `app.emit("sessions-updated", ())` →
+`SessionsRoute.tsx:67` listen 该事件调 `refresh()` →
+`refresh_sessions` 后端命令 `state.refresh_requested.notify_waiters()` →
+`sync_loop` 接收 → 再次 `sync_once_and_emit` → 再次 emit → 永远循环。
+
+- `SessionsRoute.tsx` listen 回调从 `void refresh()` 改为 `void load()`
+  (`apiListSessions` 只读,不触发 sync)
+- 顶部"刷新"按钮仍可用 `refresh` 手动触发
+- 已确认 sync 跑一遍后就 stable,不再暴增
+
+#### 2. `String(e)` 把 Tauri error 对象转成 `[object Object]`(MEDIUM — UI 一片空白)
+
+Tauri 2 把后端 `Err(AppError)` 通过 IPC 序列化为 `{kind: "Other", message: "..."}` 对象。
+`String(obj) === "[object Object]"`(JS 默认 toString 不递归取字段)。
+React 渲染 `{error: "[object Object]"}` 让用户以为是乱码。
+
+修复改用 `lib/api.ts:274 extractErrorMessage(e)`(早已实现,
+会优先读 `obj.message`,fallback `JSON.stringify(e)`),覆盖:
+
+- `sessionsStore.ts` (load + refresh) — **用户首次进 / 看到的"出错了"**
+- `overridesStore.ts` (refresh)
+- `analyzeStore.ts` (analyze invoke)
+- 未动:`graphStore.ts`(走 `loadNdjson`,非 Tauri 路径,`String(Error)` 正常);
+  `transcriptStore.ts`(已用 `extractErrorMessage`);
+  `trajectoryStore.ts`(已用 `e instanceof Error ? e.message : String(e)`)
+
+#### 3. `list_sessions` mapper 在 LEFT JOIN NULL 上崩(CRITICAL — 跟 F23 一起暴露)
+
+`joined_row_mapper` 用 `row.get::<_, i64>(21)?` 读 `o.hidden`。
+v0.8.0 起 LEFT JOIN 没匹配 override 行时 `o.hidden` 是 NULL。
+之前 SessionOverride 总是有行(每 session 一个 DB row),没人触发。
+v0.8.2 修 sweep + 重新 sync 后,**没有任何 override 的 session 全部返 NULL**,
+mapper 抛 `Invalid column type Null at index: 21, name: hidden`,
+整个 `list_sessions` 失败 → 前端 `load` catch → 显示 extract 出来的真错。
+
+- `db/schema.rs` 4 个 bool/int 列改 `row.get::<_, Option<i64>>(...).unwrap_or(0) != 0`,
+  跟 LEFT JOIN 语义对齐(没 override 行 → 默认全部 false)
+- 不动 schema 表(继续 NOT NULL DEFAULT 0,只影响 INSERT 路径完整性;
+  mapper 层做 NULL → false 兜底足够,且 LEFT JOIN NULL 跟 mapper 解耦)
+
+### 验证
+
+- `pnpm typecheck`:clean(shared + frontend)
+- `pnpm -r test`:32 files, 453 tests, all passed
+- `pnpm --filter @ocsv/frontend build`:built in 4.84s
+- dev 实测:启动 ~15s 后 `sync_once_and_emit` 跑一次(scan_live_pids 后 50 jsonl),
+  此后 0 refresh 触发,稳定
+- `grep -c "手动刷新触发"` log:0(v0.8.2 装上时是 364)
+
+### 已识别但仍未修(v0.8.4+ 候选)
+
+- **HIGH:** `Mutex<Connection>` 串行化读、notify_waiters coalescing 丢命令、每文件 emit 风暴、scan_live_pids per-file 10× 慢、`export_overrides` 包含 hidden + notes(隐私泄漏)、last_error 永不写、PRAGMA WAL 失败静默
+- **MEDIUM:** placeholder jsonl_path UNIQUE 移动文件炸、GROUP_CONCAT 撞 tag 名字逗号、save_settings 任何字段修改触发 re-walk、`refresh_sessions` 触发即返旧值、sid 输入验证、`list_overrides` 全量含 hidden/archived 浪费 IPC、`add_session_link` OR REPLACE 改 created_at、apply_notes Keepboth IS NOT NULL 含空串
+- **TEST GAP:** `db/sync.rs` / `db/schema.rs` 0 tests,前端 `overridesStore` / `SyncBanner` / `SearchPalette` / `DatabasePanel` / `SessionsRoute listen 回路` 0 tests
+
 ## [0.8.2] - 2026-07-08
 
 v0.8.1 发布后用户实测启动报"无会话列表"。log 显示 sync 50 个 jsonl 中 48 个 `SQLite: NOT NULL constraint failed: session_meta.subagent_count` 失败,失败的 session_meta 行被 orphan sweep 误删(只剩 2 行)。本版本修 3 处:NOT NULL 默认值 binding + sweep failsafe + 1 个 unused import 警告。

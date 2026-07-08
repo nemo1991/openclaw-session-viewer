@@ -3,7 +3,7 @@
  */
 
 import { create } from "zustand";
-import { listenAnalyze, type AnalyzeEvent } from "../lib/api";
+import { listenAnalyze, type AnalyzeEvent, extractErrorMessage } from "../lib/api";
 import { invoke } from "@tauri-apps/api/core";
 
 export type AnalysisTemplate = "summary" | "code-changes" | "errors" | "custom";
@@ -27,7 +27,13 @@ interface AnalyzeStore {
   setTemplate: (t: AnalysisTemplate) => void;
   setCustomPrompt: (p: string) => void;
   setRange: (r: AnalyzeRange) => void;
-  start: (path: string, baseUrl: string, apiKey: string, model: string, maxTokens: number) => Promise<void>;
+  start: (
+    path: string,
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+    maxTokens: number
+  ) => Promise<void>;
   cancel: () => Promise<void>;
   reset: () => void;
 }
@@ -91,7 +97,7 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
         },
       });
     } catch (e) {
-      set({ error: String(e), streaming: false });
+      set({ error: extractErrorMessage(e), streaming: false });
       unlisteners.forEach((u) => u());
     }
   },

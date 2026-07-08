@@ -397,9 +397,12 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
     Ok(JoinedRow {
         meta,
         display_title: row.get(20)?,
-        hidden: row.get::<_, i64>(21)? != 0,
-        pinned: row.get::<_, i64>(22)? != 0,
-        archived: row.get::<_, i64>(23)? != 0,
+        // v0.8.3: LEFT JOIN 时没 session_override 行的 session,这些列都是 NULL。
+        // 之前 `row.get::<_, i64>(...)` 在 NULL 上抛 `Invalid column type Null`,
+        // 用户装 v0.8.2 后整张列表崩成"出错了"。改成 Option<i64> + unwrap_or(0) 兜底。
+        hidden: row.get::<_, Option<i64>>(21)?.unwrap_or(0) != 0,
+        pinned: row.get::<_, Option<i64>>(22)?.unwrap_or(0) != 0,
+        archived: row.get::<_, Option<i64>>(23)?.unwrap_or(0) != 0,
         notes: row.get(24)?,
         tag_names,
     })

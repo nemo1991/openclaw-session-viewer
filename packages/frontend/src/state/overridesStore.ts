@@ -20,6 +20,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import * as api from "../lib/overridesApi";
 import type { OverrideSnapshot, Tag, Link } from "../lib/overridesApi";
+import { extractErrorMessage } from "../lib/api";
 
 const LEGACY_LOCALSTORAGE_KEY = "ocsv.titles.legacy.v1";
 
@@ -92,7 +93,7 @@ export const useOverrides = create<OverridesState>((set, get) => ({
       const snap = await api.apiListOverrides();
       set({ snap, loading: false });
     } catch (e) {
-      set({ error: String(e), loading: false });
+      set({ error: extractErrorMessage(e), loading: false });
     }
   },
 
