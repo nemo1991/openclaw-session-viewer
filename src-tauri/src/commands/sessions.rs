@@ -9,7 +9,6 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::fs::paths;
-use crate::fs::walker;
 use crate::model::{LivePidMeta, SessionMeta, TokenUsage};
 use crate::parser::jsonl;
 use crate::AppState;

@@ -2,6 +2,44 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.2] - 2026-07-08
+
+v0.8.1 发布后用户实测启动报"无会话列表"。log 显示 sync 50 个 jsonl 中 48 个 `SQLite: NOT NULL constraint failed: session_meta.subagent_count` 失败,失败的 session_meta 行被 orphan sweep 误删(只剩 2 行)。本版本修 3 处:NOT NULL 默认值 binding + sweep failsafe + 1 个 unused import 警告。
+
+### 修复
+
+#### 1. sync 几乎所有文件失败:NOT NULL constraint (CRITICAL — 列表为空)
+
+`db/schema.rs:259` UPSERT 绑 `m.subagent_count.map(|v| v as i64)` — `None` 时传 NULL,但 schema 列是 `INTEGER NOT NULL DEFAULT 0`。`thinking_count` / `tool_use_count` 同样错(`.map(|v| v as i64)`)。**`has_trajectory` 是对的**(用了 `.unwrap_or(false) as i32`),`trajectory_size_bytes` schema 是 nullable 不影响。
+
+- `upsert_session_meta` 4 处 `.map(|v| v as i64)` → `.map(|v| v as i64).unwrap_or(0)`
+- 触发条件:某些 session 在 `parse_first_n` 头部解析时没遇到 thinking/tool*use/subagent 信息,`build*\*\_session_meta`给这些字段返`None`,UPSERT 立刻拒整行 → sync_one 失败 → DB 里这行不更新 → sweep 误删
+
+#### 2. orphan sweep 在 sync 失败时仍执行(HIGH — 数据丢失)
+
+v0.8.1 (F2) 加的 sweep 只看"DB 行 NOT IN seen_paths AND no override",**没考虑 sync_one 失败的文件**。当 failed > 0 时,seen_paths 装了路径但 DB 没这行(因为 UPSERT 没跑),sweep 会认为"磁盘不存在" → 删行。本应是"fail-safe: 保留所有 session_meta 让下轮重试"。
+
+- `sync.rs` sweep 块加 `if failed > 0 { skip }` guard,只对所有 sync_one 成功的轮次执行 sweep
+- 这条同时也防止未来任何 "walk 到了但 parse 失败" 边界 case 把磁盘还在的 session_meta 行误删
+
+#### 3. 清理 unused import (LOW)
+
+`commands/sessions.rs:12` 的 `use crate::fs::walker` 在 v0.8.1 抽 `sync_loop` 后没用了,cargo 警告。删。
+
+### 验证
+
+- `cargo fmt -- --check`:clean
+- `cargo clippy --all-targets -- -D warnings`:clean
+- `cargo test --lib`:110/110 passed
+- 用户机器实测(50 jsonl):`files_seen=50 files_synced=50 failed=0`,`SELECT COUNT(*) FROM session_meta` 返回 50(v0.8.1 装上时只剩 2 行 — 48 行被 sweep 误删),`subagent_count IS NULL` 数 0
+- `pnpm --filter @ocsv/frontend build`:✓
+
+### 已识别但仍未修(v0.8.3+ 候选)
+
+- **HIGH:** `Mutex<Connection>` 串行化读、notify_waiters coalescing 丢命令、每文件 emit 风暴、scan_live_pids per-file 10× 慢、`export_overrides` 包含 hidden + notes(隐私泄漏)、last_error 永不写、PRAGMA WAL 失败静默
+- **MEDIUM:** placeholder jsonl_path UNIQUE 移动文件炸、GROUP_CONCAT 撞 tag 名字逗号、save_settings 任何字段修改触发 re-walk、`refresh_sessions` 触发即返旧值、sid 输入验证、`list_overrides` 全量含 hidden/archived 浪费 IPC、`add_session_link` OR REPLACE 改 created_at、apply_notes Keepboth IS NOT NULL 含空串
+- **TEST GAP:** `db/sync.rs` / `db/schema.rs` 0 tests,前端 `overridesStore` / `SyncBanner` / `SearchPalette` / `DatabasePanel` 0 tests
+
 ## [0.8.0] - 2026-07-07
 
 v0.8.0 引入**嵌入式 SQLite 数据库**(observer.db),把会话元数据从文件系统提升为一等公民数据。后台增量同步 + 用户 override 维度(rename/hide/pin/archive/notes/tags/links)+ 搜索历史 + Export/Import overrides,贯穿每个涉及展示的页面。
