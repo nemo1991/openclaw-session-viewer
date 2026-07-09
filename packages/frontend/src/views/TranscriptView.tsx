@@ -8,7 +8,7 @@
  * - URL 同步委托 useSessionUrlSync(由 SessionDetailRoute 调用)
  *
  * v0.7.0: ContentFilterPanel 接入 — tool/role/has-attribute 3 维内容筛选,
- *   availableTools 从 summarizeSession(entries) 动态派生。
+ *   availableTools 从 meta.toolUsage 派生(从 DB 读)。
  *
  * View 本体只负责:
  * - 拿 hook 输出渲染 toolbar + 虚拟列表 + footer
@@ -29,15 +29,17 @@ import { isoToLocalInputInTz, formatLocalInputToIsoInTz } from "../lib/format";
 import { MessageBubble } from "../components/MessageBubble";
 import { TranscriptToolbar } from "./panels/TranscriptToolbar";
 import {
+  // v0.8.4 item 2'': availableTools 从 meta.toolUsage 读, 不再调 summarizeSession。
+  // 函数本体保留(给未来 TrajectoryRoute / AnalyzeRoute 复用), 这里不再 import。
   findRepeatRuns,
   findIdleGaps,
   findRunForEntry,
   formatIdleGap,
-  summarizeSession,
 } from "../components/sessionInsights";
+import type { SessionMeta } from "@ocsv/shared";
 import "./TranscriptView.css";
 
-export function TranscriptView() {
+export function TranscriptView({ meta }: { meta?: SessionMeta }) {
   const { t } = useTranslation();
   const path = useTranscriptStore((s) => s.path); // v0.5.0:透传给 MessageBubble
   const entries = useTranscriptStore((s) => s.entries);
@@ -58,28 +60,63 @@ export function TranscriptView() {
   // ===== 聚合提示(去噪)— 跟 SessionDetailRoute header 用同一组函数 =====
   // 注意:这里只对"原 entries"(未排序、未过滤)算 repeat runs,因为排序会破坏
   // "连续"语义。idle gap 用 sortedEntries 算(过滤后用户看到的间隔)。
-  const repeatRuns = findRepeatRuns(entries, 3);
-  const idleGaps = findIdleGaps(sortedEntries, 5 * 60_000);
-  /** entry.index → gap 之后的 idle gap(用于在 entry 之前显示) */
-  const idleGapByAfterIndex = new Map<number, number>();
-  for (const g of idleGaps) {
-    idleGapByAfterIndex.set(g.afterIndex, g.durationMs);
-  }
-
-  // ===== v0.7.0:ContentFilterPanel 用的 availableTools / availableModels =====
-  // 从 entries 动态派生,反映该 session 实际用到的 tool / model(不硬编码常见列表)。
-  const availableTools = useMemo(
-    () => summarizeSession(entries).toolUsage.map((t) => t.tool),
+  //
+  // 这两个不能从 DB 派生 — DB 只存了 count 聚合 (repeat_run_count / idle_gap_count),
+  // 没存每个 run 的 startIndex / endIndex (依赖当前过滤窗口)。所以 entry-级 marker
+  // 必须在虚拟列表渲染层现场算。
+  //
+  // v0.8.4 item 2''+: 大 session (3000+ entry) 倒序时必卡 — 每次 render O(n) 重跑
+  // 全量 scan。useMemo 锁住 deps, 只有 entries / sortedEntries reference 变化才重算。
+  // meta prop 变化(例如 override toggle) 不会触发重算。
+  const repeatRuns = useMemo(
+    () => (entries.length === 0 ? [] : findRepeatRuns(entries, 3)),
     [entries]
   );
+  const idleGaps = useMemo(
+    () => (sortedEntries.length === 0 ? [] : findIdleGaps(sortedEntries, 5 * 60_000)),
+    [sortedEntries]
+  );
+  /** entry.index → gap 之后的 idle gap(用于在 entry 之前显示) */
+  const idleGapByAfterIndex = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const g of idleGaps) {
+      m.set(g.afterIndex, g.durationMs);
+    }
+    return m;
+  }, [idleGaps]);
+
+  // ===== v0.8.4 item 2'': ContentFilterPanel 用的 availableTools 走 DB =====
+  // 之前从 summarizeSession(entries) 派生, 现在直接读 meta.toolUsage
+  // (sync 二阶段 enrich 写到 session_meta.tool_usage_json)。
+  // fallback: meta 还没拿到 / enrich 没跑完时 entries 派生, 避免空 tool chip。
+  const availableTools = useMemo(() => {
+    if (meta?.toolUsage && meta.toolUsage.length > 0) {
+      return meta.toolUsage.map(([tool]) => tool);
+    }
+    // fallback: enrich 还没跑完时 entries 派生
+    const counts = new Map<string, number>();
+    for (const e of entries) {
+      for (const b of e.normalized.blocks ?? []) {
+        if (b && (b as any).kind === "tool_use") {
+          const name = String((b as any).name ?? "?");
+          counts.set(name, (counts.get(name) ?? 0) + 1);
+        }
+      }
+    }
+    return Array.from(counts.keys()).sort();
+  }, [meta?.toolUsage, entries]);
   const availableModels = useMemo(() => {
+    // v0.8.4 item 2'': 优先 meta.availableModels (DB 派生); fallback entries 派生
+    if (meta?.availableModels && meta.availableModels.length > 0) {
+      return meta.availableModels;
+    }
     const set = new Set<string>();
     for (const e of entries) {
       const m = e.normalized.model;
       if (m) set.add(m);
     }
     return Array.from(set).sort();
-  }, [entries]);
+  }, [meta?.availableModels, entries]);
 
   return (
     <div className="transcript-view">
