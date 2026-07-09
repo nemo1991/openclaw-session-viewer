@@ -20,7 +20,11 @@ describe("TranscriptToolbar", () => {
         onApply={() => undefined}
         onClear={() => undefined}
         onSortChange={() => undefined}
-        availableTools={["Bash", "Read", "Edit"]}
+        availableTools={[
+          ["Bash", 286],
+          ["Read", 50],
+          ["Edit", 10],
+        ]}
         selectedTools={[]}
         role={undefined}
         has={[]}
