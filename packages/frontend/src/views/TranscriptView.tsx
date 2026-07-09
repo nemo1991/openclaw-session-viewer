@@ -89,9 +89,12 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
   // 之前从 summarizeSession(entries) 派生, 现在直接读 meta.toolUsage
   // (sync 二阶段 enrich 写到 session_meta.tool_usage_json)。
   // fallback: meta 还没拿到 / enrich 没跑完时 entries 派生, 避免空 tool chip。
-  const availableTools = useMemo(() => {
+  //
+  // v0.8.5 D: 返回 `[tool_name, count]` tuple, chip 渲染 `${tool} × ${count}`,
+  // 不再丢 count。按 count desc 排序(DB 已排好, fallback 也按 count 排)。
+  const availableTools = useMemo<Array<[string, number]>>(() => {
     if (meta?.toolUsage && meta.toolUsage.length > 0) {
-      return meta.toolUsage.map(([tool]) => tool);
+      return meta.toolUsage; // DB 已经是 count desc 紧凑数组
     }
     // fallback: enrich 还没跑完时 entries 派生
     const counts = new Map<string, number>();
@@ -103,7 +106,7 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
         }
       }
     }
-    return Array.from(counts.keys()).sort();
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [meta?.toolUsage, entries]);
   const availableModels = useMemo(() => {
     // v0.8.4 item 2'': 优先 meta.availableModels (DB 派生); fallback entries 派生

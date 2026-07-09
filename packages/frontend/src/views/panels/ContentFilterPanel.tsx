@@ -28,9 +28,13 @@ import type { HasAttribute } from "../../lib/filterEntries";
 export type SidechainMode = "all" | "main" | "sidechain";
 
 export interface ContentFilterPanelProps {
-  /** 当前 session 中出现的 tool name(从 summarizeSession 派生) */
-  availableTools: string[];
-  /** 已选 tool name(多选) */
+  /**
+   * v0.8.5 D: 当前 session 中出现的 tool,按 count 降序。
+   * `[tool_name, call_count]` tuple — chip 渲染 `${tool} × ${count}`,前端不再丢 count。
+   * 之前版本传 `string[]`,v0.8.5 起改成 tuple 列表(从 `meta.toolUsage` 直接传,DB 已排序好)。
+   */
+  availableTools: Array<[string, number]>;
+  /** 已选 tool name(多选,跟 availableTools 同顺序匹配) */
   selectedTools: string[];
   /** 当前 role(undefined = 全部) */
   role: string | undefined;
@@ -127,11 +131,11 @@ export function ContentFilterPanel({
 
   return (
     <div className="transcript-content-filter-bar" data-testid="content-filter-bar">
-      {/* Tool 多选 chips */}
+      {/* Tool 多选 chips — v0.8.5 D: 显示 `${tool} × ${count}` */}
       {availableTools.length > 0 && (
         <div className="content-filter-group" data-testid="content-filter-tools">
           <span className="content-filter-label">Tool</span>
-          {availableTools.map((tool) => {
+          {availableTools.map(([tool, count]) => {
             const active = selectedTools.includes(tool);
             return (
               <button
@@ -140,9 +144,13 @@ export function ContentFilterPanel({
                 data-active={active}
                 className={`content-chip ${active ? "content-chip-active" : ""}`}
                 onClick={() => onToggleTool(tool)}
-                title={active ? `点击移除 ${tool}` : `点击只保留 ${tool}`}
+                title={
+                  active
+                    ? `点击移除 ${tool} (共 ${count} 次)`
+                    : `点击只保留 ${tool} (共 ${count} 次)`
+                }
               >
-                {tool}
+                {tool} × {count}
                 {active && selectedTools.length > 1 && (
                   <span className="content-chip-x" aria-hidden>
                     ×

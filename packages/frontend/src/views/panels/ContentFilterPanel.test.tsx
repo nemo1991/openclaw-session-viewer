@@ -22,7 +22,11 @@ describe("ContentFilterPanel", () => {
   it("availableTools 渲染成 chip,空数组不渲染 tool 行", () => {
     const { rerender } = render(
       <ContentFilterPanel
-        availableTools={["Bash", "Read", "Edit"]}
+        availableTools={[
+          ["Bash", 286],
+          ["Read", 50],
+          ["Edit", 10],
+        ]}
         selectedTools={[]}
         role={undefined}
         has={[]}
@@ -65,7 +69,10 @@ describe("ContentFilterPanel", () => {
     const onToggleTool = vi.fn();
     render(
       <ContentFilterPanel
-        availableTools={["Bash", "Read"]}
+        availableTools={[
+          ["Bash", 286],
+          ["Read", 50],
+        ]}
         selectedTools={[]}
         role={undefined}
         has={[]}
@@ -87,7 +94,10 @@ describe("ContentFilterPanel", () => {
   it("selectedTools 含某 tool → chip 高亮 + data-active='true'", () => {
     render(
       <ContentFilterPanel
-        availableTools={["Bash", "Read"]}
+        availableTools={[
+          ["Bash", 286],
+          ["Read", 50],
+        ]}
         selectedTools={["Bash"]}
         role={undefined}
         has={[]}
@@ -107,6 +117,35 @@ describe("ContentFilterPanel", () => {
     expect(bashChip.getAttribute("data-active")).toBe("true");
     expect(bashChip.className).toContain("content-chip-active");
     expect(readChip.getAttribute("data-active")).toBe("false");
+  });
+
+  // v0.8.5 D: chip 渲染 `${tool} × ${count}`,title 也带 count
+  it("chip 显示 `${tool} × ${count}` (DB 派生 count 不再丢)", () => {
+    render(
+      <ContentFilterPanel
+        availableTools={[
+          ["Bash", 286],
+          ["Read", 50],
+          ["Edit", 10],
+        ]}
+        selectedTools={[]}
+        role={undefined}
+        has={[]}
+        onToggleTool={noop}
+        onSetRole={noop}
+        onToggleHas={noop}
+        availableModels={[]}
+        selectedModels={[]}
+        onToggleModel={noop}
+        sidechainMode="all"
+        onSetSidechainMode={noop}
+        onClearContent={noop}
+      />
+    );
+    expect(screen.getByTestId("content-filter-tool-Bash").textContent).toContain("Bash × 286");
+    expect(screen.getByTestId("content-filter-tool-Read").textContent).toContain("Read × 50");
+    expect(screen.getByTestId("content-filter-tool-Edit").textContent).toContain("Edit × 10");
+    expect(screen.getByTestId("content-filter-tool-Bash").title).toContain("共 286 次");
   });
 
   it("role 3 选项:点击 → onSetRole(role|undefined)", async () => {
@@ -139,7 +178,7 @@ describe("ContentFilterPanel", () => {
   it("role 当前值 → 对应 chip data-active=true", () => {
     render(
       <ContentFilterPanel
-        availableTools={["Bash"]}
+        availableTools={[["Bash", 286]]}
         selectedTools={[]}
         role="user"
         has={[]}
@@ -219,7 +258,7 @@ describe("ContentFilterPanel", () => {
   it("content filter 全部空时,不渲染清除按钮", () => {
     render(
       <ContentFilterPanel
-        availableTools={["Bash"]}
+        availableTools={[["Bash", 286]]}
         selectedTools={[]}
         role={undefined}
         has={[]}
@@ -241,7 +280,7 @@ describe("ContentFilterPanel", () => {
     const onClearContent = vi.fn();
     const { rerender } = render(
       <ContentFilterPanel
-        availableTools={["Bash"]}
+        availableTools={[["Bash", 286]]}
         selectedTools={["Bash"]}
         role={undefined}
         has={[]}
@@ -265,7 +304,7 @@ describe("ContentFilterPanel", () => {
     onClearContent.mockClear();
     rerender(
       <ContentFilterPanel
-        availableTools={["Bash"]}
+        availableTools={[["Bash", 286]]}
         selectedTools={[]}
         role="user"
         has={[]}
@@ -285,7 +324,7 @@ describe("ContentFilterPanel", () => {
     // 测 has active 路径
     rerender(
       <ContentFilterPanel
-        availableTools={["Bash"]}
+        availableTools={[["Bash", 286]]}
         selectedTools={[]}
         role={undefined}
         has={["thinking"]}

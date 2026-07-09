@@ -674,6 +674,8 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
   const topTools = toolUsage.slice(0, 5);
   const otherTools = toolUsage.slice(5);
   const otherCount = otherTools.reduce((a, [, c]) => a + c, 0);
+  // v0.8.5 D: 工具占比 % — 总调用数算分母, top 5 每条显示 (count/totalCalls * 100)%
+  const totalCalls = toolUsage.reduce((a, [, c]) => a + c, 0);
 
   return (
     <div className="session-summary-strip" data-testid="session-summary-strip">
@@ -685,11 +687,20 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
         {phaseDetail && <span className="ss-phase-detail"> · {phaseDetail}</span>}
       </span>
       <span className="ss-sep" />
-      {topTools.map(([tool, count]) => (
-        <span key={tool} className="ss-tool" title={`${tool} × ${count}`}>
-          {tool} <span className="ss-tool-count">{count}</span>
-        </span>
-      ))}
+      {topTools.map(([tool, count]) => {
+        const pct = totalCalls > 0 ? Math.round((count / totalCalls) * 100) : 0;
+        return (
+          <span
+            key={tool}
+            className="ss-tool"
+            title={`${tool} × ${count} (${pct}%)`}
+            data-testid={`ss-tool-${tool}`}
+          >
+            {tool} <span className="ss-tool-count">{count}</span>
+            <span className="ss-tool-pct">{pct}%</span>
+          </span>
+        );
+      })}
       {otherCount > 0 && (
         <span
           className="ss-tool ss-tool-other"
