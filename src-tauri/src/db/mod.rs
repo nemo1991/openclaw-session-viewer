@@ -14,6 +14,7 @@
 //! - 启动时 `PRAGMA integrity_check`,失败自动 rename + 重建(见 `open`)
 //! - DB schema 一次性定义全表(v0.8.0 决定,后续若要迁移加 `migration` 表)
 
+pub mod migrations;
 pub mod schema;
 pub mod sync;
 

@@ -95,6 +95,72 @@ pub struct SessionMeta {
     /// tag 名列表(已 join session_tag)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    // --- v0.8.4: 固化到 DB 的派生指标(由 build_meta_full 在 sync 二阶段填充) ---
+    /// assistant 消息中 stop_reason=="error" 或 is_error==true 的计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_count: Option<u32>,
+    /// 顶层 user 消息计数 (排除 sidechain)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_message_count: Option<u32>,
+    /// 顶层 assistant 消息计数 (排除 sidechain)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assistant_message_count: Option<u32>,
+    /// 会话跨度(秒) = last_ts - first_ts
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<u64>,
+    /// 首次响应延迟(毫秒) = first_assistant_ts - first_user_ts
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_response_latency_ms: Option<u64>,
+    /// jsonl 里 agent-name envelope 的 agentName 值(本会话自己的别名)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+    /// invoked_skills 计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invoked_skills_count: Option<u32>,
+    /// plan_file_reference 计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_file_ref_count: Option<u32>,
+    /// compact_file_reference 计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compact_file_ref_count: Option<u32>,
+    /// queued_command 计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_command_count: Option<u32>,
+    /// attached_file 计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_file_count: Option<u32>,
+    // --- v0.8.4 item 2': SessionSummaryStrip 全固化 ---
+    /// 文本消息数 (user + assistant + tool 角色) — 等价于 `summarizeSession.textMessageCount`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_message_count: Option<u32>,
+    /// 全量 tool 分布,按 count 降序: `[("Bash", 286), ("Read", 50), ...]`
+    /// 跟 `top_tools` 区别:top_tools 只存名字(前 5),`tool_usage` 带 count
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_usage: Option<Vec<(String, u32)>>,
+    /// 阶段提示: "explore" | "implement" | "mixed" | "short"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_hint: Option<String>,
+    /// 阶段详情,例如 "47% 写操作" / "短 session" / "无文件操作"
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_detail: Option<String>,
+    /// 相邻 assistant tool_use 同 tool ≥3 次的 run 段数(等价 `findRepeatRuns(entries, 3).length`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_run_count: Option<u32>,
+    /// 占比最大 run 的 tool name(tooltip 用)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_run_max_tool: Option<String>,
+    /// 占比最大 run 的次数(tooltip 用)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeat_run_max_count: Option<u32>,
+    /// 相邻 entry ts gap ≥ 5 分钟的次数(等价 `findIdleGaps(entries, 5*60_000).length`)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_gap_count: Option<u32>,
+    /// 最长间隔 ms(chip "最长 X 分钟" 用)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_gap_max_ms: Option<u64>,
+    /// v0.8.4 item 2'': 该 session 用过的 model id(去重,字典序),ContentFilterPanel chip 源
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub available_models: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

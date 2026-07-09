@@ -270,6 +270,14 @@ pub fn normalize(record: &Value, index: usize) -> Option<NormalizedMessage> {
                 data,
             });
         }
+        "queue-operation" => {
+            // v0.8.4 item 4: 独立 dispatch (top-level envelope, 不在 attachment 里)
+            if let Some(block) =
+                crate::parser::blocks::build_queue_operation_block(&Value::Object(obj.clone()))
+            {
+                msg.blocks.push(block);
+            }
+        }
         _ => {
             // 未知 type,原样塞到 meta
             let mut data = serde_json::Map::new();

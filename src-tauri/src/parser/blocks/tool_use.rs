@@ -1,11 +1,27 @@
 //! v0.3.0 PR3: ToolUse block handler
 //!
 //! `{ type: "tool_use" | "toolUse" | "tool_call" | "function_call" | "toolCall", id, name, input|arguments }`
+//!
+//! v0.8.4: 抽 `TOOL_USE_ALIASES` 顶层 const,让 `parser/meta_extras.rs::build_meta_full`
+//! 复用 — 之前 `build_meta_full` 硬编码 `"tool_use"` 导致 OpenClaw `toolCall` / `function_call`
+//! 等 alias 抓不到,tool_usage_json 漏算。
 
 use serde_json::Value;
 
 use super::{BlockError, BlockHandler, BlockResult};
 use crate::parser::claude::NormalizedBlock;
+
+/// v0.8.4: tool_use block 的所有 type alias 列表。
+///
+/// 给 `BlockHandler::matches` 和 `build_meta_full` 共享 — 任何新加 alias
+/// 必须**同时**更新两边,避免脱节。
+pub const TOOL_USE_ALIASES: &[&str] = &[
+    "tool_use",
+    "toolUse",
+    "tool_call",
+    "function_call",
+    "toolCall",
+];
 
 /// tool_use block: 5 个 alias (tool_use/toolUse/tool_call/function_call/toolCall)
 ///
@@ -14,10 +30,8 @@ pub struct ToolUseBlockHandler;
 
 impl BlockHandler for ToolUseBlockHandler {
     fn matches(&self, item: &Value) -> bool {
-        matches!(
-            item.get("type").and_then(|v| v.as_str()),
-            Some("tool_use" | "toolUse" | "tool_call" | "function_call" | "toolCall")
-        )
+        let t = item.get("type").and_then(|v| v.as_str());
+        matches!(t, Some(s) if TOOL_USE_ALIASES.contains(&s))
     }
 
     fn normalize(&self, item: &Value) -> BlockResult {
@@ -138,5 +152,20 @@ mod tests {
         assert!(h
             .normalize(&json!({"type": "tool_use", "id": "x"}))
             .is_err());
+    }
+
+    #[test]
+    fn tool_use_aliases_const_includes_5_aliases() {
+        // v0.8.4: TOOL_USE_ALIASES 必须包含 5 个 alias,跟 matches() 共享
+        assert_eq!(TOOL_USE_ALIASES.len(), 5);
+        for a in &[
+            "tool_use",
+            "toolUse",
+            "tool_call",
+            "function_call",
+            "toolCall",
+        ] {
+            assert!(TOOL_USE_ALIASES.contains(a), "missing alias {a}");
+        }
     }
 }

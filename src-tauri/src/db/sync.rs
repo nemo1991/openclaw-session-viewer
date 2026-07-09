@@ -73,6 +73,8 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
     // v0.8.1: 收集本轮 walk 出的真实 jsonl_path,尾部 orphan sweep 用。
     // 保留 set 是为了不让孤儿清扫把真实文件误判为孤儿。
     let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // v0.8.4 item 2: 同步成功才进 v0.8.4 派生指标 enrich; failed 不入
+    let mut synced_paths: Vec<String> = Vec::new();
 
     // 1) Claude projects_dir
     for projects_dir in paths_snapshot.all_claude_projects_dirs() {
@@ -87,7 +89,10 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
             seen_paths.insert(path.to_string_lossy().to_string());
             total += 1;
             match sync_one_file(state, &path, "claude", None, None, None, None).await {
-                Ok(_) => done += 1,
+                Ok(_) => {
+                    done += 1;
+                    synced_paths.push(path.to_string_lossy().to_string());
+                }
                 Err(e) => {
                     failed += 1;
                     log::warn!("sync {:?} failed: {e:?}", path);
@@ -135,7 +140,10 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                 )
                 .await
                 {
-                    Ok(_) => done += 1,
+                    Ok(_) => {
+                        done += 1;
+                        synced_paths.push(path.to_string_lossy().to_string());
+                    }
                     Err(e) => {
                         failed += 1;
                         log::warn!("sync {:?} failed: {e:?}", path);
@@ -195,6 +203,77 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
     };
     if orphan_deleted > 0 {
         log::info!("sync orphan sweep: 删除 {orphan_deleted} 条已被磁盘移除的 session_meta 行");
+    }
+
+    // v0.8.4 item 2: 第二阶段 enrichment — 对本轮同步成功的 jsonl 全量扫描, 落派生指标
+    // 单文件失败不会让 sync_state 阻塞; 用 sync_one_file 成功名单, 失败文件下轮再试
+    if !synced_paths.is_empty() {
+        let count = synced_paths.len();
+        log::info!("v0.8.4 enrichment: 扫描 {count} 个 jsonl 提取派生指标 (上限 5000 行/文件)");
+        for jsonl_path in &synced_paths {
+            let p = std::path::Path::new(jsonl_path);
+            let extras = match crate::parser::meta_extras::build_meta_full(p) {
+                Ok(e) => e,
+                Err(e) => {
+                    log::warn!("build_meta_full {:?} 失败: {e:?}", p);
+                    continue;
+                }
+            };
+            // 用 jsonl_path 反查 session_id (build_meta_full 不返回 sid)
+            let sid: Option<String> = state
+                .db
+                .with(|c| {
+                    let r: Result<String, _> = c.query_row(
+                        "SELECT session_id FROM session_meta WHERE jsonl_path = ?1",
+                        rusqlite::params![jsonl_path],
+                        |r| r.get::<_, String>(0),
+                    );
+                    Ok::<Option<String>, AppError>(r.ok())
+                })
+                .ok()
+                .flatten();
+            let Some(sid) = sid else {
+                // 该文件刚刚 sync_one_file 成功过, 理论上必有 row; 找不到就跳
+                continue;
+            };
+            let tool_usage_json = serde_json::to_string(&extras.tool_usage)
+                .ok()
+                .filter(|s| !s.is_empty() && s != "[]");
+            // v0.8.4 item 2'': available_models_json — BTreeSet 已经字典序, 紧凑数组
+            let available_models_json = serde_json::to_string(&extras.available_models)
+                .ok()
+                .filter(|s| !s.is_empty() && s != "[]");
+            let _ = state.db.with(|c| {
+                crate::db::schema::enrich_session_meta(
+                    c,
+                    &sid,
+                    extras.error_count,
+                    extras.user_message_count,
+                    extras.assistant_message_count,
+                    extras.duration_seconds,
+                    extras.first_response_latency_ms,
+                    extras.agent_name.as_deref(),
+                    extras.invoked_skills_count,
+                    extras.plan_file_ref_count,
+                    extras.compact_file_ref_count,
+                    extras.queued_command_count,
+                    extras.attached_file_count,
+                    // v0.8.4 item 2'
+                    extras.text_message_count,
+                    tool_usage_json.as_deref(),
+                    extras.phase_hint.as_deref(),
+                    extras.phase_detail.as_deref(),
+                    extras.repeat_run_count,
+                    extras.repeat_run_max_tool.as_deref(),
+                    extras.repeat_run_max_count,
+                    extras.idle_gap_count,
+                    extras.idle_gap_max_ms,
+                    // v0.8.4 item 2''
+                    available_models_json.as_deref(),
+                )?;
+                Ok::<_, AppError>(())
+            });
+        }
     }
 
     let now = SystemTime::now()

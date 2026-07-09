@@ -38,15 +38,27 @@
 //! | `pr-link`                        | pr_link         | `pr_link.rs`          |
 //! | `agent-name`                     | agent_name      | `agent_name.rs`       |
 //! | `task_reminder`                  | task_reminder   | `task_reminder.rs`    |
+//! | `invoked_skills`                 | invoked_skills  | `invoked_skills.rs`   |
+//! | `plan_file_reference`            | plan_file_ref   | `plan_file_reference.rs` |
+//! | `compact_file_reference`         | compact_file_ref| `compact_file_reference.rs` |
+//! | `file` (in attachment)           | attached_file   | `attached_file.rs`    |
+//! | `queued_command` (in attachment) | queued_command  | `queued_command.rs`   |
+//! | `queue-operation` (top-level)    | queue_operation | `queue_operation.rs`  |
 //! | (其它)                           | meta            | `meta.rs`            |
 
 pub mod agent_listing;
 pub mod agent_name;
+pub mod attached_file;
+pub mod compact_file_reference;
 pub mod file_snapshot;
 pub mod image;
+pub mod invoked_skills;
 pub mod meta;
+pub mod plan_file_reference;
 pub mod plan_mode;
 pub mod pr_link;
+pub mod queue_operation;
+pub mod queued_command;
 pub mod skill_listing;
 pub mod task_reminder;
 pub mod text;
@@ -56,11 +68,17 @@ pub mod tool_use;
 
 pub use agent_listing::AgentListingHandler;
 pub use agent_name::AgentNameHandler;
+pub use attached_file::AttachedFileHandler;
+pub use compact_file_reference::CompactFileReferenceHandler;
 pub use file_snapshot::FileSnapshotHandler;
 pub use image::ImageBlockHandler;
+pub use invoked_skills::InvokedSkillsHandler;
 pub use meta::MetaBlockHandler;
+pub use plan_file_reference::PlanFileReferenceHandler;
 pub use plan_mode::PlanModeHandler;
 pub use pr_link::PrLinkHandler;
+pub use queue_operation::build_queue_operation_block;
+pub use queued_command::QueuedCommandHandler;
 pub use skill_listing::SkillListingHandler;
 pub use task_reminder::TaskReminderHandler;
 pub use text::TextBlockHandler;
@@ -156,6 +174,11 @@ pub fn default_registry() -> BlockRegistry {
         .register(PrLinkHandler)
         .register(AgentNameHandler)
         .register(TaskReminderHandler)
+        .register(InvokedSkillsHandler) // v0.8.4
+        .register(PlanFileReferenceHandler) // v0.8.4
+        .register(CompactFileReferenceHandler) // v0.8.4
+        .register(AttachedFileHandler) // v0.8.4
+        .register(QueuedCommandHandler) // v0.8.4
         .register(MetaBlockHandler) // 必须最后
 }
 

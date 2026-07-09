@@ -608,6 +608,12 @@ pub async fn get_sync_status(state: State<'_, Arc<AppState>>) -> AppResult<SyncS
     crate::db::sync::read_sync_state(&state)
 }
 
+/// v0.8.4 item 1: HomeStatusBar 用 — DB 文件绝对路径
+#[tauri::command]
+pub async fn get_db_path(state: State<'_, Arc<AppState>>) -> AppResult<String> {
+    Ok(state.db.path().to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub async fn rebuild_db(state: State<'_, Arc<AppState>>, app: AppHandle) -> AppResult<()> {
     crate::db::sync::rebuild_db(&state, &app).await
