@@ -9,7 +9,6 @@ import SettingsRoute from "./routes/SettingsRoute";
 import TrajectoryRoute from "./routes/TrajectoryRoute";
 import GraphExplorerRoute from "./routes/GraphExplorerRoute";
 import { RevealErrorToast } from "./components/RevealErrorToast";
-import { SyncBanner } from "./components/SyncBanner";
 import { useOverridesBridge } from "./state/overridesStore";
 
 export default function App() {
@@ -40,8 +39,6 @@ export default function App() {
       </Routes>
       {/* v0.6.x: 全局 reveal 错误 toast, 监听 REVEAL_ERROR_EVENT */}
       <RevealErrorToast />
-      {/* v0.8.0: 后台同步进度 toast */}
-      <SyncBanner />
     </>
   );
 }

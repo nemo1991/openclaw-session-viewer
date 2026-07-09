@@ -201,7 +201,7 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(container.querySelector(".meta-file-list")).toBeNull();
     });
 
-    it("有文件 → 默认展开 ul.meta-file-list 列出所有路径", () => {
+    it("有文件 (≤5) → 全部列出, 无展开按钮", () => {
       const block: NormalizedBlockFE = {
         kind: "meta",
         label: "file-history-snapshot",
@@ -219,6 +219,50 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       const ul = container.querySelector(".meta-file-list")!;
       expect(ul).toBeInTheDocument();
       expect(ul.querySelectorAll("li").length).toBe(2);
+      // v0.8.4: 2 个文件不需要折叠按钮
+      expect(container.querySelector("[data-testid='file-snapshot-toggle']")).toBeNull();
+    });
+
+    it("有文件 (>5) → 默认显示前 5 行 + '展开剩余 N 个文件' 按钮", () => {
+      const backups: Record<string, unknown> = {};
+      for (let i = 0; i < 12; i++) backups[`/Users/foo/f${i}.ts`] = { version: i };
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "file-history-snapshot",
+        payload: { trackedFileBackups: backups },
+      };
+      const { container } = renderInRoute(
+        <MetaBlock block={block} label="file-history-snapshot" />
+      );
+      expect(screen.getByText(/12 个跟踪文件/)).toBeInTheDocument();
+      const ul = container.querySelector(".meta-file-list")!;
+      // 默认只显示前 5 行 (v0.8.4 item 3)
+      expect(ul.querySelectorAll("li").length).toBe(5);
+      const toggle = container.querySelector(
+        "[data-testid='file-snapshot-toggle']"
+      ) as HTMLButtonElement;
+      expect(toggle).toBeInTheDocument();
+      expect(toggle.textContent).toMatch(/展开剩余 7 个文件/);
+    });
+
+    it("点展开按钮 → 显示全部 + 按钮变 '收起'", async () => {
+      const backups: Record<string, unknown> = {};
+      for (let i = 0; i < 8; i++) backups[`/Users/foo/f${i}.ts`] = { version: i };
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "file-history-snapshot",
+        payload: { trackedFileBackups: backups },
+      };
+      const { container } = renderInRoute(
+        <MetaBlock block={block} label="file-history-snapshot" />
+      );
+      const toggle = container.querySelector(
+        "[data-testid='file-snapshot-toggle']"
+      ) as HTMLButtonElement;
+      await userEvent.click(toggle);
+      const ul = container.querySelector(".meta-file-list")!;
+      expect(ul.querySelectorAll("li").length).toBe(8);
+      expect(toggle.textContent).toMatch(/^收起$/);
     });
 
     it("点路径按钮 → 调 useFileRevealAndNotify; 失败显示可操作错误 UI", async () => {

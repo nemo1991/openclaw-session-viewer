@@ -22,6 +22,7 @@ import { useKey } from "../lib/keymap";
 import { formatBytes, formatTime } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { SearchPalette } from "../views/SearchPalette";
+import { HomeStatusBar } from "../components/HomeStatusBar"; // v0.8.4 item 1
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionsRoute.css";
 
@@ -200,6 +201,9 @@ export default function SessionsRoute() {
           </button>
         </div>
       </header>
+
+      {/* v0.8.4 item 1: 首页状态栏 */}
+      <HomeStatusBar />
 
       <div className="sessions-layout">
         <aside className="sessions-sidebar">

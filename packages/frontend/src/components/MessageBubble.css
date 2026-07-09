@@ -702,6 +702,30 @@
   overflow: hidden;
 }
 
+/* v0.8.4: file_snapshot 折叠按钮 (item 3) — 默认 5 行, 显式 toggle (非 <details>) */
+.meta-show-more {
+  align-self: flex-start;
+  margin: 4px 0 2px;
+  padding: 2px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  background: rgba(127, 127, 127, 0.08);
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  border-radius: 4px;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.meta-show-more:hover {
+  background: rgba(127, 127, 127, 0.18);
+  color: var(--color-text);
+}
+.meta-show-more:active {
+  background: rgba(127, 127, 127, 0.28);
+}
+
 /* 路径可点击 (reveal in Finder) */
 .meta-path-clickable {
   display: inline-block;

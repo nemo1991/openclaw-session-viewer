@@ -61,8 +61,7 @@ export const apiSetNotes = (sid: string, notes: string): Promise<void> =>
   invoke("set_notes", { sid, notes });
 // v0.8.1: 撤销 display_title(DB rename)。注意:legacy titleStore 是另一个本地
 // 存储,这里只清 DB;legacy mirror 保留兼容老路径。
-export const apiRemoveRename = (sid: string): Promise<void> =>
-  invoke("remove_rename", { sid });
+export const apiRemoveRename = (sid: string): Promise<void> => invoke("remove_rename", { sid });
 export const apiListOverrides = (): Promise<OverrideSnapshot> => invoke("list_overrides");
 
 // ===== Tag commands =====
@@ -86,6 +85,7 @@ export const apiListSessionLinks = (sid: string): Promise<Link[]> =>
 // ===== Sync utilities =====
 
 export const apiGetSyncStatus = (): Promise<SyncStatus> => invoke("get_sync_status");
+export const apiGetDbPath = (): Promise<string> => invoke("get_db_path"); // v0.8.4 item 1
 export const apiRebuildDb = (): Promise<void> => invoke("rebuild_db");
 
 // ===== Export/Import =====
