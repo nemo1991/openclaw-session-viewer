@@ -72,6 +72,30 @@ export function formatNumber(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
+/** v0.8.4 item 2: 把秒数格式化成人读 ("2h 13m" / "47s" / "3d 5h") */
+export function formatDuration(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  if (sec < 86400) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+}
+
+/** v0.8.4 item 2: 把毫秒数格式化成 latency ("3.2s" / "847ms" / "1m 12s") */
+export function formatLatency(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const sec = Math.floor(ms / 1000);
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 /**
  * v0.4.2: 把 `<input type="datetime-local">` 的 naive 字符串("YYYY-MM-DDTHH:mm")
  * 按指定 TZ 解析成 UTC ISO 字符串。

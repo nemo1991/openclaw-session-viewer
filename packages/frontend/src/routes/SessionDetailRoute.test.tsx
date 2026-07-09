@@ -210,3 +210,122 @@ describe("SessionDetailRoute — back-to-parent (v0.5.0)", () => {
     expect(backBtn.textContent).not.toContain("parent-sessi");
   });
 });
+
+describe("SessionSummaryStrip — v0.8.4 item 2' 全读 DB", () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+    useSessionsStore.setState({ sessions: [], loading: false, error: null });
+  });
+
+  function renderWithMeta(meta: SessionMeta) {
+    return render(
+      <MemoryRouter initialEntries={[{ pathname: "/session/x", state: { session: meta } }]}>
+        <Routes>
+          <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  it("从 meta.toolUsage 读 tool chip (不再调 summarizeSession)", async () => {
+    renderWithMeta({
+      ...parentMeta,
+      textMessageCount: 50,
+      toolUsage: [
+        ["Bash", 286],
+        ["Read", 50],
+        ["Edit", 12],
+      ],
+      phaseHint: "implement",
+      phaseDetail: "75% 写操作",
+      repeatRunCount: 1,
+      repeatRunMaxTool: "Bash",
+      repeatRunMaxCount: 286,
+      idleGapCount: 2,
+      idleGapMaxMs: 7 * 60 * 1000,
+      thinkingCount: 5,
+      errorCount: 1,
+    });
+    const strip = await screen.findByTestId("session-summary-strip");
+    expect(strip.textContent).toMatch(/实施/);
+    expect(strip.textContent).toMatch(/75%/);
+    expect(strip.textContent).toMatch(/Bash/);
+    expect(strip.textContent).toMatch(/286/);
+    expect(strip.textContent).toMatch(/Read/);
+    expect(strip.textContent).toMatch(/50/);
+    expect(strip.textContent).toMatch(/thinking/);
+    expect(strip.textContent).toMatch(/错误/);
+    expect(strip.textContent).toMatch(/连续重复/);
+    expect(strip.textContent).toMatch(/长间隔/);
+  });
+
+  it("phaseHint 不存在 (enrich 还没跑) → strip 不渲染", async () => {
+    const { container } = renderWithMeta({
+      ...parentMeta,
+      textMessageCount: 50,
+      toolUsage: [["Bash", 5]],
+      // phaseHint 缺失
+    });
+    // 等下 React 渲染完
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('[data-testid="session-summary-strip"]')).toBeNull();
+  });
+
+  it("textMessageCount=0 → strip 不渲染 (避免加载中闪烁)", async () => {
+    const { container } = renderWithMeta({
+      ...parentMeta,
+      textMessageCount: 0,
+      toolUsage: [],
+      phaseHint: "short",
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('[data-testid="session-summary-strip"]')).toBeNull();
+  });
+
+  it("toolUsage > 5 → 显示 '+N 其他' chip (top 5 + 其他)", async () => {
+    renderWithMeta({
+      ...parentMeta,
+      textMessageCount: 100,
+      toolUsage: [
+        ["A", 100],
+        ["B", 80],
+        ["C", 60],
+        ["D", 40],
+        ["E", 20],
+        ["F", 10],
+        ["G", 5],
+      ],
+      phaseHint: "mixed",
+    });
+    const strip = await screen.findByTestId("session-summary-strip");
+    expect(strip.textContent).toMatch(/\+2 其他/); // F + G
+  });
+
+  it("idleGapMaxMs 缺失 → 长间隔 chip 不显示", async () => {
+    renderWithMeta({
+      ...parentMeta,
+      textMessageCount: 50,
+      toolUsage: [["Bash", 10]],
+      phaseHint: "mixed",
+      idleGapCount: 2,
+      // idleGapMaxMs 缺失
+    });
+    const strip = await screen.findByTestId("session-summary-strip");
+    expect(strip.textContent).not.toMatch(/长间隔/);
+  });
+
+  it("max tool chip: repeatRunMaxTool / repeatRunMaxCount 显示在 chip 里", async () => {
+    renderWithMeta({
+      ...parentMeta,
+      textMessageCount: 50,
+      toolUsage: [["Bash", 100]],
+      phaseHint: "mixed",
+      repeatRunCount: 3,
+      repeatRunMaxTool: "Bash",
+      repeatRunMaxCount: 100,
+    });
+    const strip = await screen.findByTestId("session-summary-strip");
+    expect(strip.textContent).toMatch(/连续重复 3 段/);
+    expect(strip.textContent).toMatch(/Bash × 100/);
+  });
+});

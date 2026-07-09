@@ -198,7 +198,14 @@ function isKnownMetaLabel(label: string): boolean {
     label === "agent_name" ||
     label === "agent-name" ||
     label === "agent_listing" ||
-    label === "file_snapshot"
+    label === "file_snapshot" ||
+    // v0.8.4 item 4:
+    label === "invoked_skills" ||
+    label === "plan_file_reference" ||
+    label === "compact_file_reference" ||
+    label === "attached_file" ||
+    label === "queued_command" ||
+    label === "queue_operation"
   );
 }
 
@@ -212,6 +219,13 @@ function isMetaKind(kind: string): boolean {
     kind === "file_snapshot" ||
     kind === "pr_link" ||
     kind === "agent_name" ||
-    kind === "task_reminder"
+    kind === "task_reminder" ||
+    // v0.8.4 item 4:
+    kind === "invoked_skills" ||
+    kind === "plan_file_reference" ||
+    kind === "compact_file_reference" ||
+    kind === "attached_file" ||
+    kind === "queued_command" ||
+    kind === "queue_operation"
   );
 }

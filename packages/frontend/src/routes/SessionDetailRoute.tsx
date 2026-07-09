@@ -41,18 +41,17 @@ import { TranscriptView } from "../views/TranscriptView";
 import { SearchInSessionBar } from "../views/SearchInSessionBar";
 import { SubagentPanel } from "../components/SubagentPanel";
 import { useKey } from "../lib/keymap";
-import { formatBytes, formatNumber, formatTimeExact } from "../lib/format";
+import {
+  formatBytes,
+  formatNumber,
+  formatTimeExact,
+  formatDuration,
+  formatLatency,
+} from "../lib/format"; // v0.8.4 item 2/5
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { apiRevealInFinder } from "../lib/api";
-import {
-  summarizeSession,
-  findRepeatRuns,
-  findIdleGaps,
-  formatIdleGap,
-  type SessionSummary,
-  type RepeatRun,
-  type IdleGap,
-} from "../components/sessionInsights";
+// v0.8.4 item 2': SessionSummaryStrip 全部从 meta.* 读, 不再调 summarizeSession / findRepeatRuns / findIdleGaps
+// 纯函数仍保留给 TrajectoryRoute / AnalyzeRoute / 未来 v0.8.5+ 复用, 不再 import
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionDetailRoute.css";
 
@@ -126,13 +125,7 @@ export default function SessionDetailRoute() {
     [meta, livePids]
   );
 
-  // ===== 聚合 + 去噪(从已加载 entries 派生) =====
-  const sessionInsights = useMemo(() => {
-    const summary: SessionSummary = summarizeSession(entries);
-    const repeats: RepeatRun[] = findRepeatRuns(entries, 3);
-    const idles: IdleGap[] = findIdleGaps(entries, 5 * 60_000);
-    return { summary, repeats, idles };
-  }, [entries]);
+  // ===== 聚合 + 去噪: v0.8.4 item 2' 起全部从 meta.* 读, 不再 O(n) 扫 entries =====
 
   // 当前搜索命中(传给 useTranscriptScroll)
   const currentHit = useSearchInSessionStore(
@@ -349,6 +342,16 @@ export default function SessionDetailRoute() {
                 🙈
               </span>
             )}
+            {/* v0.8.4 item 5: agent-name 静态 pill, 无跳转 (本会话自己的别名) */}
+            {meta.agentName && (
+              <span
+                className="agent-name-pill"
+                title={`jsonl agent-name envelope: ${meta.agentName}`}
+                data-testid="agent-name-pill"
+              >
+                🤖 {meta.agentName}
+              </span>
+            )}
           </h1>
           {sessionTags.length > 0 && (
             <div className="session-tags-row">
@@ -397,6 +400,56 @@ export default function SessionDetailRoute() {
                       meta.totalTokens.cacheRead +
                       meta.totalTokens.cacheWrite
                   )}
+                </span>
+              </>
+            )}
+            {/* v0.8.4 item 2: 固化指标直接从 meta.* 读, 不再 recompute */}
+            {meta.durationSeconds !== undefined && meta.durationSeconds !== null && (
+              <>
+                <span>·</span>
+                <span title="last_ts - first_ts">{formatDuration(meta.durationSeconds)}</span>
+              </>
+            )}
+            {meta.firstResponseLatencyMs !== undefined && meta.firstResponseLatencyMs !== null && (
+              <>
+                <span>·</span>
+                <span title="first assistant - first user">
+                  first↔resp {formatLatency(meta.firstResponseLatencyMs)}
+                </span>
+              </>
+            )}
+            {meta.userMessageCount !== undefined &&
+              meta.userMessageCount !== null &&
+              meta.assistantMessageCount !== undefined && (
+                <>
+                  <span>·</span>
+                  <span title="user / assistant 顶层消息计数 (排除 sidechain)">
+                    {meta.userMessageCount}u / {meta.assistantMessageCount}a
+                  </span>
+                </>
+              )}
+            {meta.errorCount !== undefined && meta.errorCount !== null && meta.errorCount > 0 && (
+              <>
+                <span>·</span>
+                <span className="stat-error" title="assistant stop_reason==error 或 is_error==true">
+                  ❌ {meta.errorCount} errors
+                </span>
+              </>
+            )}
+            {/* v0.8.4 item 4: meta 计数 (skills / plans / compact / files / queued) */}
+            {(meta.invokedSkillsCount ||
+              meta.planFileRefCount ||
+              meta.compactFileRefCount ||
+              meta.attachedFileCount ||
+              meta.queuedCommandCount) && (
+              <>
+                <span>·</span>
+                <span className="meta-counts">
+                  {meta.invokedSkillsCount ? `⚙${meta.invokedSkillsCount} skills ` : ""}
+                  {meta.planFileRefCount ? `📋${meta.planFileRefCount} plans ` : ""}
+                  {meta.compactFileRefCount ? `📦${meta.compactFileRefCount} compact ` : ""}
+                  {meta.attachedFileCount ? `🗂${meta.attachedFileCount} files ` : ""}
+                  {meta.queuedCommandCount ? `📤${meta.queuedCommandCount} queued ` : ""}
                 </span>
               </>
             )}
@@ -477,12 +530,8 @@ export default function SessionDetailRoute() {
 
       <SearchInSessionBar />
 
-      {/* 聚合 chip 行 — 一眼看到 session 结构 */}
-      <SessionSummaryStrip
-        summary={sessionInsights.summary}
-        repeats={sessionInsights.repeats}
-        idles={sessionInsights.idles}
-      />
+      {/* 聚合 chip 行 — 一眼看到 session 结构 (v0.8.4 item 2' 全部从 meta.* 读) */}
+      <SessionSummaryStrip meta={meta} />
 
       {/* v0.8.0: notes 编辑面板 + links 列表 */}
       {(notesEditing || overrides.snap.notes[meta.sessionId]) && (
@@ -584,7 +633,8 @@ export default function SessionDetailRoute() {
         </div>
       )}
 
-      <TranscriptView />
+      {/* v0.8.4 item 2'': meta 传给 TranscriptView 给 ContentFilterPanel 派生 availableTools */}
+      <TranscriptView meta={meta} />
     </div>
   );
 }
@@ -592,95 +642,125 @@ export default function SessionDetailRoute() {
 /**
  * SessionSummaryStrip — 一行聚合 chip
  *
- * 数据来源:summarizeSession / findRepeatRuns / findIdleGaps
- * (纯函数,见 components/sessionInsights.ts)
+ * v0.8.4 item 2': 全部从 `meta.*` 读 (DB 算好的派生数据), 不再调
+ * `summarizeSession` / `findRepeatRuns` / `findIdleGaps` 实时 O(n) 扫 entries。
  *
- * 设计:不抢戏 — 1 行,小字号,色块编码。空数据不渲染。
+ * 数据流:
+ * - 后端 sync 二阶段 enrich: `build_meta_full` 算 9 个字段 → 写 session_meta
+ * - 前端打开详情: 读 meta.* → 显示 chip
+ * - 第一次 sync 走 quick path (50 行), `textMessageCount` + `toolUsage` 即可拿到
+ *   (用户立刻看到); `phaseHint` / `repeatRun*` / `idleGap*` 走 enrich, 略等 ~1s
+ *
+ * 设计: 不抢戏 — 1 行, 小字号, 色块编码. 空数据不渲染。
  */
-function SessionSummaryStrip({
-  summary,
-  repeats,
-  idles,
-}: {
-  summary: SessionSummary;
-  repeats: RepeatRun[];
-  idles: IdleGap[];
-}) {
-  // 空 entries 或空 tool 都不显示(避免加载中闪烁)
-  if (summary.textMessageCount === 0) return null;
-  if (summary.toolUsage.length === 0 && summary.textMessageCount < 3) return null;
+function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
+  const textMsg = meta.textMessageCount ?? 0;
+  const toolUsage = meta.toolUsage ?? [];
+  const phaseHint = meta.phaseHint;
+  const phaseDetail = meta.phaseDetail;
+  const repeatRunCount = meta.repeatRunCount ?? 0;
+  const idleGapCount = meta.idleGapCount ?? 0;
+  const subagentCount = meta.subagentCount ?? 0;
+  const thinkingCount = meta.thinkingCount ?? 0;
+  const errorCount = meta.errorCount ?? 0;
 
-  // 取 top 5 tool,剩余合 "其他" 显示计数
-  const topTools = summary.toolUsage.slice(0, 5);
-  const otherTools = summary.toolUsage.slice(5);
-  const otherCount = otherTools.reduce((a, b) => a + b.count, 0);
+  // 空数据不显示(避免加载中闪烁 / 完全没 scan 过的旧 session)
+  if (textMsg === 0) return null;
+  if (toolUsage.length === 0 && textMsg < 3) return null;
+  // 没 phaseHint 说明 enrich 还没跑完 — 等一下
+  if (!phaseHint) return null;
+
+  // 取 top 5 tool, 剩余合 "其他" 显示计数
+  const topTools = toolUsage.slice(0, 5);
+  const otherTools = toolUsage.slice(5);
+  const otherCount = otherTools.reduce((a, [, c]) => a + c, 0);
 
   return (
     <div className="session-summary-strip" data-testid="session-summary-strip">
-      <span className={`ss-phase ss-phase-${summary.phaseHint}`} title={summary.phaseDetail}>
-        {summary.phaseHint === "explore" && "探索"}
-        {summary.phaseHint === "implement" && "实施"}
-        {summary.phaseHint === "mixed" && "混合"}
-        {summary.phaseHint === "short" && "短会话"}
-        {summary.phaseDetail && <span className="ss-phase-detail"> · {summary.phaseDetail}</span>}
+      <span className={`ss-phase ss-phase-${phaseHint}`} title={phaseDetail}>
+        {phaseHint === "explore" && "探索"}
+        {phaseHint === "implement" && "实施"}
+        {phaseHint === "mixed" && "混合"}
+        {phaseHint === "short" && "短会话"}
+        {phaseDetail && <span className="ss-phase-detail"> · {phaseDetail}</span>}
       </span>
       <span className="ss-sep" />
-      {topTools.map((t) => (
-        <span key={t.tool} className="ss-tool" title={`${t.tool} × ${t.count}`}>
-          {t.tool} <span className="ss-tool-count">{t.count}</span>
+      {topTools.map(([tool, count]) => (
+        <span key={tool} className="ss-tool" title={`${tool} × ${count}`}>
+          {tool} <span className="ss-tool-count">{count}</span>
         </span>
       ))}
       {otherCount > 0 && (
         <span
           className="ss-tool ss-tool-other"
-          title={otherTools.map((t) => `${t.tool} × ${t.count}`).join("; ")}
+          title={otherTools.map(([t, c]) => `${t} × ${c}`).join("; ")}
         >
           +{otherTools.length} 其他 <span className="ss-tool-count">{otherCount}</span>
         </span>
       )}
-      {summary.subagentCount > 0 && (
+      {subagentCount > 0 && (
         <>
           <span className="ss-sep" />
-          <span className="ss-subagent">subagent × {summary.subagentCount}</span>
+          <span className="ss-subagent">subagent × {subagentCount}</span>
         </>
       )}
-      {summary.thinkingCount > 0 && (
+      {thinkingCount > 0 && (
         <>
           <span className="ss-sep" />
-          <span className="ss-thinking">thinking × {summary.thinkingCount}</span>
+          <span className="ss-thinking">thinking × {thinkingCount}</span>
         </>
       )}
-      {summary.errorCount > 0 && (
+      {errorCount > 0 && (
         <>
           <span className="ss-sep" />
           <span className="ss-error" title="包含 stopReason=error 的 assistant message">
-            错误 × {summary.errorCount}
+            错误 × {errorCount}
           </span>
         </>
       )}
-      {repeats.length > 0 && (
+      {repeatRunCount > 0 && (
         <>
           <span className="ss-sep" />
           <span
             className="ss-repeat"
-            title={repeats.map((r) => `${r.tool} × ${r.count}`).join("; ")}
+            title={
+              meta.repeatRunMaxTool && meta.repeatRunMaxCount
+                ? `${meta.repeatRunMaxTool} × ${meta.repeatRunMaxCount} (最大段)`
+                : `${repeatRunCount} 段连续重复`
+            }
           >
-            连续重复 {repeats.length} 段
+            连续重复 {repeatRunCount} 段
+            {meta.repeatRunMaxTool && meta.repeatRunMaxCount && (
+              <>
+                {" · "}
+                <span className="ss-repeat-max">
+                  {meta.repeatRunMaxTool} × {meta.repeatRunMaxCount}
+                </span>
+              </>
+            )}
           </span>
         </>
       )}
-      {idles.length > 0 && (
+      {idleGapCount > 0 && meta.idleGapMaxMs && (
         <>
           <span className="ss-sep" />
-          <span
-            className="ss-idle"
-            title={idles.map((g) => formatIdleGap(g.durationMs)).join("; ")}
-          >
-            {idles.length} 长间隔 · 最长{" "}
-            {formatIdleGap(Math.max(...idles.map((g) => g.durationMs)))}
+          <span className="ss-idle" title={`最长间隔 ${formatIdleGapFromMs(meta.idleGapMaxMs)}`}>
+            {idleGapCount} 长间隔 · 最长 {formatIdleGapFromMs(meta.idleGapMaxMs)}
           </span>
         </>
       )}
     </div>
   );
+}
+
+/** ms → "5 分钟" / "2 小时" / "3 天" — SST 自带, 不依赖 sessionInsights 模块 */
+function formatIdleGapFromMs(ms: number): string {
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec} 秒`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return min % 60 > 0 ? `${hr} 小时 ${min % 60} 分` : `${hr} 小时`;
+  const day = Math.floor(hr / 24);
+  return hr % 24 > 0 ? `${day} 天 ${hr % 24} 小时` : `${day} 天`;
 }

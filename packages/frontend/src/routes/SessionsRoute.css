@@ -3,6 +3,9 @@
   flex-direction: column;
   height: 100%;
   background: var(--color-bg);
+  /* v0.8.4 item 1: 给底部 fixed status bar 留 26px 高度, 避免最后一排 session 被挡 */
+  padding-bottom: 26px;
+  box-sizing: border-box;
 }
 
 .topbar {

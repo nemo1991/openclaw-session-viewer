@@ -1,0 +1,199 @@
+/* v0.8.4 item 1: HomeStatusBar — 屏幕底部贴边 (IDE 风格 status bar) */
+
+.home-status-bar {
+  position: fixed;
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  pointer-events: none; /* 容器不挡点击, 内部元素自己开 */
+  font-family: var(--font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 12px;
+  margin: 0;
+  padding: 0;
+}
+
+.home-status-bar > * {
+  pointer-events: auto;
+}
+
+.home-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 14px;
+  border: none;
+  border-top: 1px solid rgba(127, 127, 127, 0.3);
+  border-right: 1px solid rgba(127, 127, 127, 0.3);
+  border-top-right-radius: 6px;
+  background: rgba(127, 127, 127, 0.08);
+  color: var(--color-text, #222);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+  backdrop-filter: blur(8px);
+}
+.home-status-pill:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+.home-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.home-status-dot-ok {
+  background: #16a34a;
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.6);
+}
+.home-status-dot-stale {
+  background: #ca8a04;
+}
+.home-status-dot-error {
+  background: #dc2626;
+  box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.5);
+}
+.home-status-dot-syncing,
+.home-status-dot-scanning {
+  background: #2563eb;
+  animation: home-status-pulse 1.2s ease-in-out infinite;
+}
+.home-status-dot-done {
+  background: #16a34a;
+}
+.home-status-dot-live-error {
+  background: #dc2626;
+  animation: home-status-pulse 1.2s ease-in-out infinite;
+}
+
+.home-status-pill-icon {
+  display: inline-block;
+  min-width: 12px;
+  text-align: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--color-text-muted, #888);
+}
+.home-status-bar[data-live="scanning"] .home-status-pill-icon,
+.home-status-bar[data-live="syncing"] .home-status-pill-icon {
+  animation: home-status-icon-spin 1.2s linear infinite;
+  color: #2563eb;
+}
+.home-status-bar[data-live="done"] .home-status-pill-icon {
+  color: #16a34a;
+}
+.home-status-bar[data-live="error"] .home-status-pill-icon {
+  color: #dc2626;
+}
+
+@keyframes home-status-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes home-status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0);
+  }
+}
+
+.home-status-pill-text {
+  min-width: 0;
+}
+
+.home-status-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 3px;
+  color: inherit;
+  background: transparent;
+  font-size: 12px;
+  user-select: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.home-status-pill-btn:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+
+/* Expanded panel — 向上弹, 贴底部 pill 上方 */
+.home-status-panel {
+  margin-bottom: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(127, 127, 127, 0.3);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: rgba(20, 20, 20, 0.92);
+  color: var(--color-text, #e0e0e0);
+  max-width: 720px;
+  margin-left: 12px;
+  margin-bottom: 0;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+}
+
+.home-status-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.home-status-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--color-text-muted, #888);
+  padding: 3px 12px 3px 0;
+  width: 110px;
+  vertical-align: top;
+}
+.home-status-table td {
+  padding: 3px 0;
+  word-break: break-word;
+}
+
+.home-status-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
+.home-status-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.home-status-btn {
+  padding: 4px 12px;
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.1);
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.home-status-btn:hover:not(:disabled) {
+  background: rgba(127, 127, 127, 0.22);
+}
+.home-status-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.home-status-error {
+  color: #dc2626;
+  font-size: 11px;
+}

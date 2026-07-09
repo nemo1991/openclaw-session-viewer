@@ -129,28 +129,15 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
     }
     case "file_snapshot":
     case "file-history-snapshot": {
-      // snapshot.trackedFileBackups 才是真正的文件数组
+      // v0.8.4: 抽出子组件以便用 useState 控制折叠 (item 3)
       const backups = (get("trackedFileBackups") as Record<string, unknown>) ?? {};
-      const paths = Object.keys(backups);
-      const fileCount = paths.length;
       const mid = String(get("messageId") ?? "");
       return (
-        <div className="block-meta-info meta-block-flat">
-          <span className="meta-kind-badge">📁 file_snapshot</span>
-          <span className="meta-primary-text">
-            {fileCount > 0 ? `${fileCount} 个跟踪文件` : "空 snapshot (无文件)"}
-          </span>
-          {mid && <span className="meta-sub">msg: {mid.slice(0, 8)}…</span>}
-          {fileCount > 0 && (
-            <ul className="meta-file-list" data-count={fileCount}>
-              {paths.map((p) => (
-                <li key={p} className="meta-file-item">
-                  <FilePathClickable path={p} parentJsonlPath={parentJsonlPath} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+        <FileSnapshotBlock
+          paths={Object.keys(backups)}
+          messageId={mid}
+          parentJsonlPath={parentJsonlPath}
+        />
       );
     }
     case "pr_link":
@@ -269,9 +256,177 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
         </div>
       );
     }
+    // v0.8.4 item 4: 新增 6 个 meta block 渲染
+    case "invoked_skills": {
+      const skills = (get("skills") as Array<{ name?: string; path?: string }>) ?? [];
+      return (
+        <div className="block-meta-info meta-block-flat">
+          <span className="meta-kind-badge">⚙ invoked_skills</span>
+          <span className="meta-primary-text">{skills.length} 个 skill</span>
+          <div className="meta-list">
+            {skills.map((s, i) => (
+              <span key={i} className="meta-tag" title={s.path ?? ""}>
+                {s.name ?? "?"}
+              </span>
+            ))}
+          </div>
+        </div>
+      );
+    }
+    case "plan_file_reference": {
+      const path = String(get("planFilePath") ?? "");
+      const preview = String(get("planContentPreview") ?? "");
+      const fileName = path.split("/").pop() ?? path;
+      return (
+        <div className="block-meta-info meta-block-flat">
+          <span className="meta-kind-badge">📋 plan_file_reference</span>
+          <div className="meta-plan-block">
+            <div className="meta-plan-path-row">
+              <span className="meta-plan-filename" title={path}>
+                📄 {fileName}
+              </span>
+              {path && <FilePathClickable path={path} parentJsonlPath={parentJsonlPath} />}
+            </div>
+            {preview && <code className="meta-path">{preview}…</code>}
+          </div>
+        </div>
+      );
+    }
+    case "compact_file_reference": {
+      const filename = String(get("filename") ?? "");
+      const displayPath = String(get("displayPath") ?? "");
+      return (
+        <div className="block-meta-info meta-block-flat">
+          <span className="meta-kind-badge">📦 compact_file_reference</span>
+          {filename && (
+            <div className="meta-plan-block">
+              <div className="meta-plan-path-row">
+                <span className="meta-plan-filename" title={filename}>
+                  📄 {displayPath || filename}
+                </span>
+                <FilePathClickable path={filename} parentJsonlPath={parentJsonlPath} />
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "attached_file": {
+      const filename = String(get("filename") ?? "");
+      const displayPath = String(get("displayPath") ?? "");
+      const contentType = String(get("contentType") ?? "unknown");
+      return (
+        <div className="block-meta-info meta-block-flat">
+          <span className="meta-kind-badge">🗂 attached_file</span>
+          <span className="meta-sub">type: {contentType}</span>
+          {filename && (
+            <div className="meta-plan-block">
+              <div className="meta-plan-path-row">
+                <span className="meta-plan-filename" title={filename}>
+                  📄 {displayPath || filename}
+                </span>
+                <FilePathClickable path={filename} parentJsonlPath={parentJsonlPath} />
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    case "queued_command": {
+      const preview = String(get("promptPreview") ?? "");
+      const mode = String(get("commandMode") ?? "");
+      return (
+        <div className="block-meta-info meta-block-flat">
+          <span className="meta-kind-badge">📤 queued_command</span>
+          {mode && (
+            <span className="meta-reminder-pill meta-reminder-full" title={`commandMode: ${mode}`}>
+              mode: {mode}
+            </span>
+          )}
+          {preview && (
+            <code className="meta-path" title={preview}>
+              {preview}
+              {preview.length >= 100 ? "…" : ""}
+            </code>
+          )}
+        </div>
+      );
+    }
+    case "queue_operation": {
+      const op = String(get("operation") ?? "");
+      const ts = String(get("timestamp") ?? "");
+      const isEnqueue = op === "enqueue";
+      return (
+        <div className="block-meta-info meta-block-flat">
+          <span
+            className={`meta-reminder-pill ${isEnqueue ? "meta-reminder-full" : "meta-reminder-none"}`}
+            title={ts}
+          >
+            {isEnqueue ? "📥 enqueue" : "🗑 remove"}
+          </span>
+          {ts && <span className="meta-sub">{ts}</span>}
+        </div>
+      );
+    }
     default:
       return <UnknownBlockCard block={block} />;
   }
+}
+
+/* v0.8.4: file_snapshot 折叠 (item 3)
+ *
+ * v0.6.x 把 <details> 折叠移除, 默认全展开 → 但单个 snapshot 可达 100+ 文件,
+ * 全渲染进 DOM 太重。改为: 默认显示前 5 行, 下方放 "展开剩余 N 个文件" 按钮。
+ * 用 useState 而非 <details>, 跟 v0.6.x 设计意图一致 (不用原生 fold widget)。
+ */
+const FILE_SNAPSHOT_VISIBLE_DEFAULT = 5;
+
+function FileSnapshotBlock({
+  paths,
+  messageId,
+  parentJsonlPath,
+}: {
+  paths: string[];
+  messageId: string;
+  parentJsonlPath?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const fileCount = paths.length;
+  const mid = messageId;
+  const visiblePaths = expanded ? paths : paths.slice(0, FILE_SNAPSHOT_VISIBLE_DEFAULT);
+  const overflow = fileCount - FILE_SNAPSHOT_VISIBLE_DEFAULT;
+  const showToggle = overflow > 0;
+  return (
+    <div className="block-meta-info meta-block-flat">
+      <span className="meta-kind-badge">📁 file_snapshot</span>
+      <span className="meta-primary-text">
+        {fileCount > 0 ? `${fileCount} 个跟踪文件` : "空 snapshot (无文件)"}
+      </span>
+      {mid && <span className="meta-sub">msg: {mid.slice(0, 8)}…</span>}
+      {fileCount > 0 && (
+        <>
+          <ul className="meta-file-list" data-count={visiblePaths.length}>
+            {visiblePaths.map((p) => (
+              <li key={p} className="meta-file-item">
+                <FilePathClickable path={p} parentJsonlPath={parentJsonlPath} />
+              </li>
+            ))}
+          </ul>
+          {showToggle && (
+            <button
+              type="button"
+              className="meta-show-more"
+              data-testid="file-snapshot-toggle"
+              onClick={() => setExpanded((v) => !v)}
+              title={expanded ? "收起文件列表" : `展开剩余 ${overflow} 个文件`}
+            >
+              {expanded ? "收起" : `展开剩余 ${overflow} 个文件`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 /* v0.6.x: 路径点击 reveal — 用 revealAndNotify 拿错误, 内联可操作错误 UI (用户报 'reveal 无效')

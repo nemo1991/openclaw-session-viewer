@@ -74,6 +74,50 @@ export interface SessionMeta {
   notes?: string;
   /** tag 名列表 */
   tags?: string[];
+  // --- v0.8.4: 由 build_meta_full 二阶段填的派生指标 (item 2) ---
+  /** assistant 消息中 stop_reason=="error" 或 is_error==true 的计数 */
+  errorCount?: number;
+  /** 顶层 user 消息计数 (排除 sidechain) */
+  userMessageCount?: number;
+  /** 顶层 assistant 消息计数 (排除 sidechain) */
+  assistantMessageCount?: number;
+  /** 会话跨度(秒) */
+  durationSeconds?: number;
+  /** 首次响应延迟(毫秒) */
+  firstResponseLatencyMs?: number;
+  /** jsonl 里 agent-name envelope 的 agentName 值 (本会话自己的别名) */
+  agentName?: string;
+  /** invoked_skills 计数 */
+  invokedSkillsCount?: number;
+  /** plan_file_reference 计数 */
+  planFileRefCount?: number;
+  /** compact_file_reference 计数 */
+  compactFileRefCount?: number;
+  /** queued_command 计数 */
+  queuedCommandCount?: number;
+  /** attached_file 计数 */
+  attachedFileCount?: number;
+  // --- v0.8.4 item 2': SessionSummaryStrip 全固化 (从 DB 读, 不再实时算) ---
+  /** 文本消息数 (user + assistant + tool 角色), 替代前端 summarizeSession.textMessageCount */
+  textMessageCount?: number;
+  /** 全量 tool 分布, 按 count 降序: [["Bash", 286], ["Read", 50], ...] */
+  toolUsage?: [string, number][];
+  /** 阶段提示: "explore" | "implement" | "mixed" | "short" */
+  phaseHint?: "explore" | "implement" | "mixed" | "short";
+  /** 阶段详情, 例 "47% 写操作" / "短 session" */
+  phaseDetail?: string;
+  /** 相邻 assistant tool_use 同 tool ≥3 次的 run 段数 */
+  repeatRunCount?: number;
+  /** 占比最大 run 的 tool name (tooltip) */
+  repeatRunMaxTool?: string;
+  /** 占比最大 run 的次数 (tooltip) */
+  repeatRunMaxCount?: number;
+  /** 相邻 entry ts gap ≥5 分钟的次数 */
+  idleGapCount?: number;
+  /** 最长间隔 ms */
+  idleGapMaxMs?: number;
+  /** v0.8.4 item 2'': 该 session 用过的 model id(去重,字典序),给 ContentFilterPanel chip */
+  availableModels?: string[];
 }
 
 /** 归一化后的内容块 */

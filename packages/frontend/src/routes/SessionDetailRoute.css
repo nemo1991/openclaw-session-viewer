@@ -223,6 +223,30 @@
   color: var(--color-accent);
 }
 
+/* v0.8.4 item 5: agent-name 静态 pill */
+.session-header-info h1 .agent-name-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  margin-left: 6px;
+  border-radius: 3px;
+  vertical-align: middle;
+  background: color-mix(in srgb, var(--color-info, #3b82f6) 18%, transparent);
+  color: var(--color-info, #3b82f6);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+/* v0.8.4 item 2: 派生指标 chips */
+.session-header-stats .stat-error {
+  color: #dc2626;
+}
+.session-header-stats .meta-counts {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.85;
+}
+
 .session-header-info h1 .badge-archived {
   background: color-mix(in srgb, var(--color-text-muted) 25%, transparent);
   color: var(--color-text-muted);
