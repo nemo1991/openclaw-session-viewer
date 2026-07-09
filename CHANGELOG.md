@@ -2,6 +2,135 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.4] - 2026-07-09
+
+v0.8.3 修好 refresh storm 后,用户要求把"实施那行数据统计 + 筛选条件"全部固化到 DB,同时关 5 个 UI 缺口(状态栏、file_snapshot 折叠、6 个 meta 类型无 UI、agent_name 不可见、TranscriptView 倒序卡)。本版本纯增量 — DB schema 扩 19 列(全部走 `ALTER TABLE` idempotent migration)、3 个新前端组件、6 个新 parser handler、3 个 perf 改动。
+
+### 新增
+
+#### 1. HomeStatusBar(item 1)— 替代 transient SyncBanner
+
+之前 SyncBanner 是浮动 toast,消失后用户看不到"上次同步什么时候 / 是否失败 / 文件数 / DB 大小"。新版 `packages/frontend/src/components/HomeStatusBar.tsx` 永久 pill 在首页:
+
+- pill 颜色: **绿**(60s 内) / **黄**(1-10 min) / **红**(>10 min 或有 error 或 synced < seen) / **蓝转**(inProgress)
+- pill 字段: 时间 · 文件数 · failed 数 + ↻ 手动刷新 + ▼ 展开
+- 展开面板: lastRunAt / idle 状态 / seen / synced / failed / last error / DB size / DB path + "重建数据库" 按钮
+- 数据来源: `apiGetSyncStatus()` + 新增 `apiGetDbPath()` + `useSessionsStore.refresh()`
+- `SyncBanner.tsx` / `SyncBanner.css` 完全删除,`App.tsx` 不再挂载
+- `get_db_path` 新 Tauri command 在 `commands/overrides.rs`(同 sync utilities 分类)
+
+#### 2. SessionSummaryStrip + 头部 stats 全读 DB(item 2 + 2' + 5)
+
+之前 `SessionDetailRoute` 每次进入都调 `summarizeSession(entries)` / `findRepeatRuns(entries, 3)` / `findIdleGaps(entries, 5min)`,全量 O(n) 扫 transcript。新版所有 chip 跟数字都从 `session_meta.*` 读,前端不再 walk entries:
+
+| 字段                                                                                                           | 来源                                                           |
+| -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `toolUsage` (top N)                                                                                            | `session_meta.tool_usage_json` (紧凑数组 `[["Bash",286],...]`) |
+| `phaseHint` / `phaseDetail`                                                                                    | `session_meta.phase_hint` / `phase_detail`                     |
+| `textMessageCount`                                                                                             | `session_meta.text_message_count`                              |
+| `repeatRunCount` / `repeatRunMaxTool` / `repeatRunMaxCount`                                                    | 3 列,给 chip 显示 + tooltip                                    |
+| `idleGapCount` / `idleGapMaxMs`                                                                                | 2 列,给 chip 显示                                              |
+| `errorCount` / `userMessageCount` / `assistantMessageCount`                                                    | 3 列,头部 stats                                                |
+| `durationSeconds` / `firstResponseLatencyMs`                                                                   | 2 列,头部 stats                                                |
+| `agentName`                                                                                                    | 静态 pill 显示在 `<h1>` 下方,**无 click handler** — 见 (5)     |
+| `invokedSkillsCount` / `planFileRefCount` / `compactFileRefCount` / `queuedCommandCount` / `attachedFileCount` | 5 个 meta 类型计数,头部 compact badge                          |
+
+**sync 二阶段 enrich**(`db/sync.rs:sync_once`): 同步成功的 jsonl 末尾跑 `build_meta_full`(cap 5000 行)→ `enrich_session_meta` UPDATE 19 列。quick path(头部 50 行)算 `textMessageCount` + `toolUsage`,用户立刻看到;`phaseHint` / `repeatRun*` / `idleGap*` 走 enrich,等 ~1s 后才能看到完整 chip。
+
+**Schema migration**(`db/migrations.rs`): `PRAGMA table_info(session_meta)` + `ALTER TABLE ADD COLUMN`,idempotent,无 `user_version`。3 个测试:`ensure_columns_adds_missing` / `preserves_existing_rows` / `idempotent`。
+
+**新模块** `parser/meta_extras.rs`:`build_meta_full(path) -> MetaExtras`,跟 `parser/blocks/tool_use.rs` 共享 `pub const TOOL_USE_ALIASES` 顶层 const(修 OpenClaw `toolCall` 类型抓不到的脱节 bug,见下)。
+
+#### 3. ContentFilterPanel chip 走 DB(item 2'')
+
+`TranscriptView.availableTools` 优先 `meta.toolUsage.map(([tool]) => tool)`,`availableModels` 优先 `meta.availableModels`。enrich 没跑完前(~1s)走 entries 派生 fallback,用户立刻看到 chip;enrich 跑完后切到 meta.\*,不再触发 entries scan。
+
+- `available_models_json` 用 `BTreeSet<String>` 自动字典序(去重 + 排好序),紧凑数组 `["claude-opus-4-8","claude-sonnet-5-20251001"]`
+- `TranscriptView` 接收 `meta?: SessionMeta` prop,从 `SessionDetailRoute` 透传
+
+#### 4. 6 个 meta 类型独立 block handler + 渲染(item 4)
+
+之前 `invoked_skills` / `plan_file_reference` / `compact_file_reference` / `file` / `queue-operation` / `queued_command` 全部掉进 catch-all `kind:"meta"` 卡片(显示"Unknown")。新版每种都有独立 handler:
+
+| Type                          | Module                             | 渲染                                                    |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------- |
+| `invoked_skills`              | `blocks/invoked_skills.rs`         | skill names as `<code>` chips                           |
+| `plan_file_reference`         | `blocks/plan_file_reference.rs`    | filename + FilePathClickable, content preview 500 chars |
+| `compact_file_reference`      | `blocks/compact_file_reference.rs` | filename + FilePathClickable                            |
+| `file` (attachment)           | `blocks/attached_file.rs`          | filename + FilePathClickable + content-type label       |
+| `queued_command` (attachment) | `blocks/queued_command.rs`         | prompt preview 100 chars + command-mode badge           |
+| `queue-operation` (top-level) | `blocks/queue_operation.rs`        | small badge `enqueue` 橙 / `remove` 灰                  |
+
+`parser/blocks/mod.rs` 默认注册(在 `MetaBlockHandler` 之前)。`queue-operation` 特殊:出现在 top-level,`parser/claude.rs` `normalize()` 加 arm。
+
+`MessageBubble.isKnownMetaLabel` 加 hyphenated aliases,`MetaBlock.tsx` 6 个新 case。**`attached_file` 必须跳过 `content` 字段**(95 occurrences × multi-KB),只 capture filename + displayPath。
+
+#### 5. agent_name 静态 badge(item 5)
+
+`session_meta.agent_name` 列由 `build_meta_full` 扫第一个 `type=="agent-name"` record 捕获。Detail header 在 `<h1>` 下方显示 `<span className="agent-name-pill">agent: {agentName}</span>`,**无 click handler** — 经用户确认,JSONL `agent-name` 记录的 `sessionId` 等于本 jsonl 的 basename,是本会话自己的别名,不是 foreign agent reference,没有"跳到 agent"目标。
+
+### 性能
+
+#### 6. TranscriptView 渲染层 useMemo 锁 3 O(n)(item 3 perf)
+
+用户实测大 session(3000+ entry)倒序时第一次打开详情页明显卡。根因不是 filter,是 3 个没 memo 的 O(n) 全量扫:
+
+| 计算                                    | deps              | 收益                                                                |
+| --------------------------------------- | ----------------- | ------------------------------------------------------------------- |
+| `findRepeatRuns(entries, 3)`            | `[entries]`       | 倒序触发 re-render **完全不跑**(entries ref 不变)— 真正 win         |
+| `findIdleGaps(sortedEntries, 5*60_000)` | `[sortedEntries]` | 倒序必跑一次(sortedEntries ref 必变,不可避免),后续 re-render 用缓存 |
+| `idleGapByAfterIndex = Map<...>`        | `[idleGaps]`      | 同上                                                                |
+
+**为什么不能 DB 化**:这 3 个给 entry-level marker 用(`msg-repeat-start` / `msg-repeat-cont` / `msg-repeat-end` 高亮 / idle gap 横线 + "间隔 X 分钟"标签),需要 `startIndex` / `endIndex` / `afterIndex`,跟 entries 加载窗口相关,DB 没法存。DB 只存聚合数(`repeatRunCount` / `maxTool` / `maxCount` / `idleGapCount` / `maxMs`)给 chip 用。
+
+### UI 改进
+
+#### 7. file_snapshot fold(item 3)
+
+之前 100+ tracked files 的 file_snapshot 全部塞进 DOM。新版 MetaBlock 默认显示前 5 个 + "展开剩余 N 个" 按钮 + "收起" 切换。`.meta-show-more` CSS 加。`<details>` 已弃用,改用 explicit button。
+
+### 修复
+
+#### 8. build_meta_full 跟 parser/blocks/tool_use.rs 的 alias 脱节(MEDIUM — OpenClaw toolCall 抓不到)
+
+`parser/blocks/tool_use.rs` alias 列表 `["tool_use","toolUse","tool_call","function_call","toolCall"]` 跟 `build_meta_full` 内联的 `obj.get("message").get("content")[i].type == "tool_use"` 不一致,OpenClaw `toolCall` 类型抓不到。**抽 `pub const TOOL_USE_ALIASES: &[&str]` 顶层 const** 让两边复用。修后现有 OpenClaw session 的 `tool_usage_json` 会变化(从缺 `toolCall` → 包含),**bug fix,不是 regression**。
+
+#### 9. `top_tools` cap 3 → 5(LOW)
+
+`commands/sessions.rs:326-328` 之前只存 top 3,扩到 5 给 chip 更丰富显示。
+
+### 测试
+
+- `cargo fmt -- --check`: clean
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `cargo test --lib`: **136/136**(3 个 ensure_columns tests + 12 个 meta_extras tests + 121 旧)
+- `pnpm typecheck`: clean(shared + frontend)
+- `pnpm -r test`: **472/472**(33 files,含 HomeStatusBar pill state colors + MetaBlock file_snapshot fold cases + SessionDetailRoute 6 meta + agent_name pill + SessionSummaryStrip 9 字段 mock)
+- `pnpm --filter @ocsv/frontend build`: ✓
+
+### Dev manual 验证清单(13 步)
+
+1. Home: status pill 可见(灰/红/绿/黄按 age),点击展开面板
+2. 等 30s,点 ↻ — pill 刷新
+3. 打开详情页: header 显示 errorCount / userCount / assistantCount / duration / latency **从 DB 读**,无 entry-walk
+4. SessionSummaryStrip: phase chip (实施/探索/mixed/short) + tool top 5 + "其他" 全部从 `meta.toolUsage` 读;thinking / error / subagent 也从 `meta.*` 读;不再有 "计算中" 占位
+5. Repeat run chip: "连续重复 N 段 · Bash × 286" 从 `meta.repeatRunCount` / `repeatRunMaxTool` / `repeatRunMaxCount` 读
+6. Idle gap chip: "N 长间隔 · 最长 X 分钟" 从 `meta.idleGapCount` / `idleGapMaxMs` 读
+7. 倒序大 session(3000+ entry): `findRepeatRuns` **完全不跑**,`findIdleGaps` 跑一次 O(n) 后稳定
+8. 50+ file_snapshot entries: 默认前 5 可见,"展开剩余 N 个文件" button
+9. 含 invoked_skills / plan_file_reference / compact_file_reference 的 session: block 显示对应数据
+10. agent_name badge 出现在 header 下方(e.g. "agent: merge-g1-g2-g3-into-frontend")— 无链接
+11. 含 3+ 不同 model 的 session: ContentFilterPanel MODEL chip 跟 assistant message 的 model 字段一致
+12. 新 DB(delete observer.db, restart): ensure_columns 跑,schema 匹配
+13. 老 v0.8.x DB(old schema): ensure_columns in-place 升级(11→19 列)无数据丢失
+
+### 已识别但仍未修(v0.8.5+ 候选)
+
+- **HIGH:** `Mutex<Connection>` 串行化读、notify_waiters coalescing 丢命令、每文件 emit 风暴、scan_live_pids per-file 10× 慢、`export_overrides` 包含 hidden + notes(隐私泄漏)、last_error 永不写、PRAGMA WAL 失败静默
+- **MEDIUM:** placeholder jsonl_path UNIQUE 移动文件炸、GROUP_CONCAT 撞 tag 名字逗号、save_settings 任何字段修改触发 re-walk、`refresh_sessions` 触发即返旧值、sid 输入验证、`list_overrides` 全量含 hidden/archived 浪费 IPC、`add_session_link` OR REPLACE 改 created_at、apply_notes Keepboth IS NOT NULL 含空串
+- **PERF:** `findIdleGaps` 单遍 O(n) 在反复倒序/正序切换时仍卡主线程,根治需 web worker 或增量累加;`BTreeSet` 字典序跟 `tool_usage_json` 频次降序不一致,如果未来想 "model × count" 排版需新加 `model_usage_json`
+- **TEST GAP:** `db/sync.rs` / `db/schema.rs` 0 tests,前端 `overridesStore` / `SearchPalette` / `DatabasePanel` / `SessionsRoute listen 回路` 0 tests
+
 ## [0.8.3] - 2026-07-08
 
 v0.8.2 修好 NOT NULL 之后,启动报"出错了: [object Object]"且 log 显示每秒数十次 sync。本版本修两个耦合 bug:`sessions-updated` listen 触发 refresh 风暴 + 多处 `String(e)` 错把 Tauri error 对象转成 `[object Object]`。
