@@ -325,7 +325,8 @@ pub(crate) fn build_claude_session_meta(
     // top 3 工具名(按频次降序,同名并列按字典序)
     let mut tool_pairs: Vec<(String, u32)> = tool_name_count.into_iter().collect();
     tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let top_tools: Vec<String> = tool_pairs.into_iter().take(3).map(|(n, _)| n).collect();
+    // v0.8.4: top 3 -> top 5 (item 2: top_tools_json 复用, 扩大保存范围)
+    let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
 
     // 完整计数 (可能比 50 多)
     let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
@@ -433,6 +434,30 @@ pub(crate) fn build_claude_session_meta(
         archived: false,
         notes: None,
         tags: None,
+        // v0.8.4 item 2: 派生指标由 build_meta_full 二阶段填; quick path 留 None
+        error_count: None,
+        user_message_count: None,
+        assistant_message_count: None,
+        duration_seconds: None,
+        first_response_latency_ms: None,
+        agent_name: None,
+        invoked_skills_count: None,
+        plan_file_ref_count: None,
+        compact_file_ref_count: None,
+        queued_command_count: None,
+        attached_file_count: None,
+        // v0.8.4 item 2': SessionSummaryStrip 全固化
+        // quick path 50 行不算这些, 等 enrich 二阶段填
+        text_message_count: None,
+        tool_usage: None,
+        phase_hint: None,
+        phase_detail: None,
+        repeat_run_count: None,
+        repeat_run_max_tool: None,
+        repeat_run_max_count: None,
+        idle_gap_count: None,
+        idle_gap_max_ms: None,
+        available_models: None,
     })
 }
 
@@ -527,7 +552,8 @@ pub(crate) fn build_openclaw_session_meta(
     // top 3 工具名(按频次)
     let mut tool_pairs: Vec<(String, u32)> = tool_name_count.into_iter().collect();
     tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    let top_tools: Vec<String> = tool_pairs.into_iter().take(3).map(|(n, _)| n).collect();
+    // v0.8.4: top 3 -> top 5 (item 2: top_tools_json 复用, 扩大保存范围)
+    let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
 
     let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
     let message_count = if total > head.len() as u32 {
@@ -582,6 +608,30 @@ pub(crate) fn build_openclaw_session_meta(
         archived: false,
         notes: None,
         tags: None,
+        // v0.8.4 item 2: 派生指标由 build_meta_full 二阶段填; quick path 留 None
+        error_count: None,
+        user_message_count: None,
+        assistant_message_count: None,
+        duration_seconds: None,
+        first_response_latency_ms: None,
+        agent_name: None,
+        invoked_skills_count: None,
+        plan_file_ref_count: None,
+        compact_file_ref_count: None,
+        queued_command_count: None,
+        attached_file_count: None,
+        // v0.8.4 item 2': SessionSummaryStrip 全固化
+        // quick path 50 行不算这些, 等 enrich 二阶段填
+        text_message_count: None,
+        tool_usage: None,
+        phase_hint: None,
+        phase_detail: None,
+        repeat_run_count: None,
+        repeat_run_max_tool: None,
+        repeat_run_max_count: None,
+        idle_gap_count: None,
+        idle_gap_max_ms: None,
+        available_models: None,
     })
 }
 

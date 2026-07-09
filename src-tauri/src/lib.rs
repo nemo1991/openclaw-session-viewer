@@ -188,6 +188,7 @@ pub fn run() {
             commands::overrides::remove_session_link,
             commands::overrides::list_session_links,
             commands::overrides::get_sync_status,
+            commands::overrides::get_db_path, // v0.8.4 item 1
             commands::overrides::rebuild_db,
             commands::overrides::export_overrides,
             commands::overrides::import_overrides,

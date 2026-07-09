@@ -18,6 +18,8 @@ use crate::model::SessionMeta;
 /// 应用全部 schema(只在打开 DB 时调一次)
 pub fn apply(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(SCHEMA_SQL)?;
+    // v0.8.4: 给已存在 v0.8.x DB 加列 (item 2)
+    crate::db::migrations::ensure_columns(conn)?;
     Ok(())
 }
 
@@ -45,7 +47,31 @@ CREATE TABLE IF NOT EXISTS session_meta (
   trajectory_size   INTEGER,
   subagent_count    INTEGER NOT NULL DEFAULT 0,
   subagent_ids_json TEXT,
-  synced_at         INTEGER NOT NULL
+  synced_at         INTEGER NOT NULL,
+  -- v0.8.4: 派生指标 (由 build_meta_full 二阶段填充)
+  error_count                INTEGER NOT NULL DEFAULT 0,
+  user_message_count         INTEGER NOT NULL DEFAULT 0,
+  assistant_message_count    INTEGER NOT NULL DEFAULT 0,
+  duration_seconds           INTEGER,
+  first_response_latency_ms  INTEGER,
+  agent_name                 TEXT,
+  invoked_skills_count       INTEGER NOT NULL DEFAULT 0,
+  plan_file_ref_count        INTEGER NOT NULL DEFAULT 0,
+  compact_file_ref_count     INTEGER NOT NULL DEFAULT 0,
+  queued_command_count       INTEGER NOT NULL DEFAULT 0,
+  attached_file_count        INTEGER NOT NULL DEFAULT 0,
+  -- v0.8.4 item 2': SessionSummaryStrip 全固化
+  text_message_count          INTEGER NOT NULL DEFAULT 0,
+  tool_usage_json             TEXT,
+  phase_hint                  TEXT,
+  phase_detail                TEXT,
+  repeat_run_count            INTEGER NOT NULL DEFAULT 0,
+  repeat_run_max_tool         TEXT,
+  repeat_run_max_count        INTEGER,
+  idle_gap_count              INTEGER NOT NULL DEFAULT 0,
+  idle_gap_max_ms             INTEGER,
+  -- v0.8.4 item 2'': ContentFilterPanel Model chip 也走 DB
+  available_models_json       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
@@ -137,6 +163,7 @@ pub struct OverrideRow {
 
 /// 同步状态(单行)
 #[derive(Debug, Default, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SyncStateRow {
     pub last_run_at: Option<i64>,
     pub last_error: Option<String>,
@@ -320,7 +347,19 @@ SELECT
   m.subagent_count, m.subagent_ids_json,
   MAX(m.mtime_ms) AS mtime_ms,
   o.display_title, o.hidden, o.pinned, o.archived, o.notes,
-  GROUP_CONCAT(t.name, ',') AS tag_names
+  GROUP_CONCAT(t.name, ',') AS tag_names,
+  -- v0.8.4: 派生指标 (item 2)
+  m.error_count, m.user_message_count, m.assistant_message_count,
+  m.duration_seconds, m.first_response_latency_ms, m.agent_name,
+  m.invoked_skills_count, m.plan_file_ref_count, m.compact_file_ref_count,
+  m.queued_command_count, m.attached_file_count,
+  -- v0.8.4 item 2': SessionSummaryStrip 全固化
+  m.text_message_count, m.tool_usage_json,
+  m.phase_hint, m.phase_detail,
+  m.repeat_run_count, m.repeat_run_max_tool, m.repeat_run_max_count,
+  m.idle_gap_count, m.idle_gap_max_ms,
+  -- v0.8.4 item 2'': ContentFilterPanel Model chip
+  m.available_models_json
 FROM session_meta m
 LEFT JOIN session_override o ON m.session_id = o.session_id
 LEFT JOIN session_tag st     ON m.session_id = st.session_id
@@ -392,6 +431,37 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         archived: false,
         notes: None,
         tags: None,
+        // v0.8.4 item 2: 派生指标从 JOIN 直接读
+        // 注意: 这些列在 JOIN_SELECT_BASE 里都是 m.* 直接拉, NOT NULL DEFAULT 0
+        // (duration_seconds / first_response_latency_ms / agent_name 可空)
+        error_count: Some(row.get::<_, i64>(26)? as u32),
+        user_message_count: Some(row.get::<_, i64>(27)? as u32),
+        assistant_message_count: Some(row.get::<_, i64>(28)? as u32),
+        duration_seconds: row.get::<_, Option<i64>>(29)?.map(|v| v as u64),
+        first_response_latency_ms: row.get::<_, Option<i64>>(30)?.map(|v| v as u64),
+        agent_name: row.get(31)?,
+        invoked_skills_count: Some(row.get::<_, i64>(32)? as u32),
+        plan_file_ref_count: Some(row.get::<_, i64>(33)? as u32),
+        compact_file_ref_count: Some(row.get::<_, i64>(34)? as u32),
+        queued_command_count: Some(row.get::<_, i64>(35)? as u32),
+        attached_file_count: Some(row.get::<_, i64>(36)? as u32),
+        // v0.8.4 item 2': SessionSummaryStrip 全固化
+        // 紧凑 JSON 格式 [["Bash", 286], ...] 解析回 Vec<(String, u32)>
+        text_message_count: Some(row.get::<_, i64>(37)? as u32),
+        tool_usage: row
+            .get::<_, Option<String>>(38)?
+            .and_then(|s| serde_json::from_str::<Vec<(String, u32)>>(&s).ok()),
+        phase_hint: row.get(39)?,
+        phase_detail: row.get(40)?,
+        repeat_run_count: Some(row.get::<_, i64>(41)? as u32),
+        repeat_run_max_tool: row.get(42)?,
+        repeat_run_max_count: row.get::<_, Option<i64>>(43)?.map(|v| v as u32),
+        idle_gap_count: Some(row.get::<_, i64>(44)? as u32),
+        idle_gap_max_ms: row.get::<_, Option<i64>>(45)?.map(|v| v as u64),
+        // v0.8.4 item 2'': ContentFilterPanel Model chip 走 DB
+        available_models: row
+            .get::<_, Option<String>>(46)?
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()),
     };
 
     Ok(JoinedRow {
@@ -406,4 +476,99 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         notes: row.get(24)?,
         tag_names,
     })
+}
+
+/// v0.8.4 item 2: 由 build_meta_full 提取的派生指标, 单独 UPDATE 到 session_meta
+///
+/// 跟 upsert_session_meta 解耦: 第一次 sync 走 quick path 50 行, 派生列默认 0;
+/// 第二个 loop iteration 跑 build_meta_full(全量扫描), 拿到 extras 后调这个。
+///
+/// v0.8.4 item 2' 扩展: 8 个新参数对应 SessionSummaryStrip 全固化
+/// (textMessageCount / toolUsage / phaseHint / phaseDetail /
+///  repeatRunCount / repeatRunMaxTool / repeatRunMaxCount /
+///  idleGapCount / idleGapMaxMs — 共 9 个, 但 toolUsage 是 1 个 JSON)。
+#[allow(clippy::too_many_arguments)]
+pub fn enrich_session_meta(
+    conn: &Connection,
+    session_id: &str,
+    error_count: u32,
+    user_message_count: u32,
+    assistant_message_count: u32,
+    duration_seconds: Option<u64>,
+    first_response_latency_ms: Option<u64>,
+    agent_name: Option<&str>,
+    invoked_skills_count: u32,
+    plan_file_ref_count: u32,
+    compact_file_ref_count: u32,
+    queued_command_count: u32,
+    attached_file_count: u32,
+    // --- v0.8.4 item 2' ---
+    text_message_count: u32,
+    tool_usage_json: Option<&str>,
+    phase_hint: Option<&str>,
+    phase_detail: Option<&str>,
+    repeat_run_count: u32,
+    repeat_run_max_tool: Option<&str>,
+    repeat_run_max_count: Option<u32>,
+    idle_gap_count: u32,
+    idle_gap_max_ms: Option<u64>,
+    // --- v0.8.4 item 2'': ContentFilterPanel Model chip ---
+    available_models_json: Option<&str>,
+) -> AppResult<()> {
+    conn.execute(
+        r#"
+        UPDATE session_meta SET
+          error_count               = ?2,
+          user_message_count        = ?3,
+          assistant_message_count   = ?4,
+          duration_seconds          = ?5,
+          first_response_latency_ms = ?6,
+          agent_name                = ?7,
+          invoked_skills_count      = ?8,
+          plan_file_ref_count       = ?9,
+          compact_file_ref_count    = ?10,
+          queued_command_count      = ?11,
+          attached_file_count       = ?12,
+          -- v0.8.4 item 2': SessionSummaryStrip 全固化
+          text_message_count        = ?13,
+          tool_usage_json           = ?14,
+          phase_hint                = ?15,
+          phase_detail              = ?16,
+          repeat_run_count          = ?17,
+          repeat_run_max_tool       = ?18,
+          repeat_run_max_count      = ?19,
+          idle_gap_count            = ?20,
+          idle_gap_max_ms           = ?21,
+          -- v0.8.4 item 2'': ContentFilterPanel Model chip
+          available_models_json     = ?22
+        WHERE session_id = ?1
+        "#,
+        params![
+            session_id,
+            error_count as i64,
+            user_message_count as i64,
+            assistant_message_count as i64,
+            duration_seconds.map(|v| v as i64),
+            first_response_latency_ms.map(|v| v as i64),
+            agent_name,
+            invoked_skills_count as i64,
+            plan_file_ref_count as i64,
+            compact_file_ref_count as i64,
+            queued_command_count as i64,
+            attached_file_count as i64,
+            // v0.8.4 item 2'
+            text_message_count as i64,
+            tool_usage_json,
+            phase_hint,
+            phase_detail,
+            repeat_run_count as i64,
+            repeat_run_max_tool,
+            repeat_run_max_count.map(|v| v as i64),
+            idle_gap_count as i64,
+            idle_gap_max_ms.map(|v| v as i64),
+            // v0.8.4 item 2''
+            available_models_json,
+        ],
+    )?;
+    Ok(())
 }
