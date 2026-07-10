@@ -3,6 +3,7 @@
 pub mod analyze;
 pub mod export;
 pub mod fs_cmd;
+pub mod graph; // v0.8.5 C: G1/G2 NDJSON → DB 切换
 pub mod live;
 pub mod overrides;
 pub mod search;

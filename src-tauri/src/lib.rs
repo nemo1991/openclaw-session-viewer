@@ -198,6 +198,8 @@ pub fn run() {
             commands::tool_stats::get_tool_aggregate,
             commands::tool_stats::get_tool_sessions,
             commands::tool_stats::rebuild_tool_stats,
+            // v0.8.5 C: G1/G2 NDJSON → DB 切换
+            commands::graph::list_graph,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 启动失败");

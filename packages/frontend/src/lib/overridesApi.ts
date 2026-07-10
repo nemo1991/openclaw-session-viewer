@@ -112,6 +112,11 @@ export const apiGetToolSessions = (toolName: string, limit?: number): Promise<To
   invoke("get_tool_sessions", { toolName, limit });
 export const apiRebuildToolStats = (): Promise<void> => invoke("rebuild_tool_stats");
 
+// ===== v0.8.5 C: G1/G2 NDJSON → DB 切换 =====
+// 跟 packages/frontend/src/views/graph/types.ts::GraphEntry 兼容
+// v0.8.5 C 只派生 UsedTool edges, 其它 edges (Spawned/ParentUuid/...) 留 v0.8.6+
+export const apiListGraph = (): Promise<unknown[]> => invoke("list_graph");
+
 // ===== Export/Import =====
 
 export const apiExportOverrides = (path: string): Promise<number> =>
