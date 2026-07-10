@@ -12,6 +12,7 @@ import {
   Pin,
   EyeOff,
   Archive,
+  Wrench, // v0.8.5 B: 工具分析页
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 
@@ -195,6 +196,14 @@ export default function SessionsRoute() {
           </button>
           <button onClick={() => navigate("/graph?view=graph")} title="Graph Explorer (G1/G2/G3)">
             <Network size={16} />
+          </button>
+          {/* v0.8.5 B: 全局 tool 聚合页 */}
+          <button
+            onClick={() => navigate("/tools")}
+            title="工具分析 (跨 session tool 排行)"
+            data-testid="nav-tools"
+          >
+            <Wrench size={16} />
           </button>
           <button onClick={() => navigate("/settings")} title={t("settings.title")}>
             <Settings size={16} />

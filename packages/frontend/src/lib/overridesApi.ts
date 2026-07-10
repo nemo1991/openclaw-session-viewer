@@ -88,6 +88,30 @@ export const apiGetSyncStatus = (): Promise<SyncStatus> => invoke("get_sync_stat
 export const apiGetDbPath = (): Promise<string> => invoke("get_db_path"); // v0.8.4 item 1
 export const apiRebuildDb = (): Promise<void> => invoke("rebuild_db");
 
+// ===== v0.8.5 B: 全局 tool 聚合 =====
+export interface ToolAggregateRow {
+  toolName: string;
+  totalCalls: number;
+  sessionCount: number;
+  errorCount: number;
+  errorRate: number;
+  firstSeenMs: number | null;
+  lastSeenMs: number | null;
+}
+export interface ToolSessionRef {
+  sessionId: string;
+  callCount: number;
+  errorCount: number;
+  lastTsMs: number | null;
+}
+export const apiGetToolAggregate = (
+  sortBy?: "calls" | "sessions" | "errors",
+  limit?: number
+): Promise<ToolAggregateRow[]> => invoke("get_tool_aggregate", { sortBy, limit });
+export const apiGetToolSessions = (toolName: string, limit?: number): Promise<ToolSessionRef[]> =>
+  invoke("get_tool_sessions", { toolName, limit });
+export const apiRebuildToolStats = (): Promise<void> => invoke("rebuild_tool_stats");
+
 // ===== Export/Import =====
 
 export const apiExportOverrides = (path: string): Promise<number> =>

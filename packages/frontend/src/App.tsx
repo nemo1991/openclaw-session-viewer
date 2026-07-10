@@ -8,6 +8,7 @@ import AnalyzeRoute from "./routes/AnalyzeRoute";
 import SettingsRoute from "./routes/SettingsRoute";
 import TrajectoryRoute from "./routes/TrajectoryRoute";
 import GraphExplorerRoute from "./routes/GraphExplorerRoute";
+import { ToolsRoute } from "./routes/ToolsRoute"; // v0.8.5 B: 全局 tool 聚合页
 import { RevealErrorToast } from "./components/RevealErrorToast";
 import { useOverridesBridge } from "./state/overridesStore";
 
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
         <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
         <Route path="/settings" element={<SettingsRoute />} />
+        <Route path="/tools" element={<ToolsRoute />} /> {/* v0.8.5 B */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {/* v0.6.x: 全局 reveal 错误 toast, 监听 REVEAL_ERROR_EVENT */}

@@ -194,6 +194,10 @@ pub fn run() {
             commands::overrides::import_overrides,
             commands::overrides::record_search,
             commands::overrides::list_search_history,
+            // v0.8.5 B: 全局 tool 聚合
+            commands::tool_stats::get_tool_aggregate,
+            commands::tool_stats::get_tool_sessions,
+            commands::tool_stats::rebuild_tool_stats,
         ])
         .run(tauri::generate_context!())
         .expect("Tauri 启动失败");

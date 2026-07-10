@@ -10,5 +10,6 @@ pub mod sessions;
 pub mod settings;
 pub mod spillover;
 pub mod subagents;
+pub mod tool_stats;
 pub mod trajectory;
 pub mod transcript;
