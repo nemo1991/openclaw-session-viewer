@@ -71,7 +71,10 @@ CREATE TABLE IF NOT EXISTS session_meta (
   idle_gap_count              INTEGER NOT NULL DEFAULT 0,
   idle_gap_max_ms             INTEGER,
   -- v0.8.4 item 2'': ContentFilterPanel Model chip 也走 DB
-  available_models_json       TEXT
+  available_models_json       TEXT,
+  -- v0.8.5 A: per-tool 失败计数 — [["Bash", 3], ["WebFetch", 1]] 按 count desc
+  -- 跟 error_count (message 级) 正交, 互补
+  tool_error_json             TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
@@ -359,7 +362,9 @@ SELECT
   m.repeat_run_count, m.repeat_run_max_tool, m.repeat_run_max_count,
   m.idle_gap_count, m.idle_gap_max_ms,
   -- v0.8.4 item 2'': ContentFilterPanel Model chip
-  m.available_models_json
+  m.available_models_json,
+  -- v0.8.5 A: per-tool 失败计数
+  m.tool_error_json
 FROM session_meta m
 LEFT JOIN session_override o ON m.session_id = o.session_id
 LEFT JOIN session_tag st     ON m.session_id = st.session_id
@@ -462,6 +467,10 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         available_models: row
             .get::<_, Option<String>>(46)?
             .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()),
+        // v0.8.5 A: per-tool 失败计数 (跟 tool_usage 同 JSON 紧凑格式)
+        tool_error: row
+            .get::<_, Option<String>>(47)?
+            .and_then(|s| serde_json::from_str::<Vec<(String, u32)>>(&s).ok()),
     };
 
     Ok(JoinedRow {
@@ -514,6 +523,8 @@ pub fn enrich_session_meta(
     idle_gap_max_ms: Option<u64>,
     // --- v0.8.4 item 2'': ContentFilterPanel Model chip ---
     available_models_json: Option<&str>,
+    // --- v0.8.5 A: per-tool 失败计数 ---
+    tool_error_json: Option<&str>,
 ) -> AppResult<()> {
     conn.execute(
         r#"
@@ -540,7 +551,9 @@ pub fn enrich_session_meta(
           idle_gap_count            = ?20,
           idle_gap_max_ms           = ?21,
           -- v0.8.4 item 2'': ContentFilterPanel Model chip
-          available_models_json     = ?22
+          available_models_json     = ?22,
+          -- v0.8.5 A: per-tool 失败计数
+          tool_error_json           = ?23
         WHERE session_id = ?1
         "#,
         params![
@@ -568,6 +581,8 @@ pub fn enrich_session_meta(
             idle_gap_max_ms.map(|v| v as i64),
             // v0.8.4 item 2''
             available_models_json,
+            // v0.8.5 A
+            tool_error_json,
         ],
     )?;
     Ok(())

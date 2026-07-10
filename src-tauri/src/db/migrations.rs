@@ -44,6 +44,8 @@ const NEW_COLUMNS: &[(&str, &str)] = &[
     ("idle_gap_max_ms", "INTEGER"),
     // --- v0.8.4 item 2'': ContentFilterPanel Model chip ---
     ("available_models_json", "TEXT"),
+    // --- v0.8.5 A: per-tool 失败计数 ---
+    ("tool_error_json", "TEXT"),
 ];
 
 /// 给 session_meta 加 v0.8.4 列 (仅缺失的列)。幂等。

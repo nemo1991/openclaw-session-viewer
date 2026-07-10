@@ -436,6 +436,27 @@ export default function SessionDetailRoute() {
                 </span>
               </>
             )}
+            {/* v0.8.5 A: per-tool 失败 — 取 toolError[0] 显示"失败最多: Bash × 5"
+             * 跟上面 errorCount 是 message 级不同,这里是 tool-level(单个 tool_result.is_error) */}
+            {meta.toolError && meta.toolError.length > 0 && (
+              <>
+                <span>·</span>
+                <span
+                  className="stat-tool-error"
+                  title={
+                    meta.toolError.length === 1
+                      ? `${meta.toolError[0]?.[0] ?? "?"} 失败 ${meta.toolError[0]?.[1] ?? 0} 次 (tool_result.is_error)`
+                      : `${meta.toolError[0]?.[0] ?? "?"} 失败最多 (${meta.toolError[0]?.[1] ?? 0} 次); 其它: ${meta.toolError
+                          .slice(1)
+                          .map(([t, c]) => `${t} × ${c}`)
+                          .join(", ")}`
+                  }
+                  data-testid="stat-tool-error"
+                >
+                  🔴 失败最多: {meta.toolError[0]?.[0] ?? "?"} × {meta.toolError[0]?.[1] ?? 0}
+                </span>
+              </>
+            )}
             {/* v0.8.4 item 4: meta 计数 (skills / plans / compact / files / queued) */}
             {(meta.invokedSkillsCount ||
               meta.planFileRefCount ||

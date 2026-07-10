@@ -379,4 +379,90 @@ describe("applyContentFilter", () => {
     });
     expect(out.map((e) => e.index)).toEqual([0]);
   });
+
+  // ===== v0.8.5 A: errorMode 过滤 =====
+  // 直接 inline 写带 isError 的 entry, 因为 makeBlockEntry 不支持 tool_result block
+  function makeEntryWithToolResult(index: number, isError: boolean): TranscriptEntryOut {
+    return {
+      index,
+      byteOffset: index * 1000,
+      raw: {},
+      normalized: {
+        id: `e-${index}`,
+        role: "user",
+        rawType: "user",
+        timestamp: undefined,
+        blocks: [{ kind: "tool_result", toolUseId: "tu_x", content: "x", isError }],
+      },
+      subagentId: undefined,
+    } as unknown as TranscriptEntryOut;
+  }
+
+  it("errorMode='errors' 只留含 tool_result.is_error 的 entries", () => {
+    const entries = [
+      makeEntryWithToolResult(0, true), // 失败 → 保留
+      makeEntryWithToolResult(1, false), // 成功 → 过滤
+      makeEntryWithToolResult(2, true), // 失败 → 保留
+    ];
+    const out = applyContentFilter(entries, { errorMode: "errors" });
+    expect(out.map((e) => e.index)).toEqual([0, 2]);
+  });
+
+  it("errorMode='no_errors' 排除含 tool_result.is_error 的 entries", () => {
+    const entries = [
+      makeEntryWithToolResult(0, true), // 失败 → 排除
+      makeEntryWithToolResult(1, false), // 成功 → 保留
+      makeEntryWithToolResult(2, false), // 成功 → 保留
+    ];
+    const out = applyContentFilter(entries, { errorMode: "no_errors" });
+    expect(out.map((e) => e.index)).toEqual([1, 2]);
+  });
+
+  it("errorMode='all'(默认)→ 全部保留", () => {
+    const entries = [makeEntryWithToolResult(0, true), makeEntryWithToolResult(1, false)];
+    expect(applyContentFilter(entries, { errorMode: "all" })).toBe(entries);
+  });
+
+  it("errorMode 跟其它维度 AND (errors + tool_use=Bash)", () => {
+    // 1 个 entry 同时含 Bash tool_use + tool_result.is_error → 保留
+    // 1 个 entry 只有 Bash tool_use 但无 tool_result → 排除
+    const entries: TranscriptEntryOut[] = [
+      {
+        index: 0,
+        byteOffset: 0,
+        raw: {},
+        normalized: {
+          id: "e-0",
+          role: "assistant",
+          rawType: "assistant",
+          timestamp: undefined,
+          blocks: [
+            { kind: "tool_use", id: "tu_x", name: "Bash", input: {} },
+            { kind: "tool_result", toolUseId: "tu_x", content: "failed", isError: true },
+          ],
+        },
+        subagentId: undefined,
+      } as unknown as TranscriptEntryOut,
+      {
+        index: 1,
+        byteOffset: 0,
+        raw: {},
+        normalized: {
+          id: "e-1",
+          role: "assistant",
+          rawType: "assistant",
+          timestamp: undefined,
+          blocks: [{ kind: "tool_use", id: "tu_y", name: "Bash", input: {} }],
+        },
+        subagentId: undefined,
+      } as unknown as TranscriptEntryOut,
+    ];
+    const out = applyContentFilter(entries, {
+      errorMode: "errors",
+      tools: ["Bash"],
+    });
+    // entry 0: tool_use=Bash ✓ AND tool_result.is_error=true ✓ → 保留
+    // entry 1: tool_use=Bash ✓ AND 无 tool_result.is_error ✗ → 排除
+    expect(out.map((e) => e.index)).toEqual([0]);
+  });
 });

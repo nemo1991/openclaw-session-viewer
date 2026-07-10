@@ -36,6 +36,8 @@ describe("TranscriptToolbar", () => {
         onToggleHas={() => undefined}
         onToggleModel={() => undefined}
         onSetSidechainMode={() => undefined}
+        errorMode="all"
+        onSetErrorMode={() => undefined}
         onClearContent={() => undefined}
       />
     );
@@ -89,6 +91,8 @@ describe("TranscriptToolbar", () => {
         onToggleHas={() => undefined}
         onToggleModel={() => undefined}
         onSetSidechainMode={() => undefined}
+        errorMode="all"
+        onSetErrorMode={() => undefined}
         onClearContent={() => undefined}
       />
     );

@@ -57,6 +57,9 @@ export interface ContentFilterOptions {
   /** v0.7.0: 单选 sidechain mode:"all" 不限; "main" 只看主链(isSidechain !== true);
    *  "sidechain" 只看子链(isSidechain === true)。undefined = "all"。 */
   sidechainMode?: "all" | "main" | "sidechain";
+  /** v0.8.5 A: 错误模式 — "all" 不限(默认), "errors" 只看含 tool_result.is_error 的 entries,
+   *  "no_errors" 排除含 tool_result.is_error 的 entries。undefined = "all"。 */
+  errorMode?: "all" | "errors" | "no_errors";
 }
 
 /** 一个 block 的 kind === expected? — 读 open-index 的 name 字段 */
@@ -66,6 +69,11 @@ function blockHasToolUse(blocks: NormalizedBlockFE[], expected: string): boolean
 
 function blockHasKind(blocks: NormalizedBlockFE[], kind: string): boolean {
   return blocks.some((b) => b.kind === kind);
+}
+
+/** v0.8.5 A: entry 是否含失败的 tool_result block (isError===true) */
+function entryHasToolError(blocks: NormalizedBlockFE[]): boolean {
+  return blocks.some((b) => b.kind === "tool_result" && b.isError === true);
 }
 
 function entryHasAttr(entry: TranscriptEntryOut, attr: HasAttribute): boolean {
@@ -104,13 +112,15 @@ export function applyContentFilter(
   const models = opts.models ?? [];
   const role = opts.role;
   const sidechainMode = opts.sidechainMode ?? "all";
+  const errorMode = opts.errorMode ?? "all";
   // 全部维度都不限 → 直通(返回 entries,filter 上游 memo 引用复用)
   if (
     tools.length === 0 &&
     has.length === 0 &&
     models.length === 0 &&
     !role &&
-    sidechainMode === "all"
+    sidechainMode === "all" &&
+    errorMode === "all"
   ) {
     return entries;
   }
@@ -128,6 +138,13 @@ export function applyContentFilter(
     }
     if (sidechainMode === "main" && e.normalized.isSidechain === true) return false;
     if (sidechainMode === "sidechain" && e.normalized.isSidechain !== true) return false;
+    // v0.8.5 A: 错误模式过滤 — "errors" 只留含 tool_result.is_error 的 entries,
+    //  "no_errors" 排除含 tool_result.is_error 的 entries。普通 entry(没 tool_result)不受影响
+    if (errorMode !== "all") {
+      const hasErr = entryHasToolError(e.normalized.blocks);
+      if (errorMode === "errors" && !hasErr) return false;
+      if (errorMode === "no_errors" && hasErr) return false;
+    }
     return true;
   });
 }

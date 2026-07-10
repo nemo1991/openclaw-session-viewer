@@ -143,11 +143,13 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
         availableModels={availableModels}
         selectedModels={filter.models}
         sidechainMode={filter.sidechainMode}
+        errorMode={filter.errorMode}
         onToggleTool={(t) => useTranscriptFilterStore.getState().toggleTool(t)}
         onSetRole={(r) => useTranscriptFilterStore.getState().setRole(r)}
         onToggleHas={(a) => useTranscriptFilterStore.getState().toggleHas(a)}
         onToggleModel={(m) => useTranscriptFilterStore.getState().toggleModel(m)}
         onSetSidechainMode={(m) => useTranscriptFilterStore.getState().setSidechainMode(m)}
+        onSetErrorMode={(m) => useTranscriptFilterStore.getState().setErrorMode(m)}
         onClearContent={() =>
           useTranscriptFilterStore.setState({
             tools: [],
@@ -155,6 +157,7 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
             has: [],
             models: [],
             sidechainMode: "all",
+            errorMode: "all",
           })
         }
       />

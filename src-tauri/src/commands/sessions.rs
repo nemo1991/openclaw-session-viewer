@@ -458,6 +458,8 @@ pub(crate) fn build_claude_session_meta(
         idle_gap_count: None,
         idle_gap_max_ms: None,
         available_models: None,
+        // v0.8.5 A: quick path (50 行头部解析) 不算 per-tool error, 留给 enrich 二阶段
+        tool_error: None,
     })
 }
 
@@ -632,6 +634,8 @@ pub(crate) fn build_openclaw_session_meta(
         idle_gap_count: None,
         idle_gap_max_ms: None,
         available_models: None,
+        // v0.8.5 A: quick path (50 行头部解析) 不算 per-tool error, 留给 enrich 二阶段
+        tool_error: None,
     })
 }
 

@@ -51,6 +51,7 @@ export function useTranscriptPipeline(): PipelineResult {
   const filterHas = useTranscriptFilterStore((s) => s.has);
   const filterModels = useTranscriptFilterStore((s) => s.models);
   const filterSidechainMode = useTranscriptFilterStore((s) => s.sidechainMode);
+  const filterErrorMode = useTranscriptFilterStore((s) => s.errorMode);
 
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -73,6 +74,7 @@ export function useTranscriptPipeline(): PipelineResult {
             has: filterHas,
             models: filterModels,
             sidechainMode: filterSidechainMode,
+            errorMode: filterErrorMode,
           })
         : timeFiltered,
     [
@@ -83,6 +85,7 @@ export function useTranscriptPipeline(): PipelineResult {
       filterHas,
       filterModels,
       filterSidechainMode,
+      filterErrorMode,
     ]
   );
 

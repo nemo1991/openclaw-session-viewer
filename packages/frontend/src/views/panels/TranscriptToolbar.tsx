@@ -42,11 +42,13 @@ export function TranscriptToolbar(props: TranscriptToolbarProps) {
     availableModels: rest.availableModels,
     selectedModels: rest.selectedModels,
     sidechainMode: rest.sidechainMode,
+    errorMode: rest.errorMode,
     onToggleTool: rest.onToggleTool,
     onSetRole: rest.onSetRole,
     onToggleHas: rest.onToggleHas,
     onToggleModel: rest.onToggleModel,
     onSetSidechainMode: rest.onSetSidechainMode,
+    onSetErrorMode: rest.onSetErrorMode,
     onClearContent,
   };
   return (
