@@ -243,6 +243,10 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
             let available_models_json = serde_json::to_string(&extras.available_models)
                 .ok()
                 .filter(|s| !s.is_empty() && s != "[]");
+            // v0.8.5 A: per-tool 失败计数 (跟 tool_usage_json 同紧凑数组格式)
+            let tool_error_json = serde_json::to_string(&extras.tool_error)
+                .ok()
+                .filter(|s| !s.is_empty() && s != "[]");
             let _ = state.db.with(|c| {
                 crate::db::schema::enrich_session_meta(
                     c,
@@ -270,6 +274,8 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                     extras.idle_gap_max_ms,
                     // v0.8.4 item 2''
                     available_models_json.as_deref(),
+                    // v0.8.5 A: per-tool 失败
+                    tool_error_json.as_deref(),
                 )?;
                 Ok::<_, AppError>(())
             });

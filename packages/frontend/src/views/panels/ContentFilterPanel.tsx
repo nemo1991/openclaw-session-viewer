@@ -46,14 +46,20 @@ export interface ContentFilterPanelProps {
   selectedModels: string[];
   /** v0.7.0: sidechain 模式 */
   sidechainMode: SidechainMode;
+  /** v0.8.5 A: 错误模式 — "all" 不限, "errors" 只看含 tool_result.is_error 的 entries, "no_errors" 排除 */
+  errorMode: ErrorMode;
   onToggleTool: (tool: string) => void;
   onSetRole: (role: string | undefined) => void;
   onToggleHas: (attr: HasAttribute) => void;
   onToggleModel: (model: string) => void;
   onSetSidechainMode: (mode: SidechainMode) => void;
+  /** v0.8.5 A: 设置错误模式 */
+  onSetErrorMode: (mode: ErrorMode) => void;
   /** 清除 content 维度筛选(不影响 time) */
   onClearContent: () => void;
 }
+
+export type ErrorMode = "all" | "errors" | "no_errors";
 
 const HAS_OPTIONS: Array<{ value: HasAttribute; label: string; title: string }> = [
   { value: "thinking", label: "thinking", title: "包含 thinking block 的 entry" },
@@ -104,6 +110,23 @@ function modelShortLabel(model: string): string {
   return model.length > 12 ? model.slice(0, 12) + "…" : model;
 }
 
+/** v0.8.5 A: error mode 3 选项 */
+const ERROR_OPTIONS: Array<{ value: ErrorMode; label: string; testId: string; title: string }> = [
+  { value: "all", label: "全部", testId: "filter-error-all", title: "显示所有 entry(不限错误)" },
+  {
+    value: "errors",
+    label: "仅失败",
+    testId: "filter-error-errors",
+    title: "只看含 tool_result.is_error 的 entry",
+  },
+  {
+    value: "no_errors",
+    label: "排除失败",
+    testId: "filter-error-no-errors",
+    title: "排除含 tool_result.is_error 的 entry",
+  },
+];
+
 export function ContentFilterPanel({
   availableTools,
   selectedTools,
@@ -112,11 +135,13 @@ export function ContentFilterPanel({
   availableModels,
   selectedModels,
   sidechainMode,
+  errorMode,
   onToggleTool,
   onSetRole,
   onToggleHas,
   onToggleModel,
   onSetSidechainMode,
+  onSetErrorMode,
   onClearContent,
 }: ContentFilterPanelProps) {
   const { t } = useTranslation();
@@ -127,7 +152,8 @@ export function ContentFilterPanel({
     Boolean(role) ||
     has.length > 0 ||
     selectedModels.length > 0 ||
-    sidechainMode !== "all";
+    sidechainMode !== "all" ||
+    errorMode !== "all";
 
   return (
     <div className="transcript-content-filter-bar" data-testid="content-filter-bar">
@@ -241,6 +267,26 @@ export function ContentFilterPanel({
               data-active={active}
               className={`content-chip ${active ? "content-chip-active" : ""}`}
               onClick={() => onSetSidechainMode(opt.value)}
+              title={opt.title}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* v0.8.5 A: Error 单选 3 选项 — 按 tool_result.is_error 过滤 */}
+      <div className="content-filter-group" data-testid="content-filter-errors">
+        <span className="content-filter-label">失败</span>
+        {ERROR_OPTIONS.map((opt) => {
+          const active = errorMode === opt.value;
+          return (
+            <button
+              key={opt.testId}
+              data-testid={opt.testId}
+              data-active={active}
+              className={`content-chip ${active ? "content-chip-active" : ""}`}
+              onClick={() => onSetErrorMode(opt.value)}
               title={opt.title}
             >
               {opt.label}

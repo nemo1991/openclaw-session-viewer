@@ -161,6 +161,11 @@ pub struct SessionMeta {
     /// v0.8.4 item 2'': 该 session 用过的 model id(去重,字典序),ContentFilterPanel chip 源
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub available_models: Option<Vec<String>>,
+    /// v0.8.5 A: per-tool 失败计数 — `[(tool_name, error_count)...]`,按 count 降序
+    /// 跟 `error_count` (message 级) 正交: error_count 数整条 assistant 失败,
+    /// tool_error 数单个 tool_result.is_error==true 的 tool 调用失败。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_error: Option<Vec<(String, u32)>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -38,6 +38,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -59,6 +61,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -84,6 +88,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -109,6 +115,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -139,6 +147,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -164,6 +174,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -190,6 +202,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -214,6 +228,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -240,6 +256,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -270,6 +288,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -292,6 +312,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={onClearContent}
       />
     );
@@ -316,6 +338,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={onClearContent}
       />
     );
@@ -336,6 +360,8 @@ describe("ContentFilterPanel", () => {
         onToggleModel={noop}
         sidechainMode="all"
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={onClearContent}
       />
     );
@@ -358,6 +384,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -378,6 +406,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -399,6 +429,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -426,6 +458,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={onToggleModel}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -450,6 +484,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -477,6 +513,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -500,6 +538,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -526,6 +566,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={onSetSidechainMode}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );
@@ -550,6 +592,8 @@ describe("ContentFilterPanel", () => {
         onToggleHas={noop}
         onToggleModel={noop}
         onSetSidechainMode={noop}
+        errorMode="all"
+        onSetErrorMode={noop}
         onClearContent={noop}
       />
     );

@@ -64,6 +64,11 @@ pub struct MetaExtras {
     // --- v0.8.4 item 2'': ContentFilterPanel "Model" 维度 chip 也要从 DB 读 ---
     /// 该 session 出现过的 model id(去重, 字典序),给 availableModels 用
     pub available_models: Vec<String>,
+    // --- v0.8.5 A: per-tool 失败计数 ---
+    /// tool 名 → 该 tool 的 tool_result.is_error 次数, 按 count 降序。
+    /// 跟 `error_count` (message 级) 正交:error_count 数 stop_reason=="error" 的整条 assistant,
+    /// tool_error 数 tool_result.is_error==true 的单个 tool 调用失败。
+    pub tool_error: Vec<(String, u32)>,
 }
 
 /// 扫 jsonl 全量(或 5000 行上限), 提取派生指标
@@ -85,6 +90,12 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
     let mut current_count: u32 = 0;
     // idle_gap 跟踪
     let mut prev_ts_ms: Option<i64> = None;
+    // v0.8.5 A: tool_result 失败追踪 — assistant 扫到 tool_use 时把 id→name 记下来,
+    // user 扫到 tool_result.is_error 时查 map 累加 per-tool error count
+    let mut tool_use_id_to_name: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut tool_error_counts: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
 
     jsonl::for_each_line(path, |idx, _raw, value| {
         if idx >= META_FULL_MAX_LINES {
@@ -137,6 +148,34 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
                 if first_user_ts.is_none() {
                     first_user_ts = ts.clone();
                 }
+                // v0.8.5 A: 扫 user content array 找 tool_result.is_error, 累加 per-tool error
+                if let Some(content) = obj
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for item in content {
+                        if let Some(item_obj) = item.as_object() {
+                            let t = item_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            if t == "tool_result" {
+                                let is_error = item_obj
+                                    .get("is_error")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                if is_error {
+                                    if let Some(tool_use_id) =
+                                        item_obj.get("tool_use_id").and_then(|v| v.as_str())
+                                    {
+                                        if let Some(name) = tool_use_id_to_name.get(tool_use_id) {
+                                            *tool_error_counts.entry(name.clone()).or_insert(0) +=
+                                                1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             "assistant" if !is_sidechain => {
                 out.assistant_message_count += 1;
@@ -177,6 +216,10 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
                                 if let Some(name) = item_obj.get("name").and_then(|v| v.as_str()) {
                                     let name = name.to_string();
                                     *tool_counts.entry(name.clone()).or_insert(0) += 1;
+                                    // v0.8.5 A: 记 tool_use.id → tool_name, 给后面 user tool_result 反查用
+                                    if let Some(id) = item_obj.get("id").and_then(|v| v.as_str()) {
+                                        tool_use_id_to_name.insert(id.to_string(), name.clone());
+                                    }
                                     // phase 统计
                                     match name.as_str() {
                                         "Read" => read_count += 1,
@@ -270,6 +313,10 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
     let mut tool_vec: Vec<(String, u32)> = tool_counts.into_iter().collect();
     tool_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out.tool_usage = tool_vec;
+    // v0.8.5 A: tool_error 按 count desc 排 (跟 tool_usage 同 pattern)
+    let mut tool_err_vec: Vec<(String, u32)> = tool_error_counts.into_iter().collect();
+    tool_err_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.tool_error = tool_err_vec;
     // available_models BTreeSet 已经字典序, 直接转
     out.available_models = model_set.into_iter().collect();
     // phase 启发式 (同 frontend summarizeSession 末尾逻辑)
@@ -551,5 +598,44 @@ mod tests {
             m.available_models,
             vec!["claude-opus-4".to_string(), "claude-sonnet-5".to_string()]
         );
+    }
+
+    // v0.8.5 A — tool_result.is_error 累积 + 跟 tool_use.id 关联
+    #[test]
+    fn captures_tool_error_per_tool() {
+        // 2 Bash 成功, 1 Bash 失败, 1 Read 失败 → tool_error = [(Bash,1),(Read,1)]
+        let jsonl = r#"{"type":"assistant","timestamp":"2026-07-08T10:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Bash","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_1","content":"ok","is_error":false}]}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_2","name":"Bash","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_2","content":"failed","is_error":true}]}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:04Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_3","name":"Read","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_3","content":"missing","is_error":true}]}}
+"#;
+        let p = write_tmp("tool_error.jsonl", jsonl);
+        let m = build_meta_full(&p).unwrap();
+        // tool_error 按 count desc, 字典序 tie-break
+        assert_eq!(
+            m.tool_error,
+            vec![("Bash".to_string(), 1), ("Read".to_string(), 1),]
+        );
+        // 跟 error_count 正交: error_count 是 message-level, 这里全是 tool-level, error_count=0
+        assert_eq!(m.error_count, 0);
+        // tool_usage 不受影响
+        assert_eq!(
+            m.tool_usage,
+            vec![("Bash".to_string(), 2), ("Read".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn tool_error_unknown_tool_use_id_skipped() {
+        // tool_result 引用不存在的 tool_use_id → 不累积, 不 panic
+        let jsonl = r#"{"type":"assistant","timestamp":"2026-07-08T10:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_real","name":"Bash","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_orphan","content":"x","is_error":true}]}}
+"#;
+        let p = write_tmp("tool_error_orphan.jsonl", jsonl);
+        let m = build_meta_full(&p).unwrap();
+        // tu_orphan 找不到对应 name → 不累加
+        assert!(m.tool_error.is_empty());
     }
 }

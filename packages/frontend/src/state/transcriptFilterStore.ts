@@ -44,6 +44,9 @@ interface TranscriptFilterStore {
   models: string[];
   /** v0.7.0: 单选 sidechain 模式;"all" = 不限(默认),"main" = 只看主链,"sidechain" = 只看子链 */
   sidechainMode: "all" | "main" | "sidechain";
+  /** v0.8.5 A: 错误模式过滤 — "all" = 不限(默认),"errors" = 只看 tool_result.is_error 的 entries,
+   * "no_errors" = 排除 tool_result.is_error 的 entries */
+  errorMode: "all" | "errors" | "no_errors";
 
   // ===== Actions: time =====
   /** 切换 preset (1h/24h/7d/all 时同步设置 from) */
@@ -62,6 +65,8 @@ interface TranscriptFilterStore {
   toggleModel: (model: string) => void;
   /** 设置 sidechain 模式("all" / "main" / "sidechain") */
   setSidechainMode: (mode: "all" | "main" | "sidechain") => void;
+  /** v0.8.5 A: 设置错误模式("all" / "errors" / "no_errors") */
+  setErrorMode: (mode: "all" | "errors" | "no_errors") => void;
 
   // ===== Actions: 批量 =====
   /** 清空所有过滤(time + content) */
@@ -99,6 +104,7 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
   has: [],
   models: [],
   sidechainMode: "all",
+  errorMode: "all",
 
   // ===== Time actions =====
   setPreset: (p) => {
@@ -153,6 +159,10 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
     set({ sidechainMode: mode });
   },
 
+  setErrorMode: (mode) => {
+    set({ errorMode: mode });
+  },
+
   // ===== Batch =====
   clear: () => {
     set({
@@ -164,6 +174,7 @@ export const useTranscriptFilterStore = create<TranscriptFilterStore>((set, get)
       has: [],
       models: [],
       sidechainMode: "all",
+      errorMode: "all",
     });
   },
 }));
@@ -183,12 +194,13 @@ export function isFilterActive(s: TranscriptFilterStore): boolean {
     Boolean(s.role) ||
     s.has.length > 0 ||
     s.models.length > 0 ||
-    s.sidechainMode !== "all"
+    s.sidechainMode !== "all" ||
+    s.errorMode !== "all"
   );
 }
 
 /**
- * Content 维度是否生效 — 仅看 tools/role/has/models/sidechain
+ * Content 维度是否生效 — 仅看 tools/role/has/models/sidechain/errorMode
  * (time 单独由 s.preset 判断;Pipeline hook 用 isContentFilterActive 来
  *  在 contentFilter 步骤做短路)
  */
@@ -198,6 +210,7 @@ export function isContentFilterActive(s: TranscriptFilterStore): boolean {
     Boolean(s.role) ||
     s.has.length > 0 ||
     s.models.length > 0 ||
-    s.sidechainMode !== "all"
+    s.sidechainMode !== "all" ||
+    s.errorMode !== "all"
   );
 }

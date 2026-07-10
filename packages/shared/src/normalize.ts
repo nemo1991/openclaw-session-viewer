@@ -118,6 +118,10 @@ export interface SessionMeta {
   idleGapMaxMs?: number;
   /** v0.8.4 item 2'': 该 session 用过的 model id(去重,字典序),给 ContentFilterPanel chip */
   availableModels?: string[];
+  // --- v0.8.5 A: per-tool 失败计数 ---
+  /** per-tool error count, 按 count 降序: `[["Bash", 3], ["WebFetch", 1], ...]`
+   * 跟 `errorCount` (message 级 stop_reason=="error") 正交互补, 互补的是 tool_result.is_error==true */
+  toolError?: [string, number][];
 }
 
 /** 归一化后的内容块 */
