@@ -300,6 +300,17 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
         Ok::<_, AppError>(())
     });
 
+    // v0.8.5 B: 跨 session 工具聚合 — 事务内 TRUNCATE + 全量重算 tool_global_stats / tool_session
+    // 跑在 sync_state 写入之后, 用户能在 sync-progress done 后立刻看到聚合数据
+    if !synced_paths.is_empty() {
+        if let Err(e) = state.db.with(|c| {
+            crate::db::schema::rebuild_tool_global_stats(c)?;
+            Ok::<_, AppError>(())
+        }) {
+            log::warn!("rebuild_tool_global_stats 失败: {e:?}");
+        }
+    }
+
     SyncProgress {
         phase: "done".into(),
         total,

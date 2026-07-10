@@ -48,6 +48,33 @@ const NEW_COLUMNS: &[(&str, &str)] = &[
     ("tool_error_json", "TEXT"),
 ];
 
+/// v0.8.5 B: 全量 CREATE TABLE 声明, 给老 DB 创建缺失的 2 张新表 (tool_global_stats / tool_session)
+/// CREATE TABLE IF NOT EXISTS 本身幂等, 跑两遍无副作用
+const NEW_TABLES: &[&str] = &[
+    r#"CREATE TABLE IF NOT EXISTS tool_global_stats (
+        tool_name       TEXT PRIMARY KEY,
+        total_calls     INTEGER NOT NULL DEFAULT 0,
+        session_count   INTEGER NOT NULL DEFAULT 0,
+        error_count     INTEGER NOT NULL DEFAULT 0,
+        first_seen_ms   INTEGER,
+        last_seen_ms    INTEGER
+    )"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_tool_global_calls    ON tool_global_stats(total_calls DESC)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_tool_global_errors   ON tool_global_stats(error_count DESC)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_tool_global_sessions ON tool_global_stats(session_count DESC)"#,
+    r#"CREATE TABLE IF NOT EXISTS tool_session (
+        session_id  TEXT NOT NULL,
+        tool_name   TEXT NOT NULL,
+        call_count  INTEGER NOT NULL DEFAULT 0,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        last_ts_ms  INTEGER,
+        PRIMARY KEY (session_id, tool_name),
+        FOREIGN KEY (session_id) REFERENCES session_meta(session_id) ON DELETE CASCADE
+    )"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_tool_session_tool    ON tool_session(tool_name)"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_tool_session_session ON tool_session(session_id)"#,
+];
+
 /// 给 session_meta 加 v0.8.4 列 (仅缺失的列)。幂等。
 pub fn ensure_columns(conn: &Connection) -> AppResult<()> {
     let have = read_existing_columns(conn)?;
@@ -60,6 +87,14 @@ pub fn ensure_columns(conn: &Connection) -> AppResult<()> {
         let sql = format!("ALTER TABLE session_meta ADD COLUMN {name} {decl}");
         conn.execute(&sql, params![])?;
         log::info!("v0.8.4 migration: added session_meta.{name}");
+    }
+    Ok(())
+}
+
+/// v0.8.5 B: 给老 DB 创建缺失的 tool_global_stats / tool_session 表 + 索引。幂等 (CREATE IF NOT EXISTS)。
+pub fn ensure_tables(conn: &Connection) -> AppResult<()> {
+    for stmt in NEW_TABLES {
+        conn.execute_batch(stmt)?;
     }
     Ok(())
 }
@@ -142,5 +177,48 @@ mod tests {
             )
             .unwrap();
         assert_eq!(err_count, 0);
+    }
+
+    // ===== v0.8.5 B: ensure_tables 幂等 =====
+
+    #[test]
+    fn ensure_tables_creates_new_tables() {
+        let conn = fresh_conn();
+        ensure_tables(&conn).unwrap();
+        // tool_global_stats 表存在
+        let g: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_global_stats'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(g, 1);
+        // tool_session 表存在
+        let s: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(s, 1);
+    }
+
+    #[test]
+    fn ensure_tables_idempotent() {
+        let conn = fresh_conn();
+        ensure_tables(&conn).unwrap();
+        // 再跑一次不报错
+        ensure_tables(&conn).unwrap();
+        // 还是 2 张表 (没重复)
+        let g: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_global_stats'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(g, 1);
     }
 }

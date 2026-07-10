@@ -20,6 +20,8 @@ pub fn apply(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(SCHEMA_SQL)?;
     // v0.8.4: 给已存在 v0.8.x DB 加列 (item 2)
     crate::db::migrations::ensure_columns(conn)?;
+    // v0.8.5 B: 给老 DB 创建 tool_global_stats / tool_session 表 + 索引 (CREATE IF NOT EXISTS 幂等)
+    crate::db::migrations::ensure_tables(conn)?;
     Ok(())
 }
 
@@ -81,6 +83,32 @@ CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
 CREATE INDEX IF NOT EXISTS idx_sm_lastts   ON session_meta(last_ts DESC);
 CREATE INDEX IF NOT EXISTS idx_sm_project  ON session_meta(project_key);
 CREATE INDEX IF NOT EXISTS idx_sm_agent    ON session_meta(agent_id);
+
+-- v0.8.5 B: 全局 tool 聚合 — 跨 session 工具排行/失败/时间线
+CREATE TABLE IF NOT EXISTS tool_global_stats (
+    tool_name       TEXT PRIMARY KEY,
+    total_calls     INTEGER NOT NULL DEFAULT 0,
+    session_count   INTEGER NOT NULL DEFAULT 0,
+    error_count     INTEGER NOT NULL DEFAULT 0,
+    first_seen_ms   INTEGER,
+    last_seen_ms    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_tool_global_calls    ON tool_global_stats(total_calls DESC);
+CREATE INDEX IF NOT EXISTS idx_tool_global_errors   ON tool_global_stats(error_count DESC);
+CREATE INDEX IF NOT EXISTS idx_tool_global_sessions ON tool_global_stats(session_count DESC);
+
+-- v0.8.5 B: 反范式 (session_id, tool_name) → call_count + error_count, 给"哪些 session 用过 X tool"查询
+CREATE TABLE IF NOT EXISTS tool_session (
+    session_id  TEXT NOT NULL,
+    tool_name   TEXT NOT NULL,
+    call_count  INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    last_ts_ms  INTEGER,
+    PRIMARY KEY (session_id, tool_name),
+    FOREIGN KEY (session_id) REFERENCES session_meta(session_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_tool_session_tool    ON tool_session(tool_name);
+CREATE INDEX IF NOT EXISTS idx_tool_session_session ON tool_session(session_id);
 
 CREATE TABLE IF NOT EXISTS session_override (
   session_id    TEXT PRIMARY KEY,
@@ -586,4 +614,252 @@ pub fn enrich_session_meta(
         ],
     )?;
     Ok(())
+}
+
+// ===== v0.8.5 B: 跨 session 工具聚合 (事务内 TRUNCATE + 全量重算) =====
+
+/// v0.8.5 B: 在事务里清空 tool_session / tool_global_stats, 然后从 session_meta 的
+/// tool_usage_json + tool_error_json 重新聚合.
+///
+/// 选 TRUNCATE + 重算 (而非 diff/增量) 的理由:
+/// - session 数 <10K 时, 几条 SQL 跑完, 性能可接受
+/// - 事务 atomic, 用户永远看不到中间状态 (空表或部分聚合)
+/// - 避免 tool_session_history 这种 diff 表, 减小 schema 复杂度
+/// - 重复累加 bug 不会发生
+pub fn rebuild_tool_global_stats(conn: &Connection) -> AppResult<()> {
+    let tx = conn.unchecked_transaction()?;
+
+    // 1) 清空两张表
+    tx.execute("DELETE FROM tool_session", [])?;
+    tx.execute("DELETE FROM tool_global_stats", [])?;
+
+    // 2) 全量聚合 — 从 session_meta 读 tool_usage_json + tool_error_json
+    //    对每个 session:
+    //      - 解析 tool_usage_json [(name, count)...]
+    //      - 解析 tool_error_json [(name, count)...]
+    //      - INSERT INTO tool_session (session_id, tool_name, call_count, error_count)
+    //      - 累加到 tool_global_stats
+    //
+    //    用 Rust 解析 JSON 后逐行 INSERT (无 GROUP BY 跨 session, 因为 SQL 里没有好的
+    //    "展开 JSON array 内每行" 语法, 在 SQLite 没有 json_each function)
+
+    let mut stmt = tx.prepare(
+        "SELECT session_id, tool_usage_json, tool_error_json, last_timestamp FROM session_meta
+         WHERE tool_usage_json IS NOT NULL OR tool_error_json IS NOT NULL",
+    )?;
+    let rows: Vec<(String, Option<String>, Option<String>, Option<String>)> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })?
+        .collect::<Result<_, _>>()?;
+    drop(stmt);
+
+    use std::collections::HashMap;
+    // global: tool_name → (total_calls, session_count, error_count, first_seen_ms, last_seen_ms)
+    let mut global: HashMap<String, (i64, i64, i64, i64, i64)> = HashMap::new();
+
+    for (sid, usage_json, error_json, last_ts) in rows {
+        let last_ts_ms = last_ts
+            .as_deref()
+            .and_then(parse_rfc3339_to_ms)
+            .unwrap_or(0);
+
+        // 解析 tool_usage_json: [(tool, count)]
+        let mut per_session: HashMap<String, (i64, i64)> = HashMap::new(); // tool → (calls, errors)
+        if let Some(json) = usage_json {
+            if let Ok(usage) = serde_json::from_str::<Vec<(String, u32)>>(&json) {
+                for (tool, count) in usage {
+                    per_session.entry(tool).or_insert((0, 0)).0 += count as i64;
+                }
+            }
+        }
+        if let Some(json) = error_json {
+            if let Ok(errors) = serde_json::from_str::<Vec<(String, u32)>>(&json) {
+                for (tool, count) in errors {
+                    per_session.entry(tool).or_insert((0, 0)).1 += count as i64;
+                }
+            }
+        }
+
+        // 写 tool_session + 累加 global
+        for (tool, (calls, errors)) in &per_session {
+            tx.execute(
+                "INSERT INTO tool_session (session_id, tool_name, call_count, error_count, last_ts_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![sid, tool, *calls, *errors, last_ts_ms],
+            )?;
+            let entry = global
+                .entry(tool.clone())
+                .or_insert((0, 0, 0, last_ts_ms, last_ts_ms));
+            entry.0 += calls;
+            entry.1 += 1; // session_count
+            entry.2 += errors;
+            if last_ts_ms > 0 {
+                entry.3 = entry.3.min(last_ts_ms);
+                entry.4 = entry.4.max(last_ts_ms);
+            }
+        }
+    }
+
+    // 3) 写 tool_global_stats
+    let mut ins = tx.prepare(
+        "INSERT INTO tool_global_stats (tool_name, total_calls, session_count, error_count,
+                                         first_seen_ms, last_seen_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )?;
+    for (tool, (calls, sessions, errors, first_ms, last_ms)) in &global {
+        ins.execute(params![
+            tool,
+            *calls,
+            *sessions,
+            *errors,
+            if *first_ms > 0 { Some(*first_ms) } else { None },
+            if *last_ms > 0 { Some(*last_ms) } else { None },
+        ])?;
+    }
+    drop(ins);
+
+    tx.commit()?;
+    Ok(())
+}
+
+/// v0.8.5 B: 解析 RFC-3339 时间戳到毫秒 (从 meta_extras.rs 复制的轻量版)
+fn parse_rfc3339_to_ms(s: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+#[cfg(test)]
+mod tool_global_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn fresh_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        // 简化的 session_meta + 新表
+        c.execute_batch(
+            "CREATE TABLE session_meta (
+                session_id TEXT PRIMARY KEY,
+                last_timestamp TEXT,
+                tool_usage_json TEXT,
+                tool_error_json TEXT
+             );
+             CREATE TABLE tool_global_stats (
+                tool_name TEXT PRIMARY KEY,
+                total_calls INTEGER NOT NULL DEFAULT 0,
+                session_count INTEGER NOT NULL DEFAULT 0,
+                error_count INTEGER NOT NULL DEFAULT 0,
+                first_seen_ms INTEGER,
+                last_seen_ms INTEGER
+             );
+             CREATE TABLE tool_session (
+                session_id TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                call_count INTEGER NOT NULL DEFAULT 0,
+                error_count INTEGER NOT NULL DEFAULT 0,
+                last_ts_ms INTEGER,
+                PRIMARY KEY (session_id, tool_name)
+             );",
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn rebuild_aggregates_basic() {
+        let conn = fresh_conn();
+        // 2 session 各有 Bash + Read, session 1 还有 Bash 失败
+        conn.execute(
+            "INSERT INTO session_meta (session_id, last_timestamp, tool_usage_json, tool_error_json) VALUES
+             ('s1', '2026-07-08T10:00:00Z', '[[\"Bash\",10],[\"Read\",3]]', '[[\"Bash\",2]]'),
+             ('s2', '2026-07-08T11:00:00Z', '[[\"Bash\",5],[\"Read\",7]]', NULL)",
+            [],
+        )
+        .unwrap();
+        rebuild_tool_global_stats(&conn).unwrap();
+        // Bash: total=15, sessions=2, errors=2
+        let (calls, sessions, errors): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT total_calls, session_count, error_count FROM tool_global_stats WHERE tool_name='Bash'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(calls, 15);
+        assert_eq!(sessions, 2);
+        assert_eq!(errors, 2);
+        // Read: total=10, sessions=2, errors=0
+        let (calls, sessions, errors): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT total_calls, session_count, error_count FROM tool_global_stats WHERE tool_name='Read'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(calls, 10);
+        assert_eq!(sessions, 2);
+        assert_eq!(errors, 0);
+    }
+
+    #[test]
+    fn rebuild_clears_stale_data() {
+        let conn = fresh_conn();
+        // 先写一行 stale
+        conn.execute(
+            "INSERT INTO tool_global_stats (tool_name, total_calls) VALUES ('Stale', 999)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session_meta (session_id, tool_usage_json) VALUES ('s1', '[[\"Bash\",1]]')",
+            [],
+        )
+        .unwrap();
+        rebuild_tool_global_stats(&conn).unwrap();
+        // Stale 应该被清掉
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tool_global_stats WHERE tool_name='Stale'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn rebuild_handles_empty_db() {
+        let conn = fresh_conn();
+        rebuild_tool_global_stats(&conn).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM tool_global_stats", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn rebuild_writes_tool_session_rows() {
+        let conn = fresh_conn();
+        conn.execute(
+            "INSERT INTO session_meta (session_id, tool_usage_json) VALUES ('s1', '[[\"Bash\",5]]')",
+            [],
+        )
+        .unwrap();
+        rebuild_tool_global_stats(&conn).unwrap();
+        let (sid, calls): (String, i64) = conn
+            .query_row(
+                "SELECT session_id, call_count FROM tool_session WHERE tool_name='Bash'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(sid, "s1");
+        assert_eq!(calls, 5);
+    }
 }
