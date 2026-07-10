@@ -2,6 +2,121 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.5] - 2026-07-09
+
+v0.8.4 把 19 列派生数据固化到 `session_meta` 后, 用户要求"充分发挥数据库优势, 夯实工具能力" — 本版本深挖 tool 维度, 4 件事:
+
+1. **per-tool 错误**(A) — `error_count` 之前只数整条 assistant 失败, 不区分是哪个 tool
+2. **跨 session tool 聚合**(B) — 新表 + 新路由 `/tools`, 全局工具排行/失败/时间线
+3. **G1/G2 NDJSON → DB 切**(C) — 关闭 M3 兜底, `graphStore` 走 `list_graph` command
+4. **toolUsage count 透出**(D) — ContentFilterPanel chip 显示 `${tool} × N`, SessionSummaryStrip 占比 %
+
+Plus 收口 v0.8.4 CHANGELOG 已挂的 `db/schema.rs` 0 tests。
+
+### 新增
+
+#### 1. tool 错误维度(item A)
+
+之前 `error_count` 是 assistant message 级(`stop_reason=="error"` 或 `message.is_error`), **不区分是哪个 tool 失败**; `tool_result.is_error` 在 `NormalizedBlock` 已解析但没沉淀到 DB。
+
+- DB: `session_meta.tool_error_json` 列(per-tool 失败计数, 紧凑数组 `[["Bash", 3], ...]`)
+- 后端: `parser/meta_extras.rs` 单遍扫描 — assistant 阶段 `tool_use` 时把 `id → name` 记到 HashMap, user 阶段扫 `tool_result.is_error` 查 map 累加 per-tool error count
+- migrations `ensure_columns` 扩 1 项
+- SessionDetailRoute header 加 `🔴 失败最多: Bash × 5` badge
+- `transcriptFilterStore.errorMode: "all" | "errors" | "no_errors"` + ContentFilterPanel 加 "失败" 维度 3 chip
+- `lib/filterEntries.ts` 加 `errorMode` 过滤, `entryHasToolError` helper
+
+跟 `errorCount` 正交: `errorCount` 数整条 assistant 失败, `toolError` 数单个 tool 调用失败, UI 同时显示互补。
+
+#### 2. 全局 tool 聚合层(item B)
+
+之前没有任何"跨 session 工具聚合" command/表。G2 Analytics "top_tools" chart 走 NDJSON, 用户看不到失败维度。
+
+- DB: 2 新表 — `tool_global_stats`(tool_name PK + total_calls / session_count / error_count / first/last_seen_ms)+ 3 索引(calls / errors / sessions DESC);`tool_session`(反范式 `(session_id, tool_name) → call_count + error_count + last_ts_ms`)+ 2 索引
+- 后端: `commands/tool_stats.rs` 新 mod, 3 commands — `get_tool_aggregate(sort_by?, limit?)` / `get_tool_sessions(tool_name, limit?)` / `rebuild_tool_stats`
+- `db/sync.rs::sync_once` 末尾调 `rebuild_tool_global_stats` (事务内 TRUNCATE + 全量重算)
+- 前端: `/tools` 路由 — 总览排行(sort_by calls/sessions/errors 切换)+ 单 tool 跨 session section
+- `state/toolStatsStore.ts` + `listen("sessions-updated")` 自动 reload
+- `SessionsRoute` header 加 Wrench icon 跳 `/tools`
+
+聚合层**不增量** — 每次 sync 末尾 TRUNCATE 两张表 + 从 `session_meta.tool_usage_json` / `tool_error_json` 全量重算。事务 atomic, 用户永远看不到中间状态。Session 数 <10K 时几条 SQL 跑完, 性能可接受。
+
+#### 3. G1/G2 NDJSON → DB 切(item C)
+
+`graphStore.ts:25-37` 注释 "M3 阶段: 切换到 apiListGraph() (Tauri invoke)" — M3 一直未做, `loadNdjson("/sessions.ndjson")` 仍兜底。
+
+- 后端: `commands/graph.rs::list_graph` command — 读 `session_meta` 派生 `GraphNodeFE` (22 字段, 含 firstPrompt / tokenTotal / thinkingCount / topTools / errorCount / subagentCount / subagentIds / agentId 等)
+- UsedTool edges 从 `session_meta.tool_usage_json` 派生
+- 其它 edges (Spawned / ParentUuid / AttemptedFix / CrossSession) 暂时空, **v0.8.6+ 补完** (需要 subagent 关联扫描 + parent_uuid 跨 session 扫描)
+- `is_subagent_root` / `parent_session_id` 暂时 default (`false` / `None`), v0.8.6+ 派生
+- 前端: `graphStore.load()` 切到 `apiListGraph()`, 加 `reload()` action
+- `lib/overridesApi.ts` 加 `apiListGraph` wrapper
+
+**Analytics 8 chart 仍跑得起来**(它们只读 `GraphEntry.node` + UsedTool edges):
+
+- `topToolsBar` / `toolsByCategory` — 用 UsedTool edges (有)
+- 其它 6 chart — 用 node 字段 (有)
+- **G1 GraphView 暂时退化**: 只显示孤立 node (没 force graph lines), v0.8.6+ 补完 edges 后恢复
+
+#### 4. toolUsage count 透出 + UI 增强(item D)
+
+`v0.8.4` 把 `toolUsage` 从 DB 读出来后, 前端两个地方丢掉 count: `TranscriptView.tsx:94 .map(([tool]) => tool)` 让 ContentFilterPanel chip 只显示名字; `SessionSummaryStrip` 显示 × count 但无占比 %。
+
+- `ContentFilterPanel.availableTools`: `string[]` → `Array<[string, number]>` tuple, chip 渲染 `${tool} × ${count}`, title 包含 "(共 N 次)"
+- `TranscriptView.availableTools` useMemo 返回 tuple (DB 优先, fallback 也按 count desc 排 + localeCompare tie-break)
+- `SessionSummaryStrip` top 5 加 `(count / totalCalls * 100)%` 占比显示, 新加 `.ss-tool-pct` CSS (小字号 0.85em, 0.65 opacity)
+
+### 性能
+
+无新 perf 改动 (v0.8.4 已经有 3 个 perf)。
+
+### UI 改进
+
+- `ContentFilterPanel` 加 "失败" 维度 (3 chip)
+- `SessionSummaryStrip` top 5 显示占比 %
+- `SessionDetailRoute` header 加 `🔴 失败最多: Bash × 5` badge (v0.8.5 A)
+- 新 `/tools` 路由(v0.8.5 B)
+
+### 修复
+
+无新 bug fix。`build_meta_full` 跟 `parser/blocks/tool_use.rs` 的 alias 脱节 (v0.8.4 修过) 继续保留。
+
+### 测试
+
+- `cargo fmt -- --check`: clean
+- `cargo clippy --all-targets -- -D warnings`: clean (含 tool_stats / graph / rebuild_tool_global_stats)
+- `cargo test --lib`: **148/148**
+  - v0.8.4 baseline 121
+  - v0.8.5 A 新增 2 (meta_extras captures_tool_error_per_tool + tool_error_unknown_tool_use_id_skipped)
+  - v0.8.5 B 新增 6 (migrations ensure_tables_creates_new_tables + idempotent + schema rebuild_aggregates_basic / rebuild_clears_stale_data / rebuild_handles_empty_db / rebuild_writes_tool_session_rows)
+  - v0.8.5 E 新增 4 (schema round-trip tool_usage_json / tool_error_json / enrich_session_meta_writes_all_columns / enrich_session_meta_handles_none_fields)
+  - 其它既有 15 tests
+- `pnpm typecheck`: clean
+- `pnpm -r test`: **477/477** (33 files, 含 ContentFilterPanel 显示 count + filterEntries errorMode 4 case + SessionDetailRoute stat-tool-error badge)
+- `pnpm --filter @ocsv/frontend build`: ✓
+
+### Dev manual 验证清单(8 步)
+
+1. 首页: 状态栏 (v0.8.4 item 1) 仍工作
+2. 顶栏点 Wrench icon 跳 `/tools` — 总览排行 (默认按 calls 降序)
+3. `/tools` 切 sort_by = "失败次数" — 验证 top 切换正确
+4. `/tools` 点选某 tool 行 — 展开 "跨 session" section, 列 N 个 session 用过此 tool
+5. 打开一个 Bash-heavy session, SessionDetailRoute header 显示 `🔴 失败最多: Bash × N`
+6. ContentFilterPanel chip 显示 `Bash × 286 · Read × 50` (v0.8.5 D)
+7. SessionSummaryStrip top 5 显示 `Bash 286 76% · Read 50 13%` (v0.8.5 D)
+8. ContentFilterPanel 加 "失败" chip 选 "仅失败" — 只显示含 `tool_result.is_error` 的 entries
+9. `/graph?view=analytics` — 8 chart 仍能跑 (数据源从 NDJSON 切到 DB)
+10. 新 DB (delete observer.db, restart): `ensure_columns` + `ensure_tables` 跑, schema 完整
+11. 老 v0.8.4 DB: `ensure_columns` 升级 20→21 列 (tool_error_json), `ensure_tables` 建 2 新表 + 7 索引, 数据不丢失
+
+### 已识别但仍未修(v0.8.6+ 候选)
+
+- **HIGH:** `Mutex<Connection>` 串行化读、notify_waiters coalescing 丢命令、每文件 emit 风暴、scan_live_pids per-file 10× 慢、`export_overrides` 包含 hidden + notes(隐私泄漏)、last_error 永不写、PRAGMA WAL 失败静默
+- **MEDIUM:** placeholder jsonl_path UNIQUE 移动文件炸、GROUP_CONCAT 撞 tag 名字逗号、save_settings 任何字段修改触发 re-walk、`refresh_sessions` 触发即返旧值、sid 输入验证、`list_overrides` 全量含 hidden/archived 浪费 IPC、`add_session_link` OR REPLACE 改 created_at、apply_notes Keepboth IS NOT NULL 含空串、**G1 GraphView 缺 Spawned/ParentUuid/AttemptedFix/CrossSession edges (v0.8.5 C partial 留下), `is_subagent_root` / `parent_session_id` 没派生**
+- **PERF:** `findIdleGaps` 单遍 O(n) 在反复倒序/正序切换时仍卡主线程, 根治需 web worker 或增量累加;`BTreeSet` 字典序跟 `tool_usage_json` 频次降序不一致
+- **TEST GAP:** `db/sync.rs` 仍 0 tests (M2 后没补); frontend `overridesStore` / `SearchPalette` / `DatabasePanel` / `SessionsRoute listen 回路` 仍 0 tests; v0.8.5 B 的 `ToolsRoute.test.tsx` 仍没加 (UI 已有, 测试延后)
+- **SCALE:** `tool_global_stats` 整表 TRUNCATE + 重算在 >10K session 时可能慢, v0.8.6+ 改增量维护
+
 ## [0.8.4] - 2026-07-09
 
 v0.8.3 修好 refresh storm 后,用户要求把"实施那行数据统计 + 筛选条件"全部固化到 DB,同时关 5 个 UI 缺口(状态栏、file_snapshot 折叠、6 个 meta 类型无 UI、agent_name 不可见、TranscriptView 倒序卡)。本版本纯增量 — DB schema 扩 19 列(全部走 `ALTER TABLE` idempotent migration)、3 个新前端组件、6 个新 parser handler、3 个 perf 改动。
