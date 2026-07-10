@@ -736,6 +736,178 @@ fn parse_rfc3339_to_ms(s: &str) -> Option<i64> {
 }
 
 #[cfg(test)]
+mod round_trip_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn fresh_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA_SQL).unwrap();
+        c
+    }
+
+    // v0.8.5 E: tool_usage_json 写 → 读 回 Vec<(String, u32)>
+    #[test]
+    fn tool_usage_json_round_trip() {
+        let conn = fresh_conn();
+        // 插入 1 行 (含 top_tools_json / tool_usage_json)
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path, size_bytes,
+                                       mtime_ms, line_count, synced_at, top_tools_json, tool_usage_json)
+             VALUES ('s1', 'p', 'claude', '/x', 0, 0, 0, 0, '[\"Bash\",\"Read\"]',
+                     '[[\"Bash\",286],[\"Read\",50]]')",
+            [],
+        )
+        .unwrap();
+        // 读回
+        let json: String = conn
+            .query_row(
+                "SELECT tool_usage_json FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let parsed: Vec<(String, u32)> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed,
+            vec![("Bash".to_string(), 286), ("Read".to_string(), 50)]
+        );
+    }
+
+    // v0.8.5 E: tool_error_json 写 → 读
+    #[test]
+    fn tool_error_json_round_trip() {
+        let conn = fresh_conn();
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path, size_bytes,
+                                       mtime_ms, line_count, synced_at, tool_error_json)
+             VALUES ('s1', 'p', 'claude', '/x', 0, 0, 0, 0,
+                     '[[\"Bash\",3],[\"WebFetch\",1]]')",
+            [],
+        )
+        .unwrap();
+        let json: String = conn
+            .query_row(
+                "SELECT tool_error_json FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let parsed: Vec<(String, u32)> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed,
+            vec![("Bash".to_string(), 3), ("WebFetch".to_string(), 1)]
+        );
+    }
+
+    // v0.8.5 E: enrich_session_meta 各列更新正确
+    #[test]
+    fn enrich_session_meta_writes_all_columns() {
+        let conn = fresh_conn();
+        // 先 INSERT 一行
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path, size_bytes,
+                                       mtime_ms, line_count, synced_at)
+             VALUES ('s1', 'p', 'claude', '/x', 0, 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+        // 调 enrich
+        enrich_session_meta(
+            &conn,
+            "s1",
+            5,  // error_count
+            10, // user_message_count
+            8,  // assistant_message_count
+            Some(3600),
+            Some(5000),
+            Some("agent-x"),
+            2,
+            1,
+            1,
+            0,
+            0,  // invoked/plans/compacts/queued/attached
+            18, // text_message_count
+            Some("[[\"Bash\",286]]"),
+            Some("implement"),
+            Some("47% 写操作"),
+            3, // repeat_run_count
+            Some("Bash"),
+            Some(5),
+            2, // idle_gap_count
+            Some(420_000),
+            Some("[\"opus\",\"sonnet\"]"),
+            Some("[[\"Bash\",3]]"), // tool_error
+        )
+        .unwrap();
+        // 读回验证
+        let (err, txt, repeat, idle, tool_err, tool_use, agent): (
+            i64,
+            i64,
+            i64,
+            i64,
+            String,
+            String,
+            String,
+        ) = conn
+            .query_row(
+                "SELECT error_count, text_message_count, repeat_run_count, idle_gap_count,
+                        tool_error_json, tool_usage_json, agent_name
+                 FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, String>(5)?,
+                        r.get::<_, String>(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(err, 5);
+        assert_eq!(txt, 18);
+        assert_eq!(repeat, 3);
+        assert_eq!(idle, 2);
+        assert!(tool_err.contains("Bash"));
+        assert!(tool_use.contains("Bash"));
+        assert_eq!(agent, "agent-x");
+    }
+
+    // v0.8.5 E: enrich_session_meta 接受 None 字段 (不覆盖已有值)
+    #[test]
+    fn enrich_session_meta_handles_none_fields() {
+        let conn = fresh_conn();
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path, size_bytes,
+                                       mtime_ms, line_count, synced_at)
+             VALUES ('s1', 'p', 'claude', '/x', 0, 0, 0, 0)",
+            [],
+        )
+        .unwrap();
+        enrich_session_meta(
+            &conn, "s1", 0, 0, 0, None, None, None, 0, 0, 0, 0, 0, 0, None, None, None, 0, None,
+            None, 0, None, None, None,
+        )
+        .unwrap();
+        // 写完后所有列应为 default 0 / None
+        let (agent, dur, err): (Option<String>, Option<i64>, i64) = conn
+            .query_row(
+                "SELECT agent_name, duration_seconds, error_count FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert!(agent.is_none());
+        assert!(dur.is_none());
+        assert_eq!(err, 0);
+    }
+}
+
+#[cfg(test)]
 mod tool_global_tests {
     use super::*;
     use rusqlite::Connection;
