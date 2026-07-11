@@ -33,16 +33,16 @@ export interface SessionNode {
 
 export type Edge =
   | {
-      type: "Spawned";
+      type: "spawned";
       from_session: string;
       to_subagent_id: string;
       to_subagent_path: string;
       description: string | null;
     }
-  | { type: "ParentUuid"; session: string; from_uuid: string; to_uuid: string }
-  | { type: "UsedTool"; session: string; tool_name: string; count: number }
-  | { type: "AttemptedFix"; session: string; error_count: number }
-  | { type: "CrossSession"; parent: string; child: string };
+  | { type: "parent_uuid"; session: string; from_uuid: string; to_uuid: string }
+  | { type: "used_tool"; session: string; tool_name: string; count: number }
+  | { type: "attempted_fix"; session: string; error_count: number }
+  | { type: "cross_session"; parent: string; child: string };
 
 /** 一行 NDJSON 的物化:node + edges 平摊 */
 export interface GraphEntry {

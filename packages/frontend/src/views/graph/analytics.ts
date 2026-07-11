@@ -110,7 +110,7 @@ export function topToolsBar(entries: GraphEntry[], topN: number): ToolBarRow[] {
   for (const e of entries) {
     if (!e.node.node_id) continue;
     for (const ed of e.edges) {
-      if (ed.type === "UsedTool") {
+      if (ed.type === "used_tool") {
         let set = sessionWithTool.get(ed.tool_name);
         if (!set) {
           set = new Set();
@@ -297,7 +297,7 @@ export function toolsByCategory(entries: GraphEntry[]): ToolCategoryRow[] {
   const byTool = new Map<string, { sessions: Set<string>; calls: number }>();
   for (const e of entries) {
     for (const ed of e.edges) {
-      if (ed.type !== "UsedTool") continue;
+      if (ed.type !== "used_tool") continue;
       let m = byTool.get(ed.tool_name);
       if (!m) {
         m = { sessions: new Set(), calls: 0 };

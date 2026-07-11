@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS session_meta (
   size_bytes        INTEGER NOT NULL,
   mtime_ms          INTEGER NOT NULL,
   line_count        INTEGER NOT NULL,
-  first_ts          TEXT,
-  last_ts           TEXT,
+  first_timestamp   TEXT,
+  last_timestamp    TEXT,
   message_count     INTEGER NOT NULL DEFAULT 0,
   thinking_count    INTEGER NOT NULL DEFAULT 0,
   tool_use_count    INTEGER NOT NULL DEFAULT 0,
@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS session_meta (
   idle_gap_max_ms             INTEGER,
   -- v0.8.4 item 2'': ContentFilterPanel Model chip 也走 DB
   available_models_json       TEXT,
+  -- v0.8.8: first_prompt 列 — 给 GraphView 节点首条 user prompt 显示用
+  first_prompt                TEXT,
   -- v0.8.5 A: per-tool 失败计数 — [["Bash", 3], ["WebFetch", 1]] 按 count desc
   -- 跟 error_count (message 级) 正交, 互补
   tool_error_json             TEXT,
@@ -83,7 +85,7 @@ CREATE TABLE IF NOT EXISTS session_meta (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
-CREATE INDEX IF NOT EXISTS idx_sm_lastts   ON session_meta(last_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_sm_lastts   ON session_meta(last_timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_sm_project  ON session_meta(project_key);
 CREATE INDEX IF NOT EXISTS idx_sm_agent    ON session_meta(agent_id);
 
@@ -258,7 +260,7 @@ pub fn upsert_session_meta(
         INSERT INTO session_meta (
           session_id, project_key, workspace_guess, source, agent_id,
           jsonl_path, size_bytes, mtime_ms, line_count,
-          first_ts, last_ts, message_count,
+          first_timestamp, last_timestamp, message_count,
           thinking_count, tool_use_count,
           top_tools_json, total_tokens_json, primary_model,
           has_trajectory, trajectory_size,
@@ -283,8 +285,8 @@ pub fn upsert_session_meta(
           size_bytes       = excluded.size_bytes,
           mtime_ms         = excluded.mtime_ms,
           line_count       = excluded.line_count,
-          first_ts         = excluded.first_ts,
-          last_ts          = excluded.last_ts,
+          first_timestamp = excluded.first_timestamp,
+          last_timestamp  = excluded.last_timestamp,
           message_count    = excluded.message_count,
           thinking_count   = excluded.thinking_count,
           tool_use_count   = excluded.tool_use_count,
@@ -375,7 +377,7 @@ pub fn list_all_joined(conn: &Connection) -> AppResult<Vec<JoinedRow>> {
 const JOIN_SELECT_BASE: &str = r#"
 SELECT
   m.session_id, m.project_key, m.workspace_guess, m.source, m.agent_id,
-  m.jsonl_path, m.size_bytes, m.first_ts, m.last_ts, m.message_count,
+  m.jsonl_path, m.size_bytes, m.first_timestamp, m.last_timestamp, m.message_count,
   m.thinking_count, m.tool_use_count, m.top_tools_json, m.total_tokens_json,
   m.primary_model, m.has_trajectory, m.trajectory_size,
   m.subagent_count, m.subagent_ids_json,

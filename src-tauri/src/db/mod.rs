@@ -143,8 +143,14 @@ fn open_connection(db_path: &Path) -> AppResult<Connection> {
 }
 
 /// v0.8.7 C: 给单条 connection 应用 PRAGMA (WAL + foreign_keys + synchronous=NORMAL)
+///
+/// v0.8.8: `journal_mode=WAL` 失败返 AppError(之前 `.ok()` 静默吞)。WAL 失败意味着
+/// SQLite 退到 rollback journal 模式,reader/writer 池设计失效 (reader 跟 writer
+/// 会互锁)— 必须 fail-fast 让 open 中断,而不是静默退化到池失效的状态。
+/// `foreign_keys` / `synchronous` 失败仍 `.ok()` 兜底 (这俩失败降级明显但不会让池失效)。
 fn apply_pragmas(conn: &Connection) -> AppResult<()> {
-    conn.pragma_update(None, "journal_mode", "WAL").ok();
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| AppError::Other(format!("PRAGMA journal_mode=WAL failed: {e}")))?;
     conn.pragma_update(None, "foreign_keys", "ON").ok();
     conn.pragma_update(None, "synchronous", "NORMAL").ok();
     Ok(())
@@ -168,13 +174,22 @@ fn build_pool(writer: Connection, db_path: PathBuf) -> DbPool {
         }
     }
     if readers.is_empty() {
-        // 兜底: 极端情况下 (writer 都打开了但 reader 都失败) 用 writer 顶上
-        // 此时读写会共用同 connection, 实际效果等价于老 Mutex 行为
-        // — 但仍能跑, 不 panic
-        log::warn!("DbPool 无可用的 reader — 退化到单 connection (互锁所有访问)");
-        // Connection: !Clone, 但因为 writer 是 Connection, 不能直接放 2 处.
-        // 极端兜底: 在这里 panic, 比静默退化为单连接更明确.
-        panic!("DbPool 没有任何 reader 可用 (writer 已成功, reader 全失败)");
+        // v0.8.8: 兜底改为真退化 — 把 writer 移进 readers 数组,占位 writer 用 :memory:
+        // (永不写)。之前注释说"退化到单 connection"但实际 panic,跟 v0.8.6 时代单 Mutex
+        // 行为不一致。改成真退化后行为 = v0.8.6 单 Mutex,所有读写互锁但功能正常。
+        // (极罕见: 磁盘满 / fd 耗尽时 writer 能开但 reader 全失败才会触发)
+        log::warn!("DbPool 无可用 reader — 退化到单 connection (writer 兼 reader,所有访问互锁)");
+        readers.push(Mutex::new(writer));
+        let placeholder = match Connection::open_in_memory() {
+            Ok(c) => c,
+            Err(e) => panic!("DbPool fallback in-memory open failed: {e}"),
+        };
+        return DbPool {
+            readers: Arc::new(readers),
+            writer: Arc::new(Mutex::new(placeholder)),
+            next_reader: Arc::new(AtomicUsize::new(0)),
+            path: db_path,
+        };
     }
     DbPool {
         readers: Arc::new(readers),
@@ -403,5 +418,30 @@ mod pool_tests {
             })
             .expect("count");
         assert_eq!(count, 2); // s1 + s3 (fresh_pool 插了 s1, 这里加 s3)
+    }
+
+    // v0.8.7 C: 契约测试 — 锁住 build_pool 默认 reader 数 (READER_COUNT = 4)
+    // 改了 READER_COUNT 会影响并发能力: 多了浪费 fd, 少了并发读瓶颈。
+    // 改这个常量前应该 review 一遍 G1+G2+lists+HomeStatusBar 同时加载的需求
+    #[test]
+    fn pool_has_four_readers_by_default() {
+        let (_tmp, pool) = fresh_pool();
+        assert_eq!(
+            pool.readers.len(),
+            4,
+            "DbPool 默认 4 readers — 改这个常量前请确认 G1/G2/lists/HomeStatusBar 同时加载还够用"
+        );
+    }
+
+    // v0.8.7 C: 契约测试 — DbPool.path() 返回 AppConfigDir/observer.db
+    // 给 SettingsRoute 展示用
+    #[test]
+    fn pool_path_returns_db_file() {
+        let (_tmp, pool) = fresh_pool();
+        assert_eq!(
+            pool.path().file_name().and_then(|n| n.to_str()),
+            Some("observer.db"),
+            "DbPool.path() 应指向 observer.db"
+        );
     }
 }

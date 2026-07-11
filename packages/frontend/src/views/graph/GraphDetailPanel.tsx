@@ -197,10 +197,10 @@ export function GraphDetailPanel({
     } else if (node.type === "subagent" && node.agent_id && entry) {
       // 找 Spawned edge 拿 jsonlPath
       const spawnedEdge = entry.edges.find(
-        (e) => e.type === "Spawned" && e.to_subagent_id === node.agent_id
+        (e) => e.type === "spawned" && e.to_subagent_id === node.agent_id
       );
       const jsonlPath =
-        (spawnedEdge && spawnedEdge.type === "Spawned" && spawnedEdge.to_subagent_path) ||
+        (spawnedEdge && spawnedEdge.type === "spawned" && spawnedEdge.to_subagent_path) ||
         session.jsonl_path;
       const virtualMeta: Partial<MainSessionMeta> = {
         sessionId: node.agent_id,
@@ -417,7 +417,7 @@ export function GraphDetailPanel({
               {session.subagent_ids.map((saId) => {
                 let desc: string | null = null;
                 for (const e2 of entry!.edges) {
-                  if (e2.type === "Spawned" && e2.to_subagent_id === saId) {
+                  if (e2.type === "spawned" && e2.to_subagent_id === saId) {
                     desc = e2.description ?? null;
                     break;
                   }

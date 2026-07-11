@@ -2,6 +2,80 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.8] - 2026-07-11
+
+v0.8.7 review 揪出的 3 个 v0.8.5 C 起就 broken 的 CRITICAL bug + 2 条 minor 推迟到本版本 hotfix:
+
+1. **graph.rs SELECT 引用不存在的列 (A)** — 自 v0.8.5 C (`626e61b`) 引入 list_graph 起,SELECT 用 `first_timestamp` / `last_timestamp` / `first_prompt` 但 schema 列叫 `first_ts` / `last_ts` 且**根本没有 first_prompt 列**。任何 v0.8.5+ 调用 `/graph` 直接 SQL 错误 (调试期才暴露)。
+2. **graph.rs row.get 索引 +1 偏移 (B)** — SELECT 21 列(0-20),但 `r.get(17/18/19/20/21)` 全部 +1,跟 Bug A 叠加,`r.get(21)` 越界 `InvalidColumnIndex` panic。
+3. **前端 EdgeFE tag 大小写不匹配 (C)** — Rust `#[serde(rename_all="snake_case")]` 输出 `"used_tool"`,前端 6 文件用 `"UsedTool"` PascalCase 永远 false。所有 G1 edges 被忽略 + G2 top_tools chart 数据源空。
+
+Plus (用户确认一并修): 4. **schema 列重命名 + first_prompt 列 (D)** — 同步把 schema 列 `first_ts`/`last_ts` 重命名为 `first_timestamp`/`last_timestamp` 跟 SELECT 对齐,加 `first_prompt` 列。迁移走 `ALTER TABLE RENAME COLUMN` (SQLite 3.25+) 幂等。5. **`apply_pragmas` WAL 失败静默 → 返 AppError (E)** — reader/writer 池设计根本依赖 WAL,WAL 失败必须 fail-fast 让 open 中断,不能静默退化到池失效状态。6. **`build_pool` reader 全失败 panic → 真退化 (F)** — 注释说"退化到单 connection"实际 panic,行为跟 v0.8.6 单 Mutex 时代不一致。改成真退化: writer 移进 readers 数组 + 占位 in-memory writer。
+
+### 修复
+
+#### 1. graph.rs SELECT 引用不存在的列 (Bug A)
+
+`src-tauri/src/commands/graph.rs:185-192` SELECT 引用 `first_timestamp` / `last_timestamp` / `first_prompt` 三列,但 schema 实际列名是 `first_ts` / `last_ts` 且**根本没有 first_prompt 列**。任何 list_graph 调用都立刻 SQL 错误 — 这就是 v0.8.5/6/7 `/graph` GraphView 一直坏掉的真正 root cause (跟 Bug B 一起叠加)。
+
+**修复**:
+
+- schema (`db/schema.rs::SCHEMA_SQL`) 把 `first_ts`/`last_ts` 改名为 `first_timestamp`/`last_timestamp`,加 `first_prompt TEXT` 列
+- schema.rs 内部 4 处 (`upsert_session_meta` / `JOIN_SELECT_BASE` / `idx_sm_lastts` / INSERT 列名) 同步改
+- 加 migration (`db/migrations.rs::COLUMN_RENAMES`) 给老 v0.8.x DB 用 `ALTER TABLE RENAME COLUMN` 升级
+
+#### 2. graph.rs row.get 索引 +1 偏移 (Bug B)
+
+SELECT 21 列 (0-20),但 `r.get(17/18/19/20/21)` 全部 +1。修:
+
+- L221 `r.get(17)` → `r.get(16)` (subagent_ids_json)
+- L244 `r.get(18)` → `r.get(17)` (first_prompt)
+- L257 `r.get(19)` → `r.get(18)` (agent_id)
+- L261 `r.get(20)` → `r.get(19)` (tool_usage_json)
+- L295 `r.get(21)` → `r.get(20)` (parent_uuids_text)
+
+抽出 `list_graph_from_conn(&Connection)` 纯函数,跟 Tauri State 解耦,给 e2e 测试用。
+
+**回归测试**: 加 7 个 `commands::graph::tests::list_graph_*` (in-memory DB + 完整 22 列 fixture + 字段对字段验证)。锁住 SELECT → GraphEntryFE 字段对应表,防 v0.8.9+ 加列时再次掉这个坑。
+
+#### 3. 前端 EdgeFE tag PascalCase → snake_case (Bug C)
+
+`GraphNodeFE` 跟 `EdgeFE` 都是 `#[serde(rename_all="snake_case")]`,但前端 6 文件用 PascalCase 字符串。修 19 处:
+
+| 文件                               | 处数                       |
+| ---------------------------------- | -------------------------- |
+| `views/graph/types.ts`             | 5 (5 个 variant type)      |
+| `views/graph/graph-types.ts`       | 1 (union type)             |
+| `views/graph/GraphView.tsx`        | 6 (e.type / edgeType 比较) |
+| `views/graph/GraphDetailPanel.tsx` | 3 (e.type 比较)            |
+| `views/graph/loader.ts`            | 2 (e2.type / edgeType)     |
+| `views/graph/analytics.ts`         | 2 (ed.type 比较)           |
+
+**Note**: GraphView 中 `node.type === "main"|"subagent"|"tool"` 是 GNode 内部 type,跟 EdgeFE 判别符无关,不动。
+
+#### 4. apply_pragmas PRAGMA WAL 失败静默 → 返 AppError
+
+`src-tauri/src/db/mod.rs::apply_pragmas`: `journal_mode=WAL` 失败之前 `.ok()` 吞掉。WAL 失败意味着 SQLite 退到 rollback journal 模式,reader/writer 池设计失效。改成返 AppError 让 open 中断。
+
+`foreign_keys` / `synchronous` 失败仍 `.ok()` 兜底。
+
+#### 5. build_pool reader 全失败 panic → 真退化
+
+`src-tauri/src/db/mod.rs::build_pool`: 之前注释"退化到单 connection"实际 panic。改成真退化: 把 writer 移进 readers 数组 + writer 字段用 in-memory Connection 占位 (永不写)。注释跟代码行为一致。
+
+### 测试
+
+- 7 个 list*graph e2e 测试 (`commands::graph::tests::list_graph*\*`)
+- 7 个 ensure_columns migration 测试 (扩 `COLUMN_RENAMES` 覆盖)
+- cargo fmt / clippy / 175 → 182 Rust tests / 492 → 492 frontend tests / typecheck clean
+
+### 验证
+
+- /graph G1 GraphView 不再 SQL 错误 / panic, 看到 UsedTool / Spawned / AttemptedFix / ParentUuid edges
+- /graph G2 Analytics 8 chart 数据齐全 (top_tools chart 走 UsedTool edges)
+- 删除 observer.db 重启, build_pool 走 default path (4 readers + 1 writer)
+- 老 v0.8.7 DB (有 first_ts/last_ts 列无 first_timestamp 列): migrate 时 ALTER RENAME 自动跑,first_prompt 列 ADD COLUMN 兜底,数据不丢失
+
 ## [0.8.7] - 2026-07-11
 
 v0.8.6 完成 GraphView edges 补完 + TEST GAP + HIGH bug 修后,
@@ -96,6 +170,8 @@ pnpm -r test                    # 492/492
 ```
 
 ### 已知
+
+(v0.8.8 release 已修全部 4 项, 见 v0.8.8 段)
 
 - `tool_global_stats` 仍是 TRUNCATE + 全量重算 (v0.8.5 B), 数据量 >10K session 后考虑增量
 - `G2 AnalyticsView` 8 chart 仍走 `graph.ts::compute_analytics` (NDJSON 等价数组),
