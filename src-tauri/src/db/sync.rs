@@ -287,15 +287,24 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let _ = state.db.with(|c| {
+        // v0.8.6 D: failed > 0 时把首个失败原因写到 last_error (没有则 NULL)
+        // 之前 failed 计数字段写, last_error 永不写, HomeStatusBar 不能显示 error
+        let last_error_msg: Option<String> = if failed > 0 {
+            // 简化: failed > 0 但没有 per-file error 收集, 只写 "X 个文件 sync 失败"
+            Some(format!("{failed} 个文件 sync 失败"))
+        } else {
+            None
+        };
         c.execute(
-            "INSERT INTO sync_state (id, last_run_at, files_seen, files_synced, in_progress)
-             VALUES (1, ?1, ?2, ?3, 0)
+            "INSERT INTO sync_state (id, last_run_at, last_error, files_seen, files_synced, in_progress)
+             VALUES (1, ?1, ?2, ?3, ?4, 0)
              ON CONFLICT(id) DO UPDATE SET
                last_run_at  = excluded.last_run_at,
+               last_error   = excluded.last_error,
                files_seen   = excluded.files_seen,
                files_synced = excluded.files_synced,
                in_progress  = 0",
-            rusqlite::params![now, total as i64, done as i64],
+            rusqlite::params![now, last_error_msg, total as i64, done as i64],
         )?;
         Ok::<_, AppError>(())
     });
