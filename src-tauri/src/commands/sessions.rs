@@ -103,7 +103,8 @@ fn agent_info_from_index(
 /// DB 同步完成后,这里就是个纯 SELECT,启动后秒出。
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<SessionMeta>> {
-    let rows = state.db.with(|c| crate::db::schema::list_all_joined(c))?;
+    // v0.8.7 C: 纯读, 走 reader pool (跟其它读并发不互锁)
+    let rows = state.db.with_read(crate::db::schema::list_all_joined)?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         let mut m = r.meta;
