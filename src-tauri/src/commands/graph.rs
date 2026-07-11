@@ -164,7 +164,8 @@ pub(crate) fn derive_subagent_root(
 
 #[tauri::command]
 pub async fn list_graph(state: State<'_, AppState>) -> AppResult<Vec<GraphEntryFE>> {
-    state.db.with(|c| {
+    // v0.8.7 C: 纯读, 走 reader pool (跟其它读并发不互锁)
+    state.db.with_read(|c| {
         // === v0.8.7 B: 第一遍扫 — 收集所有 session_id + 反向 subagent map ===
         // 给 CrossSession edges + is_subagent_root 派生用
         let index: SessionIndex = {

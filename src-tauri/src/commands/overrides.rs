@@ -1058,12 +1058,8 @@ mod tests {
 
     fn fresh_db() -> (tempfile::TempDir, crate::db::DbPool) {
         let tmp = tempdir().unwrap();
-        let conn = rusqlite::Connection::open(tmp.path().join("test.db")).unwrap();
-        crate::db::schema::apply(&conn).unwrap();
-        let pool = crate::db::DbPool {
-            inner: std::sync::Arc::new(parking_lot::Mutex::new(conn)),
-            path: tmp.path().join("test.db"),
-        };
+        // v0.8.7 C: 走 open() 而不是手搓 DbPool (避免 inner/readers/writer 三字段)
+        let pool = crate::db::open(tmp.path()).unwrap();
         (tmp, pool)
     }
 

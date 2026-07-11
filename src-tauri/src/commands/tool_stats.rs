@@ -49,7 +49,8 @@ pub async fn get_tool_aggregate(
          LIMIT ?1"
     );
     let lim = limit.unwrap_or(50) as i64;
-    state.db.with(|c| {
+    // v0.8.7 C: 纯读, 走 reader pool
+    state.db.with_read(|c| {
         let mut stmt = c.prepare(&sql)?;
         let rows = stmt
             .query_map(rusqlite::params![lim], |r| {
@@ -88,7 +89,8 @@ pub async fn get_tool_sessions(
     limit: Option<u32>,
 ) -> AppResult<Vec<ToolSessionRef>> {
     let lim = limit.unwrap_or(20) as i64;
-    state.db.with(|c| {
+    // v0.8.7 C: 纯读, 走 reader pool
+    state.db.with_read(|c| {
         let mut stmt = c.prepare(
             "SELECT session_id, call_count, error_count, last_ts_ms
              FROM tool_session
@@ -113,7 +115,8 @@ pub async fn get_tool_sessions(
 /// v0.8.5 B: 手动触发全量 rebuild — 给 dev / SettingsRoute "重新计算工具统计" 按钮用
 #[tauri::command]
 pub async fn rebuild_tool_stats(state: State<'_, AppState>) -> AppResult<()> {
-    state.db.with(|c| {
+    // v0.8.7 C: 走写连接 (事务里 DELETE + INSERT)
+    state.db.with_write(|c| {
         crate::db::schema::rebuild_tool_global_stats(c)?;
         Ok::<_, crate::error::AppError>(())
     })
