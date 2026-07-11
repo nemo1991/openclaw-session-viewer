@@ -62,8 +62,10 @@ pub enum EdgeFE {
         to_subagent_path: Option<String>,
         description: Option<String>,
     },
-    // ParentUuid + CrossSession 暂时不派生, 需要 session_meta 加 parent_uuid
-    // / parent_session_id 列 (v0.8.7+)
+    /// v0.8.7 A: 该 session 每个 parent_uuid 派生一个 edge
+    /// (session 内 message 引用了哪条 — 跨 session 关联可视化)
+    ParentUuid { session: String, uuid: String },
+    // CrossSession 留 v0.8.7+ — 需要 session_meta 加 parent_session_id 列
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,7 +96,7 @@ pub async fn list_graph(state: State<'_, AppState>) -> AppResult<Vec<GraphEntryF
                     first_timestamp, last_timestamp, message_count, thinking_count,
                     tool_use_count, top_tools_json, total_tokens_json, primary_model,
                     error_count, subagent_count, subagent_ids_json, first_prompt, agent_id,
-                    tool_usage_json
+                    tool_usage_json, parent_uuids_text
              FROM session_meta
              ORDER BY mtime_ms DESC",
         )?;
@@ -193,6 +195,18 @@ pub async fn list_graph(state: State<'_, AppState>) -> AppResult<Vec<GraphEntryF
                         to_subagent_path: None, // v0.8.7+ 加 SessionSubagentMeta 表
                         description: None,
                     });
+                }
+
+                // v0.8.7 A: ParentUuid edges — 读 parent_uuids_text 列(newline-separated),
+                // 每个 uuid 派生 1 个 edge 给 G1 跨 session 关联可视化
+                let parent_uuids_text: Option<String> = r.get(21)?;
+                if let Some(text) = parent_uuids_text {
+                    for uuid in text.lines().filter(|l| !l.is_empty()) {
+                        edges.push(EdgeFE::ParentUuid {
+                            session: session_id.clone(),
+                            uuid: uuid.to_string(),
+                        });
+                    }
                 }
 
                 Ok(GraphEntryFE { node, edges })

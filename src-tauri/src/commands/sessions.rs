@@ -460,6 +460,8 @@ pub(crate) fn build_claude_session_meta(
         available_models: None,
         // v0.8.5 A: quick path (50 行头部解析) 不算 per-tool error, 留给 enrich 二阶段
         tool_error: None,
+        // v0.8.7 A: quick path 不算 parent_uuids, 留给 enrich 二阶段
+        parent_uuids_text: None,
     })
 }
 
@@ -636,6 +638,8 @@ pub(crate) fn build_openclaw_session_meta(
         available_models: None,
         // v0.8.5 A: quick path (50 行头部解析) 不算 per-tool error, 留给 enrich 二阶段
         tool_error: None,
+        // v0.8.7 A: quick path 不算 parent_uuids, 留给 enrich 二阶段
+        parent_uuids_text: None,
     })
 }
 

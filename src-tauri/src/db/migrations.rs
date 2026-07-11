@@ -46,6 +46,8 @@ const NEW_COLUMNS: &[(&str, &str)] = &[
     ("available_models_json", "TEXT"),
     // --- v0.8.5 A: per-tool 失败计数 ---
     ("tool_error_json", "TEXT"),
+    // --- v0.8.7 A: parent_uuids 列 (newline-separated UUIDs, 给 GraphView ParentUuid edges) ---
+    ("parent_uuids_text", "TEXT"),
 ];
 
 /// v0.8.5 B: 全量 CREATE TABLE 声明, 给老 DB 创建缺失的 2 张新表 (tool_global_stats / tool_session)
