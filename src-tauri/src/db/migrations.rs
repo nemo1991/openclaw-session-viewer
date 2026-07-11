@@ -48,6 +48,16 @@ const NEW_COLUMNS: &[(&str, &str)] = &[
     ("tool_error_json", "TEXT"),
     // --- v0.8.7 A: parent_uuids 列 (newline-separated UUIDs, 给 GraphView ParentUuid edges) ---
     ("parent_uuids_text", "TEXT"),
+    // --- v0.8.8: GraphView first_prompt 列 (list_graph SELECT 引用, 之前 schema 漏) ---
+    ("first_prompt", "TEXT"),
+];
+
+/// v0.8.8: 列重命名 — 老 v0.8.x DB 用 `first_ts`/`last_ts`, list_graph SELECT 现在引用
+/// `first_timestamp`/`last_timestamp` (跟 GraphNodeFE 字段名一致)。SQLite 3.25+ 支持
+/// ALTER TABLE RENAME COLUMN, 幂等 (have 检查)。
+const COLUMN_RENAMES: &[(&str, &str)] = &[
+    ("first_ts", "first_timestamp"),
+    ("last_ts", "last_timestamp"),
 ];
 
 /// v0.8.5 B: 全量 CREATE TABLE 声明, 给老 DB 创建缺失的 2 张新表 (tool_global_stats / tool_session)
@@ -89,6 +99,15 @@ pub fn ensure_columns(conn: &Connection) -> AppResult<()> {
         let sql = format!("ALTER TABLE session_meta ADD COLUMN {name} {decl}");
         conn.execute(&sql, params![])?;
         log::info!("v0.8.4 migration: added session_meta.{name}");
+    }
+    // v0.8.8: 重命名老 v0.8.x 列名 (first_ts/last_ts → first_timestamp/last_timestamp)
+    // SQLite 3.25+ 支持 ALTER TABLE RENAME COLUMN, 老 DB 升级路径
+    for (old, new) in COLUMN_RENAMES {
+        if have.contains(*old) && !have.contains(*new) {
+            let sql = format!("ALTER TABLE session_meta RENAME COLUMN {old} TO {new}");
+            conn.execute(&sql, params![])?;
+            log::info!("v0.8.8 migration: renamed session_meta.{old} → {new}");
+        }
     }
     Ok(())
 }

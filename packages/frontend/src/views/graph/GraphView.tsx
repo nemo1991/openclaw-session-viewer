@@ -122,7 +122,7 @@ export function GraphView() {
     const toolUsage = new Map<string, number>();
     if (focusedEntry) {
       for (const e of focusedEntry.edges) {
-        if (e.type === "UsedTool") {
+        if (e.type === "used_tool") {
           toolUsage.set(e.tool_name, (toolUsage.get(e.tool_name) ?? 0) + e.count);
         }
       }
@@ -144,7 +144,7 @@ export function GraphView() {
       target: `tool:${focusedNodeId}:${tool}`,
       label: `${count}`,
       weight: Math.log(count + 1),
-      edgeType: "UsedTool" as any,
+      edgeType: "used_tool" as any,
     }));
 
     const allTs = baseNodes
@@ -304,13 +304,13 @@ export function GraphView() {
           height={typeof window !== "undefined" ? window.innerHeight - 220 : 480}
           nodeRelSize={1}
           linkColor={(l: any) => {
-            if (l.edgeType === "Spawned") return "rgba(124, 58, 237, 0.55)";
-            if (l.edgeType === "UsedTool") return "rgba(234, 179, 8, 0.45)";
+            if (l.edgeType === "spawned") return "rgba(124, 58, 237, 0.55)";
+            if (l.edgeType === "used_tool") return "rgba(234, 179, 8, 0.45)";
             return "rgba(148, 163, 184, 0.4)";
           }}
           linkWidth={(l: any) => {
-            if (l.edgeType === "Spawned") return 1.2;
-            if (l.edgeType === "UsedTool") return Math.min(3.5, 0.5 + (l.weight ?? 1));
+            if (l.edgeType === "spawned") return 1.2;
+            if (l.edgeType === "used_tool") return Math.min(3.5, 0.5 + (l.weight ?? 1));
             return 0.6;
           }}
           cooldownTicks={120}

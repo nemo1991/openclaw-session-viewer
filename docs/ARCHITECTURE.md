@@ -204,10 +204,27 @@ Rust reveal_in_finder:
 - **职责**: 流式调用 Anthropic Messages API
 - **适配**: 通过 `baseUrl` 切换官方/MiniMax/任何兼容代理
 
+### `src-tauri/src/db/` — 嵌入式 SQLite + 后台同步 (v0.8.0+,v0.8.7 reader/writer 池)
+
+- **职责**: 把 session 元数据固化到 `~/.{bundle}/observer.db`,省去每次启动 O(N) 全量扫。
+- **位置**: `app.path().app_config_dir() / "observer.db"` (跨平台统一)
+- **Schema 起源**: v0.8.0 一份性全表 CREATE;后续列扩走 `migrations.rs::ensure_columns` idempotent `ALTER TABLE`(每行 PRAGMA table_info + 缺则 ADD)
+- **同步**:
+  - `db/sync.rs::run_sync_loop` (tokio::spawn),启动触发一次全量,阻塞等 `paths_change` (settings 改) / `refresh_requested` (手动刷新)。
+  - 单文件按 `(size_bytes, mtime_ms, line_count)` 三元组判断增量;单文件失败不污染整轮(`sweep` 在 `failed > 0` 时 skip,v0.8.2)。
+- **读写连接分离 (v0.8.7 C)**:
+  - `rusqlite::Connection: Send + !Sync` (内部 `RefCell`),不能直接进 `RwLock` (编译失败)。
+  - 改用 **1 writer + 4 readers** 池:写串行化、读并发 round-robin 分发;SQLite WAL 模式下原生支持。
+  - API:`pool.with_read(|c: &Connection|)`,`pool.with_write(|c: &mut Connection|)`;老 `pool.with(...)` 保留兼容 alias → 走 writer。
+  - 收益: G1 GraphView + G2 Analytics + SessionsRoute + HomeStatusBar 同时加载不再互锁 (单 reader 池时代所有读写走一把锁)。
+- **集成**:
+  - `AppState` 加 `db: DbPool` / `paths_change: Arc<Notify>` / `refresh_requested: Arc<Notify>`。
+  - 后端所有读优先走 `with_read`;mutation + transaction 走 `with_write`;迁移期老的 `with` 仍可用。
+
 ### `packages/frontend/src/views/graph/` — Graph Explorer (G1/G2/G3, 实验)
 
 - **位置**: 挂在 `/graph` 顶 tab 下,3 个子 view `?view=graph|analytics|rag`
-- **数据源**: M1/M2 走 `fetch /sessions.ndjson` (双源),M3 计划切 `apiListGraph()` Tauri invoke
+- **数据源**: v0.8.5 起切 `list_graph` Tauri command 读 `session_meta` DB (不再 NDJSON)
 - **G1 Graph**: `react-force-graph-2d` + d3-force 布局 + 自定义 canvas 绘制 (节点半径 ∝ token、error badge、subagent 角色配色)
 - **G2 Analytics**: `recharts` 6 chart + 时间范围切换
 - **G3 RAG**: 自写 hash-embedding lite (32-dim) + cosine topK + matched-tokens 高亮

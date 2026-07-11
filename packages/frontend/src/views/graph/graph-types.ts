@@ -30,5 +30,5 @@ export interface GLink {
   target: string;
   label?: string;
   weight?: number;
-  edgeType: "Spawned" | "UsedTool" | "AttemptedFix" | "CrossSession";
+  edgeType: "spawned" | "used_tool" | "attempted_fix" | "cross_session";
 }

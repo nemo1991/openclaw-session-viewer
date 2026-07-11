@@ -123,7 +123,7 @@ export function buildForceGraph(entries: GraphEntry[]) {
         // 拉 description (从 Spawned edge)
         let desc: string | null = null;
         for (const e2 of e.edges) {
-          if (e2.type === "Spawned" && e2.to_subagent_id === sa_id) {
+          if (e2.type === "spawned" && e2.to_subagent_id === sa_id) {
             desc = e2.description ?? null;
             break;
           }
@@ -148,7 +148,7 @@ export function buildForceGraph(entries: GraphEntry[]) {
         source: n.node_id,
         target: sa_node_id,
         label: "spawned",
-        edgeType: "Spawned",
+        edgeType: "spawned",
       });
     }
   }

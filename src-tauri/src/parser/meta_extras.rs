@@ -685,4 +685,17 @@ mod tests {
         // BTreeSet 字典序 ('oc:' ASCII 96 < 'u' ASCII 117): oc:uuid-b < uuid-a
         assert_eq!(m.parent_uuids, vec!["oc:uuid-b", "uuid-a"]);
     }
+
+    // v0.8.7 A: 边界 — 空字符串 parentUuid/parentId 不入 set (防御 malformed jsonl)
+    #[test]
+    fn parent_uuids_empty_string_not_collected() {
+        let jsonl = r#"{"type":"assistant","timestamp":"2026-07-08T10:00:00Z","parentUuid":"","message":{"role":"assistant","content":[]}}
+{"type":"user","timestamp":"2026-07-08T10:00:01Z","parentId":"","message":{"role":"user"}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:02Z","parentUuid":"real-uuid","message":{"role":"assistant","content":[]}}
+"#;
+        let p = write_tmp("parent_uuids_empty.jsonl", jsonl);
+        let m = build_meta_full(&p).unwrap();
+        // 两个空字符串不入集合, 只留真实那个
+        assert_eq!(m.parent_uuids, vec!["real-uuid"]);
+    }
 }
