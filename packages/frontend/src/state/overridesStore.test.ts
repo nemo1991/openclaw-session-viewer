@@ -47,7 +47,7 @@ describe("overridesStore", () => {
     vi.clearAllMocks();
     localStorage.clear();
     // 重置 store (简单的 setState 通过直接 setSnapshot)
-    useOverrides.setState({ snap: emptySnap(), loadedAt: 0, loading: false, error: null });
+    useOverrides.setState({ snap: emptySnap(), loading: false, error: null });
   });
 
   it("refresh 调 apiListOverrides + 写 snap", async () => {

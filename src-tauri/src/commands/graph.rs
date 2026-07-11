@@ -51,6 +51,19 @@ pub enum EdgeFE {
         tool_name: String,
         count: u32,
     },
+    /// v0.8.6 A: session.error_count > 0 → AttemptedFix edge
+    AttemptedFix { session: String, error_count: u32 },
+    /// v0.8.6 A: session.subagent_count > 0 → N 个 Spawned edges
+    /// (from_session 派 subagent_id; to_subagent_path 暂时 None — subagent
+    /// 文件路径需要 subagents/ 关联, 留 v0.8.7)
+    Spawned {
+        from_session: String,
+        to_subagent_id: String,
+        to_subagent_path: Option<String>,
+        description: Option<String>,
+    },
+    // ParentUuid + CrossSession 暂时不派生, 需要 session_meta 加 parent_uuid
+    // / parent_session_id 列 (v0.8.7+)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,6 +132,11 @@ pub async fn list_graph(state: State<'_, AppState>) -> AppResult<Vec<GraphEntryF
                     .as_deref()
                     .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                     .unwrap_or_default();
+                // v0.8.6 A: 提前读 error_count / subagent_count 给 edges 派生用
+                let error_count: u32 = r.get::<_, i64>(14)? as u32;
+                // 用完 subagent_count 立即释放 borrow
+                let subagent_count: u32 = r.get::<_, i64>(15)? as u32;
+                let _ = subagent_count; // 只在 node 用
 
                 let node = GraphNodeFE {
                     node_id: session_id.clone(),
@@ -135,11 +153,11 @@ pub async fn list_graph(state: State<'_, AppState>) -> AppResult<Vec<GraphEntryF
                     thinking_count: r.get::<_, i64>(9)? as u32,
                     primary_model: r.get(13)?,
                     top_tools,
-                    error_count: r.get::<_, i64>(14)? as u32,
-                    subagent_count: r.get::<_, i64>(15)? as u32,
-                    subagent_ids,
-                    is_subagent_root: false, // v0.8.6+ 派生
-                    parent_session_id: None, // v0.8.6+ 派生
+                    error_count,
+                    subagent_count,
+                    subagent_ids: subagent_ids.clone(), // v0.8.6 A: edges 派生也要用
+                    is_subagent_root: false,            // v0.8.6+ 派生
+                    parent_session_id: None,            // v0.8.6+ 派生
                     message_count: r.get::<_, i64>(8)? as u32,
                     agent_id: r.get(19)?,
                 };
@@ -157,6 +175,24 @@ pub async fn list_graph(state: State<'_, AppState>) -> AppResult<Vec<GraphEntryF
                             });
                         }
                     }
+                }
+
+                // v0.8.6 A: AttemptedFix — error_count > 0 时派生
+                if error_count > 0 {
+                    edges.push(EdgeFE::AttemptedFix {
+                        session: session_id.clone(),
+                        error_count,
+                    });
+                }
+                // v0.8.6 A: Spawned — 每个 subagent_id 派生一个 edge
+                // (subagent_ids 来自 subagent_ids_json, SessionMeta 已经有)
+                for sub_id in &subagent_ids {
+                    edges.push(EdgeFE::Spawned {
+                        from_session: session_id.clone(),
+                        to_subagent_id: sub_id.clone(),
+                        to_subagent_path: None, // v0.8.7+ 加 SessionSubagentMeta 表
+                        description: None,
+                    });
                 }
 
                 Ok(GraphEntryFE { node, edges })
