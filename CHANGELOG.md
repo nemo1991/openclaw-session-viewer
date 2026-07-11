@@ -2,6 +2,105 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.7] - 2026-07-11
+
+v0.8.6 完成 GraphView edges 补完 + TEST GAP + HIGH bug 修后,
+本版本 v0.8.7 把 GraphView 跨 session 关联 + DB 并发读收口:
+
+1. **GraphView ParentUuid edges 派生 (A)** — parent_uuid 沉淀到 session_meta, 派生跨 session 关联边
+2. **GraphView CrossSession edges 派生 (B)** — subagent_id ↔ session_id 反向 map, is_subagent_root/parent_session_id 也真派生
+3. **DB 读写连接分离 (C)** — `Mutex` 串行化读 fix, 多 reader 并发不互锁, G1/G2 同时加载不再卡
+
+### 新增
+
+#### 1. ParentUuid edge 派生 (item A — v0.8.6 A 收尾)
+
+v0.8.6 A 还欠 `ParentUuid` edge, 这次补完:
+
+- **`ParentUuid`** — session 内每个 unique `parent_uuid` 派生 1 个 edge
+  - `{type: "parent_uuid", session: "<sid>", uuid: "<uuid>"}`
+  - 数据源: `session_meta.parent_uuids_text` (新增列, newline-separated)
+  - 给 G1 跨 session 关联可视化用
+
+**DB schema 变更** (`src-tauri/src/db/schema.rs`):
+
+```sql
+-- 新增列
+parent_uuids_text TEXT
+```
+
+(`OpenClaw` `parentId` 字段加 `oc:` 前缀以避免跟 Claude `parentUuid` 撞名,
+BTreeSet 字典序排序)
+
+#### 2. CrossSession edge 派生 (item B — v0.8.6 A 补完收口)
+
+- **`CrossSession`** — 当 main session.subagent_ids 中某个 id 同时是另一个 session_meta.session_id
+  - `{type: "cross_session", parent: "<main_sid>", child: "<sub_sid>"}`
+  - 数据源: 两遍扫 session_meta (build `SessionIndex` → 派生)
+- **`is_subagent_root` / `parent_session_id`** — 之前硬编码 `false` / `None`, 现在真派生
+  - 反向 map: subagent_id → 第一个 parent_session_id
+
+**当前 Claude Code 数据里 subagent 文件是嵌套 jsonl 不直接 sync**, 大多数 session 不会有 CrossSession edge —
+但实现准备好了, 未来支持 subagent 独立 session 时自动出现.
+
+#### 3. 读写连接分离 (item C — Mutex 串行化读 fix)
+
+之前 `Arc<Mutex<Connection>>` 让所有读写互锁, G1 GraphView / G2 Analytics /
+sessions list / HomeStatusBar 等并发读场景下 UI 卡顿明显.
+
+这次拆 1 writer + 4 readers (round-robin 分发):
+
+```rust
+pool.with_read(|c: &Connection| ...)  // 多 reader 并发跑 (新增)
+pool.with_write(|c: &mut Connection| ...) // 排他 writer (新增)
+pool.with(|c: &mut Connection| ...)    // 兼容 alias → 走 writer
+```
+
+**为什么不是 RwLock<Connection>**: `rusqlite::Connection` 是 `Send` 但 `!Sync`,
+不能直接放 RwLock (编译 fail). 改用独立 reader 池 + writer.
+
+SQLite WAL 模式原生支持多 reader + 1 writer 并发, 收益:
+
+- G1 GraphView + G2 Analytics 同时加载不再互锁
+- HomeStatusBar 轮询不再阻塞 settings 加载
+- 详情页 + 列表 + 搜索 多并发读场景下 UI 响应明显更顺
+
+### 变更
+
+- `src-tauri/src/db/mod.rs` — DbPool 改 reader/writer 分离 (重写)
+- `src-tauri/src/commands/sessions.rs` — `list_sessions` 走 `with_read`
+- `src-tauri/src/commands/graph.rs` — `list_graph` 走 `with_read` + 新增 CrossSession/ParentUuid 派生
+- `src-tauri/src/commands/tool_stats.rs` — 2 reads 走 `with_read`, 1 write 走 `with_write`
+- `src-tauri/src/commands/overrides.rs` — `fresh_db()` test helper 改走 `db::open()`
+- `src-tauri/src/db/schema.rs` — `parent_uuids_text` 列 (round-trip test 也扩)
+- `src-tauri/src/parser/meta_extras.rs` — `build_meta_full` 累积 parent_uuids (BTreeSet + `oc:` prefix)
+
+### 测试
+
+- `db::pool_tests` (6 新): `with_read_returns_data` / `with_write_inserts_data` /
+  `with_read_runs_concurrently` (核心: 8 reader × 100ms 总耗时 << 800ms 串行上限) /
+  `with_read_round_robin_distribution` / `with_write_excludes_readers` / `with_alias_uses_writer_lock`
+- `commands::graph::tests` (9 新): `SessionIndex::build` / `derive_cross_session_edges`
+  / `derive_subagent_root` 多种 case (dedup / self-loop / 多匹配 / 孤儿)
+- `parser::meta_extras::tests` (2 新): parent_uuids dedup + `oc:` prefix
+- `db::schema::round_trip_tests` 扩: `enrich_session_meta` 含 parent_uuids_text
+
+### 验证
+
+```bash
+cargo test --lib                # 167/167
+cargo clippy --all-targets      # clean
+cargo fmt -- --check            # clean
+pnpm typecheck                  # clean
+pnpm -r test                    # 492/492
+```
+
+### 已知
+
+- `tool_global_stats` 仍是 TRUNCATE + 全量重算 (v0.8.5 B), 数据量 >10K session 后考虑增量
+- `G2 AnalyticsView` 8 chart 仍走 `graph.ts::compute_analytics` (NDJSON 等价数组),
+  真 DB query 在 GraphView / SessionsRoute 一侧已经完成, AnalyticsView 的优化待 v0.8.8+
+
 ## [0.8.6] - 2026-07-10
 
 v0.8.5 4 大模块 (tool 错误维度 / 全局 tool 聚合 / G1/G2 切 DB / count 透出) + TEST GAP 后,
