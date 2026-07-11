@@ -119,8 +119,12 @@ export const apiListGraph = (): Promise<unknown[]> => invoke("list_graph");
 
 // ===== Export/Import =====
 
-export const apiExportOverrides = (path: string): Promise<number> =>
-  invoke("export_overrides", { path });
+// v0.8.6 D: include_private 控制 hidden/archived/notes 是否导出 (隐私保护,
+// 默认 false = 不导出, debugging 时可选 true)
+export const apiExportOverrides = (
+  path: string,
+  includePrivate: boolean = false
+): Promise<number> => invoke("export_overrides", { path, includePrivate });
 export const apiImportOverrides = (
   path: string,
   mode: "keepboth" | "overwrite" | "merge"

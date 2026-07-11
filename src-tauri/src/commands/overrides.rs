@@ -639,17 +639,39 @@ pub struct OverrideExport {
 
 const EXPORT_VERSION: u32 = 1;
 
+/// v0.8.6 D: 默认不导出 hidden/archived/notes — 这 3 个字段含用户隐私
+/// (例如 "这个 session 标为隐藏因为它是个失败实验"), 跟 tags/links/renames
+/// 公开性不同。include_private=true 可选导出全部 (debugging 用)。
 #[tauri::command]
-pub async fn export_overrides(state: State<'_, Arc<AppState>>, path: String) -> AppResult<usize> {
+pub async fn export_overrides(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    include_private: Option<bool>,
+) -> AppResult<usize> {
     let snap = list_overrides_inner(&state)?;
+    let include_private = include_private.unwrap_or(false);
     let exp = OverrideExport {
         version: EXPORT_VERSION,
         exported_at: now_ms(),
         renames: snap.renames,
-        hidden: snap.hidden.into_iter().collect(),
+        // v0.8.6 D 修复: 默认导出公开字段 (renames/tags/links/pinned),
+        // 隐私字段 (hidden/archived/notes) 仅 include_private=true 时导出
+        hidden: if include_private {
+            snap.hidden.into_iter().collect()
+        } else {
+            Default::default()
+        },
         pinned: snap.pinned.into_iter().collect(),
-        archived: snap.archived.into_iter().collect(),
-        notes: snap.notes,
+        archived: if include_private {
+            snap.archived.into_iter().collect()
+        } else {
+            Default::default()
+        },
+        notes: if include_private {
+            snap.notes.clone()
+        } else {
+            Default::default()
+        },
         tags: snap.tags_all,
         session_tags: snap
             .tags
