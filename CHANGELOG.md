@@ -2,6 +2,130 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.6] - 2026-07-10
+
+v0.8.5 4 大模块 (tool 错误维度 / 全局 tool 聚合 / G1/G2 切 DB / count 透出) + TEST GAP 后,
+本版本 v0.8.6 收口遗留 + 修 HIGH bug:
+
+1. **C 补完(A)** — GraphView 派生 `AttemptedFix` + `Spawned` edges (4 总 edges)
+2. **TEST GAP 收口(B)** — overridesStore / ToolsRoute / sync_helpers 测试 (17 个新增)
+3. **HIGH bug 修(D)** — `export_overrides` 隐私泄漏 + `sync_state` last_error 永不写
+4. **tool_global_stats 增量(C) — 推迟**: 当前 TRUNCATE + 全量重算在 <10K session 时 <50ms,
+   大 dataset (>10K) 时才需要。架构已就绪 (事务 atomic + 索引齐), v0.8.7+ 等数据上来再优化。
+
+### 新增
+
+#### 1. GraphView edges 派生补完(item A — v0.8.5 C 补完)
+
+v0.8.5 C (commit 626e61b) 只派生 `UsedTool` edges, 4 种其它 edges 暂空。这次补完可从
+session_meta 现成数据派生的两种:
+
+- **`AttemptedFix`** — `error_count > 0` 时派生 1 个 edge
+  - `{type: "AttemptedFix", session: "<sid>", error_count: N}`
+  - 数据源: `session_meta.error_count` (v0.8.4 item 2 固化)
+
+- **`Spawned`** — 每个 subagent_id 派生 1 个 edge
+  - `{type: "Spawned", from_session: "<sid>", to_subagent_id: "agent-xxx", to_subagent_path: None, description: None}`
+  - 数据源: `session_meta.subagent_ids_json`
+  - `to_subagent_path` 暂时 `None` — 需要 SessionSubagentMeta 表 (v0.8.7+)
+
+仍不能派生 (需要 session_meta 加列):
+
+- `ParentUuid` — 需要 parent_uuid 列
+- `CrossSession` — 需要 parent_session_id 列
+- `is_subagent_root` / `parent_session_id` 派生 — 也需新列
+
+#### 2. TEST GAP 收口 (item B)
+
+覆盖 v0.8.4 / v0.8.5 CHANGELOG 已挂的 TEST GAP:
+
+**rust** (2 新):
+
+- `db/schema.rs::sync_helpers_tests`:
+  - `get_size_mtime_returns_none_for_missing_path`
+  - `get_size_mtime_returns_row_for_existing_path`
+
+**frontend** (15 新):
+
+- `overridesStore.test.ts` (7): refresh 调 invoke / setTitle / toggle\* / getTitle / errors
+- `routes/ToolsRoute.test.tsx` (8): toolStatsStore load / setSortBy / reload + 数据 shape
+
+未做 (留给 v0.8.7+):
+
+- `db/sync.rs` 仍 0 tests (sync_once 整体行为需要 mock AppState)
+- `SessionsRoute` listen 回路 (需要 mock Tauri invoke + listen + React mount)
+- `SearchPalette` / `DatabasePanel` component tests
+
+### 修复
+
+#### 3. export_overrides 隐私泄漏 (item D1 — HIGH)
+
+之前 `export_overrides` 命令把所有 override 维度都写入导出文件,包括用户私有字段
+(`hidden` / `archived` / `notes`)。例如用户笔记 "这个 session 是失败实验,标记为 hidden"
+会被导出后,泄露隐私。
+
+**修复**: 加 `include_private: Option<bool>` 参数 (默认 `false`), 默认导出**只**含公开字段
+(`renames` / `tags` / `links` / `pinned`), 隐私字段 `hidden` / `archived` / `notes` 仅
+`include_private: true` 时导出 (debugging 用)。
+
+```ts
+// 前端 API
+apiExportOverrides(path: string, includePrivate: boolean = false)
+```
+
+#### 4. sync_state last_error 永不写 (item D2 — HIGH)
+
+之前 `sync_once` 末尾 `INSERT INTO sync_state (...) VALUES (1, ?1, ?2, ?3, 0)` 没写
+`last_error` 字段,即使 sync 失败 (`failed > 0`) 也写 NULL。结果 `HomeStatusBar` 显示
+"上次同步 X 分钟前", 不显示"上次同步 X 分钟前 · 失败 Y", 用户看不出来 sync 失败过。
+
+**修复**: 加 `last_error` 字段到 INSERT/UPDATE, `failed > 0` 时写 `"N 个文件 sync 失败"`。
+`HomeStatusBar` 现在能展示真错。
+
+### 性能
+
+无新 perf 改动。
+
+### UI 改进
+
+无新 UI 改动 (v0.8.5 已 4 大模块均有 UI 落地)。
+
+### 测试
+
+- `cargo fmt -- --check`: clean
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `cargo test --lib`: **150/150** (v0.8.5 148 + 2 sync_helpers new)
+- `pnpm typecheck`: clean
+- `pnpm -r test`: **509/509** (v0.8.5 492 + 17 overridesStore/ToolsRoute new)
+- `pnpm --filter @ocsv/frontend build`: ✓
+
+### Dev manual 验证清单(6 步)
+
+1. `/tools` 排序切换 (calls / sessions / errors) — 仍正常工作 (v0.8.5 B)
+2. 打开含 Bash-heavy session, header `🔴 失败最多: Bash × N` (v0.8.5 A)
+3. `/graph` G1 GraphView 选中含 subagent 的 session — 现在显示 `Spawned` 边 (v0.8.6 A)
+4. `/graph` G1 GraphView 选中含 error 的 session — 现在显示 `AttemptedFix` 边 (v0.8.6 A)
+5. SettingsRoute "导出 overrides" 按钮: 默认导出的 JSON **不** 含 hidden/archived/notes
+   (v0.8.6 D1); 调试用 `includePrivate=true` 可导出全部
+6. 故意触发 sync 失败 (e.g. 改坏一个 jsonl path), sync 后 HomeStatusBar 显示真错
+   "X 个文件 sync 失败" (v0.8.6 D2)
+
+### 已识别但仍未修(v0.8.7+ 候选)
+
+- **HIGH:** `Mutex<Connection>` 串行化读 / `notify_waiters` coalescing 丢命令 / 每文件 emit 风暴
+  / `scan_live_pids` per-file 10× 慢 / `PRAGMA WAL` 失败静默 / GraphView ParentUuid + CrossSession
+  edges (需 session_meta 加 parent_uuid / parent_session_id 列) / SessionSubagentMeta 表
+  (给 Spawned edge 填 to_subagent_path + description)
+- **MEDIUM:** placeholder jsonl_path UNIQUE 移动文件炸 / `GROUP_CONCAT` 撞 tag 名字逗号
+  / `save_settings` 任何字段修改触发 re-walk / `refresh_sessions` 触发即返旧值 / sid 输入验证
+  / `list_overrides` 全量含 hidden/archived 浪费 IPC / `add_session_link` OR REPLACE 改 created_at
+  / `apply_notes` Keepboth IS NOT NULL 含空串
+- **PERF:** `findIdleGaps` 单遍 O(n) 在反复倒序/正序切换时仍卡主线程
+  / `tool_global_stats` 全量 rebuild 在 >10K session 时的延迟 (架构已就绪, 改增量维护 ~20 行)
+- **TEST GAP:** `db/sync.rs` / `SessionsRoute` listen 回路 / `SearchPalette` / `DatabasePanel`
+  / `graphStore.test.ts` (切 DB 后) 仍 0 tests
+- **SCALE:** G2 chart 8 个 query 函数单测 (`analytics.ts` 改写时一起补)
+
 ## [0.8.5] - 2026-07-09
 
 v0.8.4 把 19 列派生数据固化到 `session_meta` 后, 用户要求"充分发挥数据库优势, 夯实工具能力" — 本版本深挖 tool 维度, 4 件事:
