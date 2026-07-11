@@ -660,6 +660,7 @@ pub fn rebuild_tool_global_stats(conn: &Connection) -> AppResult<()> {
         "SELECT session_id, tool_usage_json, tool_error_json, last_timestamp FROM session_meta
          WHERE tool_usage_json IS NOT NULL OR tool_error_json IS NOT NULL",
     )?;
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(String, Option<String>, Option<String>, Option<String>)> = stmt
         .query_map([], |r| {
             Ok((
