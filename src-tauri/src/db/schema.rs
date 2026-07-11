@@ -736,6 +736,44 @@ fn parse_rfc3339_to_ms(s: &str) -> Option<i64> {
 }
 
 #[cfg(test)]
+mod sync_helpers_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn fresh_conn() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA_SQL).unwrap();
+        c
+    }
+
+    // v0.8.6 B: 增量判断 — 文件 (size, mtime, line_count) 三元组跟 DB 一致 → 跳过重 sync
+    #[test]
+    fn get_size_mtime_returns_none_for_missing_path() {
+        let conn = fresh_conn();
+        let r = get_size_mtime_by_path(&conn, "/no/such/path").unwrap();
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn get_size_mtime_returns_row_for_existing_path() {
+        let conn = fresh_conn();
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path,
+                                       size_bytes, mtime_ms, line_count, synced_at)
+             VALUES ('s1', 'p', 'claude', '/tmp/foo.jsonl', 1234, 5678, 100, 0)",
+            [],
+        )
+        .unwrap();
+        let r = get_size_mtime_by_path(&conn, "/tmp/foo.jsonl")
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.size_bytes, 1234);
+        assert_eq!(r.mtime_ms, 5678);
+        assert_eq!(r.line_count, 100);
+    }
+}
+
+#[cfg(test)]
 mod round_trip_tests {
     use super::*;
     use rusqlite::Connection;
