@@ -247,6 +247,13 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
             let tool_error_json = serde_json::to_string(&extras.tool_error)
                 .ok()
                 .filter(|s| !s.is_empty() && s != "[]");
+            // v0.8.7 A: parent_uuids 转 newline-separated text (DB schema 是 TEXT 列,
+            // 比 JSON 数组紧凑, 大数据下存更少字符)
+            let parent_uuids_text = if extras.parent_uuids.is_empty() {
+                None
+            } else {
+                Some(extras.parent_uuids.join("\n"))
+            };
             let _ = state.db.with(|c| {
                 crate::db::schema::enrich_session_meta(
                     c,
@@ -276,6 +283,8 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                     available_models_json.as_deref(),
                     // v0.8.5 A: per-tool 失败
                     tool_error_json.as_deref(),
+                    // v0.8.7 A: parent_uuids
+                    parent_uuids_text.as_deref(),
                 )?;
                 Ok::<_, AppError>(())
             });

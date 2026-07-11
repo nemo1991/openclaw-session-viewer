@@ -122,6 +122,10 @@ export interface SessionMeta {
   /** per-tool error count, 按 count 降序: `[["Bash", 3], ["WebFetch", 1], ...]`
    * 跟 `errorCount` (message 级 stop_reason=="error") 正交互补, 互补的是 tool_result.is_error==true */
   toolError?: [string, number][];
+  // --- v0.8.7 A: parent_uuids 累积 ---
+  /** 该 session 出现过的全部 parent_uuid 引用 (去重), newline-separated text
+   * 给 GraphView 派生 ParentUuid edges (G1 跨 session 关联可视化) */
+  parentUuidsText?: string;
 }
 
 /** 归一化后的内容块 */

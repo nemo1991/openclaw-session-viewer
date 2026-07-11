@@ -166,6 +166,9 @@ pub struct SessionMeta {
     /// tool_error 数单个 tool_result.is_error==true 的 tool 调用失败。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_error: Option<Vec<(String, u32)>>,
+    /// v0.8.7 A: parent_uuids (newline-separated UUIDs), GraphView ParentUuid edges 用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_uuids_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

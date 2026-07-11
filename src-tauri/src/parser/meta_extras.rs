@@ -69,6 +69,8 @@ pub struct MetaExtras {
     /// 跟 `error_count` (message 级) 正交:error_count 数 stop_reason=="error" 的整条 assistant,
     /// tool_error 数 tool_result.is_error==true 的单个 tool 调用失败。
     pub tool_error: Vec<(String, u32)>,
+    // --- v0.8.7 A: parent_uuids 列表 (去重) — 给 GraphView ParentUuid edges 用 ---
+    pub parent_uuids: Vec<String>,
 }
 
 /// 扫 jsonl 全量(或 5000 行上限), 提取派生指标
@@ -96,6 +98,9 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
         std::collections::HashMap::new();
     let mut tool_error_counts: std::collections::HashMap<String, u32> =
         std::collections::HashMap::new();
+    // v0.8.7 A: parent_uuids 累积 (去重, 每个 session 收集所有 entry 的 parentUuid 引用)
+    let mut parent_uuids_set: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
 
     jsonl::for_each_line(path, |idx, _raw, value| {
         if idx >= META_FULL_MAX_LINES {
@@ -122,6 +127,19 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
                 first_ts = Some(t.clone());
             }
             last_ts = Some(t.clone());
+        }
+
+        // v0.8.7 A: 累积所有 entry 的 parentUuid 引用 (Claude 用 parentUuid, OpenClaw 用 parentId)
+        // 用 prefix 'oc:' 区分 OpenClaw 的 id (避免跟 Claude 的 UUID 冲突)
+        if let Some(p) = obj.get("parentUuid").and_then(|v| v.as_str()) {
+            if !p.is_empty() {
+                parent_uuids_set.insert(p.to_string());
+            }
+        }
+        if let Some(p) = obj.get("parentId").and_then(|v| v.as_str()) {
+            if !p.is_empty() {
+                parent_uuids_set.insert(format!("oc:{p}"));
+            }
         }
 
         // idle_gap: 跟当前 prev_ts 比 gap, ≥ 5min 计数 + 更新 max
@@ -317,6 +335,8 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
     let mut tool_err_vec: Vec<(String, u32)> = tool_error_counts.into_iter().collect();
     tool_err_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     out.tool_error = tool_err_vec;
+    // v0.8.7 A: parent_uuids BTreeSet 转 Vec (顺序天然)
+    out.parent_uuids = parent_uuids_set.into_iter().collect();
     // available_models BTreeSet 已经字典序, 直接转
     out.available_models = model_set.into_iter().collect();
     // phase 启发式 (同 frontend summarizeSession 末尾逻辑)
@@ -637,5 +657,32 @@ mod tests {
         let m = build_meta_full(&p).unwrap();
         // tu_orphan 找不到对应 name → 不累加
         assert!(m.tool_error.is_empty());
+    }
+
+    // v0.8.7 A — parent_uuids 累积 + 去重
+    #[test]
+    fn captures_parent_uuids_dedup() {
+        // 3 个 entry, 全部 parentUuid 不同 → 应该有 3 个
+        let jsonl = r#"{"type":"assistant","timestamp":"2026-07-08T10:00:00Z","parentUuid":"uuid-a","message":{"role":"assistant","content":[]}}
+{"type":"user","timestamp":"2026-07-08T10:00:01Z","parentUuid":"uuid-b","message":{"role":"user"}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:02Z","parentUuid":"uuid-c","message":{"role":"assistant","content":[]}}
+"#;
+        let p = write_tmp("parent_uuids.jsonl", jsonl);
+        let m = build_meta_full(&p).unwrap();
+        assert_eq!(m.parent_uuids, vec!["uuid-a", "uuid-b", "uuid-c"]);
+    }
+
+    #[test]
+    fn parent_uuids_dedup_and_openclaw_prefix() {
+        // 同一 parentUuid 出现两次, dedup + OpenClaw 用 oc: prefix
+        let jsonl = r#"{"type":"assistant","timestamp":"2026-07-08T10:00:00Z","parentUuid":"uuid-a","message":{"role":"assistant","content":[]}}
+{"type":"user","timestamp":"2026-07-08T10:00:01Z","parentUuid":"uuid-a","message":{"role":"user"}}
+{"type":"message","timestamp":"2026-07-08T10:00:02Z","parentId":"uuid-b","message":{"role":"assistant"}}
+{"type":"message","timestamp":"2026-07-08T10:00:03Z","parentId":"uuid-b","message":{"role":"assistant"}}
+"#;
+        let p = write_tmp("parent_uuids_dedup.jsonl", jsonl);
+        let m = build_meta_full(&p).unwrap();
+        // BTreeSet 字典序 ('oc:' ASCII 96 < 'u' ASCII 117): oc:uuid-b < uuid-a
+        assert_eq!(m.parent_uuids, vec!["oc:uuid-b", "uuid-a"]);
     }
 }

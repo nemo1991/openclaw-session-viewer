@@ -76,7 +76,10 @@ CREATE TABLE IF NOT EXISTS session_meta (
   available_models_json       TEXT,
   -- v0.8.5 A: per-tool 失败计数 — [["Bash", 3], ["WebFetch", 1]] 按 count desc
   -- 跟 error_count (message 级) 正交, 互补
-  tool_error_json             TEXT
+  tool_error_json             TEXT,
+  -- v0.8.7 A: 该 session 出现过的全部 parent_uuid(去重), 新行分隔字符串
+  -- 给 GraphView 派生 ParentUuid edges 用 (跨 session 关联可视化)
+  parent_uuids_text           TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
@@ -392,7 +395,9 @@ SELECT
   -- v0.8.4 item 2'': ContentFilterPanel Model chip
   m.available_models_json,
   -- v0.8.5 A: per-tool 失败计数
-  m.tool_error_json
+  m.tool_error_json,
+  -- v0.8.7 A: parent_uuids (GraphView ParentUuid edges)
+  m.parent_uuids_text
 FROM session_meta m
 LEFT JOIN session_override o ON m.session_id = o.session_id
 LEFT JOIN session_tag st     ON m.session_id = st.session_id
@@ -499,6 +504,8 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         tool_error: row
             .get::<_, Option<String>>(47)?
             .and_then(|s| serde_json::from_str::<Vec<(String, u32)>>(&s).ok()),
+        // v0.8.7 A: parent_uuids (newline-separated text)
+        parent_uuids_text: row.get::<_, Option<String>>(48)?,
     };
 
     Ok(JoinedRow {
@@ -553,6 +560,8 @@ pub fn enrich_session_meta(
     available_models_json: Option<&str>,
     // --- v0.8.5 A: per-tool 失败计数 ---
     tool_error_json: Option<&str>,
+    // --- v0.8.7 A: parent_uuids_text (newline-separated) — GraphView ParentUuid edges 用 ---
+    parent_uuids_text: Option<&str>,
 ) -> AppResult<()> {
     conn.execute(
         r#"
@@ -581,7 +590,9 @@ pub fn enrich_session_meta(
           -- v0.8.4 item 2'': ContentFilterPanel Model chip
           available_models_json     = ?22,
           -- v0.8.5 A: per-tool 失败计数
-          tool_error_json           = ?23
+          tool_error_json           = ?23,
+          -- v0.8.7 A: parent_uuids (newline-separated) GraphView ParentUuid edges
+          parent_uuids_text         = ?24
         WHERE session_id = ?1
         "#,
         params![
@@ -611,6 +622,8 @@ pub fn enrich_session_meta(
             available_models_json,
             // v0.8.5 A
             tool_error_json,
+            // v0.8.7 A
+            parent_uuids_text,
         ],
     )?;
     Ok(())
@@ -876,6 +889,7 @@ mod round_trip_tests {
             Some(420_000),
             Some("[\"opus\",\"sonnet\"]"),
             Some("[[\"Bash\",3]]"), // tool_error
+            Some("uuid-a\nuuid-b"), // v0.8.7 A: parent_uuids
         )
         .unwrap();
         // 读回验证
@@ -928,7 +942,7 @@ mod round_trip_tests {
         .unwrap();
         enrich_session_meta(
             &conn, "s1", 0, 0, 0, None, None, None, 0, 0, 0, 0, 0, 0, None, None, None, 0, None,
-            None, 0, None, None, None,
+            None, 0, None, None, None, None, // v0.8.7 A: parent_uuids
         )
         .unwrap();
         // 写完后所有列应为 default 0 / None
