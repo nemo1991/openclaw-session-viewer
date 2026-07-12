@@ -4,87 +4,141 @@
 
 ## [0.8.10] - 2026-07-12
 
-v0.8.9 完成 test gap 收口。v0.8.10 主题是 **Defense in depth** — 收口 2 个真 bug
-(其中 1 个是 v0.8.9 漏修的同源 bug) + 3 个 schema-drift hardening + 2 个 test gap
-一次性收掉。
+v0.8.9 完成 test gap 收口,但 review 发现还有 2 个真 bug 没修(其中一个是 v0.8.9
+同源漏修) + 多个 latent pattern 跟 v0.8.5 C graph.rs SELECT 错位是同根因 — 都是
+"代码改了但 schema/JSON 形态改了没跟上"。
+
+v0.8.10 主题是 **Defense in depth** — 一次性收口 2 个真 bug + 3 个 schema-drift
+hardening + 2 个 test gap,防 v0.8.11+ 加列/改 JSON 时再次掉坑。已发布 v0.8.10
+release (Latest)。
 
 ### 修复
 
 #### 1. read_agent_info_from_index 对真实 OpenClaw 数据永远返 None (item A)
 
-`src-tauri/src/db/sync.rs::read_agent_info_from_index` 的 `Entry` struct 用默认
-snake_case 映射,但真实 OpenClaw sessions.json 用 camelCase (`sessionId` /
-`lastChannel` / `lastTo`)。结果函数对所有真实 OpenClaw 数据静默返
-`(None, None, None)`,OpenClaw agent 的 session_meta.agent_label /
-last_channel / last_to 列永远是 NULL/空。`commands/sessions.rs` 现场解析
-兜底所以 UI 看起来正常,但 DB 列没沉淀。
+`src-tauri/src/db/sync.rs::read_agent_info_from_index` 的 inline `Entry` struct
+用默认 snake_case 映射,但真实 OpenClaw sessions.json 用 camelCase (`sessionId`
+/ `lastChannel` / `lastTo`)。结果函数对所有真实 OpenClaw 数据**静默**返
+`(None, None, None)`,OpenClaw agent 的 `session_meta.agent_label` /
+`last_channel` / `last_to` 列永远是 NULL/空。
+
+**为什么 UI 看起来正常**:`commands/sessions.rs::build_openclaw_session_meta`
+现场解析兜底了 fallback 路径,所以 GraphView UI 正常显示 — 但 DB 列没沉淀,
+任何后续按列查的 query 都查不到这 3 个字段。
 
 **修复**: 加 `#[serde(rename_all = "camelCase")]` 跟 sessions.rs 同 schema
-对齐(1 行)。
+对齐(1 行)。Item C 抽共享 module 时同步 inherit。
 
-**回归测试**: `read_agent_info_from_index_extracts_real_openclaw_shape` 锁 camelCase
-parse,3 个返回值必须 Some 而不是被 ignored。
+**回归测试**: `read_agent_info_from_index_extracts_real_openclaw_shape` 用
+真实 OpenClaw sessions.json shape (含 `lastAccountId` / `lastInteractionAt` /
+`chatType` / `abortedLastRun` 等冗余字段,`#[serde(default)]` 自动忽略),
+3 个返回值必须 Some 而不是被 ignored。
 
 #### 2. import_overrides 重置 link created_at (item B — 同 v0.8.9 漏修)
 
 `src-tauri/src/commands/overrides.rs:785` 跟 v0.8.9 修的 add_session_link 同源
 bug — `INSERT OR REPLACE INTO session_link` 在 import_overrides 漏修。
-Overwrite / Merge 模式重导时,所有 link created_at 重置成 import 时刻。
+Overwrite / Merge 模式重导时,所有 link `created_at` 重置成 import 时刻,
+破坏"link 何时建立"语义。
 
-**修复**: 改 ON CONFLICT DO UPDATE 只更新 note 字段 (跟 v0.8.9 同模式)。
+**修复**: 改 `INSERT ... ON CONFLICT(from_session, to_session) DO UPDATE SET
+note = excluded.note` 只更新 note 字段,保留 `created_at` (跟 v0.8.9 同模式)。
 
-**回归测试**: `import_overrides_preserves_existing_link_created_at` 锁契约。
+**回归测试**: `import_overrides_preserves_existing_link_created_at` 直接验证
+SQL 语义(Tauri State/AppHandle 难 mock,沿用 v0.8.9 add_session_link 测试套路)。
 
 ### Hardening
 
 #### 3. 抽 SessionsIndexEntry 共用 module (item C)
 
-`src-tauri/src/db/sync.rs::Entry` 跟 `src-tauri/src/commands/sessions.rs::SessionsIndexEntry`
-字段完全 parallel,各写一遍。两份同时存在的设计本身 drift 风险。
+`src-tauri/src/db/sync.rs::read_agent_info_from_index` 跟
+`src-tauri/src/commands/sessions.rs::SessionsIndexEntry` 字段完全 parallel,
+各写一遍。两份同时存在的设计本身 drift 风险(就是 Item A 暴露的问题)。
 
-**修复**: 抽 `src-tauri/src/parser/openclaw_index.rs::SessionsIndexEntry`,
-sync.rs + sessions.rs 都 use,共享同一 schema + 自动 inherit camelCase rename。
+**修复**: 抽 `src-tauri/src/parser/openclaw_index.rs::SessionsIndexEntry` +
+`SessionsIndexOrigin`,sync.rs + sessions.rs 都 `use crate::parser::openclaw_index::SessionsIndexEntry`,
+共享同一 schema + 自动 inherit camelCase rename。后续加字段只改 1 处。
 
 #### 4. commands/graph.rs SELECT 列名 alias + row.get 按 name 读 (item D)
 
-v0.8.8 修过 row.get(N) 索引错位但保留 hand-numbered 索引 (`r.get(0)` /
-`r.get(16)` / `r.get(17)` 等)。**下次加列必然掉坑**。
+v0.8.8 修过 5 个 row.get(N) 索引错位但保留 hand-numbered 索引 (`r.get(0)` /
+`r.get(16)` / `r.get(17)` 等)。**下次加列必然掉坑** — 加 1 列所有 idx 都 +1,
+没 e2e 测试覆盖就是 v0.8.5 C 整 1.5 release 静默 broken 的复刻。
 
-**修复**: SELECT 列起 alias (e.g. `first_timestamp AS first_ts`),`r.get::<_, String>("first_ts")`
-按名字读。schema 加列自动跟随,不再依赖手数索引。7 个 list_graph e2e 测试
-(v0.8.8 加) 通过验证。
+**修复**: SELECT 列起 alias (e.g. `first_timestamp AS first_ts`,
+`project_key AS workspace`),`r.get::<_, String>("first_ts")` 按名字读。
+schema 加列/调列顺序不再影响下游,**锁住 SELECT ↔ GraphEntryFE 字段映射**。
+
+**回归验证**: v0.8.8 加的 7 个 `commands::graph::tests::list_graph_*` e2e
+(in-memory DB + 完整 22 列 fixture + 字段对字段验证) 全部通过验证
+按名读跟原来按索引读输出完全一致。
 
 #### 5. 抽 OPENCLAW_PARENT_KEY / CLAUDE_PARENT_KEY const (item E)
 
-`parser/meta_extras.rs:134,139` 硬编码 "parentUuid" / "parentId" 字符串字面量。
-跟 v0.8.4 修过的 build_meta_full 跟 TOOL_USE_ALIASES 漂移同根因 — 当时抽
-TOOL_USE_ALIASES const 解决。现在抽 PARENT_KEY const 沿用同 pattern。
+`parser/meta_extras.rs:134,139` 硬编码 `"parentUuid"` (Claude) 和 `"parentId"`
+(OpenClaw) 字符串字面量。跟 v0.8.4 修过的 `build_meta_full` 跟
+`TOOL_USE_ALIASES` 漂移同根因 — 当时抽 `TOOL_USE_ALIASES` const 解决。
+
+**修复**: `parser/claude.rs::CLAUDE_PARENT_KEY = "parentUuid"` /
+`parser/openclaw.rs::OPENCLAW_PARENT_KEY = "parentId"`,`meta_extras.rs`
+引用 const。后续加 harness (例如 pi-coding-agent 用 `parentId` 的变体)
+只改 const 一处。
+
+**回归测试**: `parent_key_const_values_locked` 锁 const 值(防止改成别的名字
+破坏外部 OpenClaw JSON 解析)。
 
 ### 测试
 
-#### 6. graphStore.test.ts 新建 (item F)
+#### 6. graphStore.test.ts 新建 (item F) — 11 case 锁定契约
 
-`packages/frontend/src/views/graph/graphStore.test.ts` 11 个 case,覆盖:
+`packages/frontend/src/views/graph/graphStore.test.ts` 新建 11 case,跟
+v0.8.5 C 切 DB 后一直没补的 graph 域**唯一** store 测试:
 
-- load 调用 apiListGraph + 状态切换 (loading / error)
-- load 第二次不重复 fetch (已加载短路)
-- load 第二次并发不重复 fetch (loading 短路)
-- reload 覆盖 entries
-- listen mock 框架注册
+- `load` 调 `apiListGraph` + 状态切换 (loading / error)
+- `load` 第二次不重复 fetch (已加载短路)
+- `load` 第二次并发不重复 fetch (loading 短路 — race condition)
+- `reload` 覆盖 entries (不 append)
+- error 状态在成功 reload 后清空
+- loading 状态在 load 期间 true / 完结 false
+- listen mock 框架注册(为 v0.8.11+ wire-up 留 API 契约)
 
-跟 v0.8.5 C 切 DB 后一直没补的 graph 域唯一 store 测试。
+**性质**: 这是**契约 / 锁定测试** — 锁住 zustand store 的 shape (load /
+reload / entries / loading / error 字段)、mock `apiListGraph` + `listen`
+框架。v0.8.10 还没在 store 内部 mount-time listen(因为是 bare zustand,
+listen 必须在调用方 wire-up),所以 listen 测试只是 mock 框架注册验证。
 
-#### 7. DatabasePanel.test.tsx 新建 (item G)
+Mock 模式: `vi.mock("@tauri-apps/api/event", ...)` 替换 listen +
+`vi.mock("../../lib/overridesApi", ...)` 替换 apiListGraph。
 
-`packages/frontend/src/components/DatabasePanel.test.tsx` 11 个 case。
-**重构**: 把 SettingsRoute.tsx 里 inline 的 DatabasePanel (~150 行) 抽到
-`components/DatabasePanel.tsx`,SettingsRoute 只 import。覆盖:
+#### 7. DatabasePanel.test.tsx 新建 (item G) — 11 case + 抽出 component
 
-- panel render + sync stats
-- inProgress / lastError state 显示
-- rebuild / export / import 按钮 + confirm dialog
-- 3 个 import mode (merge / keepboth / overwrite)
-- 用户取消 save dialog 时不调 export_overrides
+`packages/frontend/src/components/DatabasePanel.tsx` **新文件**(从
+SettingsRoute.tsx 拆出 inline 的 ~150 行 JSX,便于单独 unit test)。
+SettingsRoute.tsx 现在只剩 `import { DatabasePanel }` + `<DatabasePanel />`,
+从 482 行 → 324 行(-158 行)。
+
+**11 case 覆盖**:
+
+- panel render + sync stats 数字显示
+- `inProgress: true` → "同步中…" 文案
+- `lastError: "..."` → "错误: ..." 文案
+- rebuild 按钮 → 调 `rebuild_db` command
+- rebuild `confirm()` 取消 → 不调 `rebuild_db`
+- export 按钮 → 调 save dialog + `export_overrides`
+- export 用户取消 (save 返 null) → 不调 `export_overrides`
+- import (merge) → `mode: "merge"`
+- import (keepboth) → `mode: "keepboth"`
+- import (overwrite) → `mode: "overwrite"`
+- rebuild 成功 → 显示 hint "数据库已重建"
+
+Mock 模式: `vi.mock("@tauri-apps/api/core")` 替换 invoke +
+`vi.mock("@tauri-apps/plugin-dialog")` 替换 save/open + `vi.spyOn(window,
+"confirm")` mock confirm dialog。
+
+### 重构附带
+
+- **SettingsRoute.tsx**: 482 → 324 行 (-158 行)。inline DatabasePanel → import。
+  `useEffect` / `invoke` 等死 import 全部清掉。
 
 ### 验证
 
@@ -95,6 +149,19 @@ cargo clippy --all-targets -- -D warnings      # clean
 cargo fmt -- --check                           # clean
 pnpm typecheck                                 # clean
 ```
+
+### Skip 留给 v0.8.11+ (这次不动)
+
+调研扫描发现但**没纳入** v0.8.10 的项目:
+
+- `tool_global_stats` 增量维护 — 当前全量 TRUNCATE + 重算,数据规模不大,先不动
+- `findIdleGaps` web worker — frontend 大数据列表卡顿,没复现优先
+- `save_settings` re-walk 优化 — 不是热路径
+- `GROUP_CONCAT` tag name 逗号解析 bug — tag 名含逗号会被错误 split(实际
+  schema 不允许,优先级低)
+- placeholder jsonl_path UNIQUE 移到专门的 placeholder 表 — 边界 case,很少触发
+- `apply_notes` Keepboth 空字符串 bug — Keepboth 模式下导入空字符串 note 会
+  被误判为"本地无显式 override"而覆盖
 
 ## [0.8.9] - 2026-07-12
 

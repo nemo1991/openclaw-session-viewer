@@ -17,6 +17,9 @@ import {
 import { useSettingsStore } from "../state/settingsStore";
 import { apiPickExportDir, apiRevealInFinder } from "../lib/api";
 import type { CustomRootConfig, CustomRootKind } from "@ocsv/shared";
+// v0.8.10: DatabasePanel 从 inline (~150 行 JSX) 抽到 components/DatabasePanel.tsx,
+// 便于单独 unit test。SettingsRoute 只 import,不再 bind 业务逻辑。
+import { DatabasePanel } from "../components/DatabasePanel";
 import "./SettingsRoute.css";
 
 export default function SettingsRoute() {
@@ -320,10 +323,3 @@ export default function SettingsRoute() {
     </div>
   );
 }
-
-/**
- * v0.8.10: DatabasePanel 抽到 components/DatabasePanel.tsx (从 SettingsRoute.tsx 拆出),
- * 便于单独 unit test。原本 inline 的 ~150 行 JSX 现在是单行 import,SettingsRoute
- * 只用关心 layout 不再 bind 业务逻辑。
- */
-import { DatabasePanel } from "../components/DatabasePanel";
