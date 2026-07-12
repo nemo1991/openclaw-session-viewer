@@ -547,9 +547,12 @@ pub async fn add_session_link(
     }
     let now = now_ms();
     state.db.with(|c| {
+        // v0.8.9: INSERT OR REPLACE 每次重置 created_at。改为 ON CONFLICT DO UPDATE
+        // 只更新 note,保留原 created_at (代表 link 什么时候建立)。
         c.execute(
-            "INSERT OR REPLACE INTO session_link (from_session, to_session, note, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO session_link (from_session, to_session, note, created_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
             params![from, to, note, now],
         )?;
         Ok::<_, AppError>(())
@@ -1158,5 +1161,59 @@ mod tests {
             })
             .unwrap();
         assert!(exists);
+    }
+
+    // ===== v0.8.9: add_session_link ON CONFLICT 回归测试 =====
+    //
+    // Bug: 之前用 INSERT OR REPLACE,重设 created_at。改成 ON CONFLICT DO UPDATE
+    // 只更新 note,保留原 created_at (代表 link 什么时候建立)。这里直接复用 add_session_link
+    // 的 SQL 模式测试,因为 Tauri State/AppHandle 难 mock — 验证 SQL 语义。
+    #[test]
+    fn add_session_link_preserves_created_at_on_re_add() {
+        let (_tmp, pool) = fresh_db();
+        let now_first = 1_700_000_000_000_i64;
+        let now_second = 1_700_000_999_999_i64;
+
+        // 第一次 insert
+        pool.with(|c| {
+            c.execute(
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
+                rusqlite::params!["sess-a", "sess-b", "first note", now_first],
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        // 第二次 insert — 同样 (from, to),不同 note,不同时间
+        pool.with(|c| {
+            c.execute(
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
+                rusqlite::params!["sess-a", "sess-b", "second note", now_second],
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        // 读回 — note 应该是 second (更新成功),但 created_at 必须是 first (保留)
+        let (note, created_at): (Option<String>, i64) = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT note, created_at FROM session_link
+                     WHERE from_session = 'sess-a' AND to_session = 'sess-b'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            })
+            .unwrap();
+
+        assert_eq!(note.as_deref(), Some("second note"), "note 必须被更新");
+        assert_eq!(
+            created_at, now_first,
+            "created_at 必须保留 first insert 的值 ({now_first}),不是 second ({now_second})"
+        );
     }
 }

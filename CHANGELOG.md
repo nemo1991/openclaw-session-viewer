@@ -2,6 +2,68 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.9] - 2026-07-12
+
+v0.8.5/6/7/8 连续 4 个 release 暴露 "代码改了但测试没跟上" 的 root cause — graph 视图
+domain 整 1.5 个 release 都 broken 才被 v0.8.8 hotfix。v0.8.9 把筹码放到 **test gap 收口**,
+锁住已经正确的代码,防 v0.8.10+ 加列/重构时再次掉坑。
+
+Plus: 顺手修 1 个真 bug — `add_session_link` `INSERT OR REPLACE` 重置 `created_at`
+(用户重复调 add 期望保留原 link 何时建立的时间戳)。
+
+### 测试
+
+#### 1. db/sync.rs 加 6 个纯函数测试 (item A)
+
+`src-tauri/src/db/sync.rs::tests` 新建模块,覆盖:
+
+- `scan_live_pids` 3 case (missing dir / valid 2 sessions / non-json 跳过)
+- `read_agent_info_from_index` 3 case (missing file / valid JSON / malformed JSON 静默 None)
+
+`sync_once` / `sync_one_file` 端到端需要 mock AppHandle 跳过,纯函数测试覆盖已锁住
+正确性。Helper 用 `tempfile::TempDir` 写 sessions.json + pid files。
+
+#### 2. analytics.ts 8 chart 函数测试 (item B)
+
+`packages/frontend/src/views/graph/analytics.test.ts` 新建,**36 个 case**:
+
+- `cutoffMs` 4 case (24h / 7d / 30d / all)
+- `filterByRange` 4 case (24h / 7d / all / 空数组)
+- `sessionsByDay` 4 case (按 source 聚合 / main+sub 同一天 / OpenClaw / 空)
+- `tokenTopN` 4 case (降序 / limit / limit=0 / 过滤 token=0)
+- `topToolsBar` 5 case (跨 session 累加 / 降序 / topN / dedup / sessions_count)
+- `modelAvgThinking` 3 case (按 model 分组 / 不被 0 thinking 污染 / 含 sessions_count+total_tokens)
+- `retryRateDistribution` 2 case (bucket 格式 / 总数 > 0)
+- `subagentChainDist` 2 case (bucket 格式 / 总数 = 4)
+- `summary` 3 case (聚合 / date_range / 空数组)
+- Edge type 契约 5 case (used_tool / spawned / cross_session / attempted_fix / parent_uuid snake_case)
+
+Fixture 用 4 个不同 session 形状 (claude main / claude subagent / openclaw with errors / 空 session),
+lock 住 G2 Analytics 8 chart 数据源。
+
+### 修复
+
+#### 3. add_session_link 重置 created_at (item C — 真 bug 顺手修)
+
+`src-tauri/src/commands/overrides.rs:549-556` `INSERT OR REPLACE` 每次重写 row 时
+`created_at` 重置成 `now_ms()`。用户重复调 `add_session_link(same_a, same_b, ...)`
+期望保留原 `created_at` (代表"link 什么时候建立"),但被覆盖。
+
+**修复**: `INSERT OR REPLACE` → `INSERT ... ON CONFLICT(from_session, to_session)
+DO UPDATE SET note = excluded.note` — 只更新 note 字段,保留 created_at。
+
+**回归测试**: 1 个 `add_session_link_preserves_created_at_on_re_add` 锁住契约。
+
+### 验证
+
+```bash
+cargo test --lib                               # 182 → 189 (+7)
+pnpm -r test                                   # 492 → 528 (+36)
+cargo clippy --all-targets -- -D warnings      # clean
+cargo fmt -- --check                           # clean
+pnpm typecheck                                 # clean
+```
+
 ## [0.8.8] - 2026-07-11
 
 v0.8.7 review 揪出的 3 个 v0.8.5 C 起就 broken 的 CRITICAL bug + 2 条 minor 推迟到本版本 hotfix:
