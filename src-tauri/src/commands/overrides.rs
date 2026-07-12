@@ -781,9 +781,12 @@ pub async fn import_overrides(
         }
         // links
         for link in &exp.links {
+            // v0.8.10: 跟 v0.8.9 add_session_link 同样的 ON CONFLICT 修复 —
+            // 重导 (Overwrite / Merge 模式) 不重置 created_at (代表 link 何时建立)。
             tx.execute(
-                "INSERT OR REPLACE INTO session_link (from_session, to_session, note, created_at)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
                 params![
                     link.from_session,
                     link.to_session,
@@ -1214,6 +1217,65 @@ mod tests {
         assert_eq!(
             created_at, now_first,
             "created_at 必须保留 first insert 的值 ({now_first}),不是 second ({now_second})"
+        );
+    }
+
+    // ===== v0.8.10: import_overrides ON CONFLICT 回归测试 (item B) =====
+    //
+    // Bug: v0.8.9 修 add_session_link 时,import_overrides (L785) 同样 INSERT OR REPLACE
+    // 漏修。Overwrite / Merge 模式重导时,所有 link created_at 被重置成 import 时刻。
+    // 这里复用 import_overrides 实际使用的 SQL 模式测试 (跟 v0.8.9 add_session_link
+    // 同样套路 — Tauri State/AppHandle 难 mock,直接验证 SQL 语义)。
+    #[test]
+    fn import_overrides_preserves_existing_link_created_at() {
+        let (_tmp, pool) = fresh_db();
+        let ts_first = 1_700_000_000_000_i64;
+        let ts_second = 1_700_000_999_999_i64;
+
+        // 1) 第一次 import — 模拟用户自己 add_session_link 后,导出 json 文件
+        //    (这里直接 INSERT 用 sql pattern,跟 import_overrides 实际跑的 SQL 一致)
+        pool.with(|c| {
+            c.execute(
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
+                rusqlite::params!["sess-a", "sess-b", "first note", ts_first],
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        // 2) 第二次 import — 同样 (from, to),不同 note,不同时间戳
+        //    (这是 import_overrides 实际跑的 SQL — 跟 v0.8.9 修的 add_session_link
+        //    用一模一样的 ON CONFLICT 模式)
+        pool.with(|c| {
+            c.execute(
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
+                rusqlite::params!["sess-a", "sess-b", "second note", ts_second],
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        // 3) 读回 — note 应该是 second (更新成功),但 created_at 必须是 first (保留)
+        let (note, created_at): (Option<String>, i64) = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT note, created_at FROM session_link
+                     WHERE from_session = 'sess-a' AND to_session = 'sess-b'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )?)
+            })
+            .unwrap();
+
+        assert_eq!(note.as_deref(), Some("second note"), "note 必须被更新");
+        assert_eq!(
+            created_at, ts_first,
+            "created_at 必须保留 first import 的值 ({ts_first}),不是 second ({ts_second}) — \
+             这是 import_overrides ON CONFLICT 修复的契约"
         );
     }
 }

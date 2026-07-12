@@ -129,14 +129,22 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
             last_ts = Some(t.clone());
         }
 
-        // v0.8.7 A: 累积所有 entry 的 parentUuid 引用 (Claude 用 parentUuid, OpenClaw 用 parentId)
+        // v0.8.10: 用 CLAUDE_PARENT_KEY / OPENCLAW_PARENT_KEY const (从 parser/claude.rs
+        // 和 parser/openclaw.rs 共享), 跟 TOOL_USE_ALIASES 同 pattern — 避免硬编码
+        // "parentUuid" / "parentId" 字符串跟其它路径脱节。
         // 用 prefix 'oc:' 区分 OpenClaw 的 id (避免跟 Claude 的 UUID 冲突)
-        if let Some(p) = obj.get("parentUuid").and_then(|v| v.as_str()) {
+        if let Some(p) = obj
+            .get(crate::parser::claude::CLAUDE_PARENT_KEY)
+            .and_then(|v| v.as_str())
+        {
             if !p.is_empty() {
                 parent_uuids_set.insert(p.to_string());
             }
         }
-        if let Some(p) = obj.get("parentId").and_then(|v| v.as_str()) {
+        if let Some(p) = obj
+            .get(crate::parser::openclaw::OPENCLAW_PARENT_KEY)
+            .and_then(|v| v.as_str())
+        {
             if !p.is_empty() {
                 parent_uuids_set.insert(format!("oc:{p}"));
             }
@@ -697,5 +705,23 @@ mod tests {
         let m = build_meta_full(&p).unwrap();
         // 两个空字符串不入集合, 只留真实那个
         assert_eq!(m.parent_uuids, vec!["real-uuid"]);
+    }
+
+    // v0.8.10: 锁住 PARENT_KEY const 值 — 改了 const 必然要更新 build_meta_full 引用
+    // (跟 TOOL_USE_ALIASES 测试同 pattern)
+    #[test]
+    fn parent_key_const_values_locked() {
+        use crate::parser::claude::CLAUDE_PARENT_KEY;
+        use crate::parser::openclaw::OPENCLAW_PARENT_KEY;
+        assert_eq!(
+            CLAUDE_PARENT_KEY, "parentUuid",
+            "Claude parent key 必须仍是 parentUuid"
+        );
+        assert_eq!(
+            OPENCLAW_PARENT_KEY, "parentId",
+            "OpenClaw parent key 必须仍是 parentId"
+        );
+        // 两个必须不同 (OpenClaw 用 oc: prefix 区分)
+        assert_ne!(CLAUDE_PARENT_KEY, OPENCLAW_PARENT_KEY);
     }
 }

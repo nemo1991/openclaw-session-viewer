@@ -8,6 +8,12 @@
 
 use serde_json::Value;
 
+/// v0.8.10: OpenClaw JSONL record 里 parent reference 的 JSON key (顶层 const,
+/// 跟 `parser/claude.rs::CLAUDE_PARENT_KEY` / `parser/blocks/tool_use.rs::TOOL_USE_ALIASES`
+/// 同 pattern,给 `parser/meta_extras.rs::build_meta_full` 共享 — 避免硬编码 "parentId"
+/// 字符串跟其它路径脱节。OpenClaw 用 `parentId` (跟 Claude `parentUuid` 不同命名)。
+pub const OPENCLAW_PARENT_KEY: &str = "parentId";
+
 use super::claude::{self, NormalizedBlock, NormalizedMessage};
 
 /// 归一化 OpenClaw JSON 记录(header 返回 None)
