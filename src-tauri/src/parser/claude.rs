@@ -8,6 +8,12 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// v0.8.10: Claude JSONL record 里 parent reference 的 JSON key (顶层 const,
+/// 跟 `parser/blocks/tool_use.rs::TOOL_USE_ALIASES` 同 pattern,给
+/// `parser/meta_extras.rs::build_meta_full` 共享 — 避免硬编码 "parentUuid"
+/// 字符串跟其它路径脱节。
+pub const CLAUDE_PARENT_KEY: &str = "parentUuid";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NormalizedBlock {

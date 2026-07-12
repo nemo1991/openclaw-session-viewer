@@ -19,6 +19,7 @@ use crate::commands::sessions::{build_claude_session_meta, build_openclaw_sessio
 use crate::error::{AppError, AppResult};
 use crate::fs::walker;
 use crate::parser::jsonl;
+use crate::parser::openclaw_index::SessionsIndexEntry;
 use crate::AppState;
 
 #[derive(Debug, Clone, Serialize)]
@@ -444,25 +445,9 @@ fn scan_live_pids(dir: &Path) -> AppResult<std::collections::HashMap<String, u32
 fn read_agent_info_from_index(
     sessions_json: &Path,
 ) -> (Option<String>, Option<String>, Option<String>) {
-    use serde::Deserialize;
+    // v0.8.10: SessionsIndexEntry 抽到 parser/openclaw_index.rs 共享 — 加 camelCase
+    // rename 后真实 OpenClaw sessions.json (sessionId / lastChannel / lastTo) 能正确 parse。
     use std::collections::HashMap;
-
-    #[derive(Debug, Default, Deserialize)]
-    struct Entry {
-        #[serde(default)]
-        session_id: String,
-        #[serde(default)]
-        origin: Origin,
-        #[serde(default)]
-        last_channel: String,
-        #[serde(default)]
-        last_to: String,
-    }
-    #[derive(Debug, Default, Deserialize)]
-    struct Origin {
-        #[serde(default)]
-        label: String,
-    }
 
     if !sessions_json.exists() {
         return (None, None, None);
@@ -479,9 +464,9 @@ fn read_agent_info_from_index(
         Some(o) => o,
         None => return (None, None, None),
     };
-    let mut entries: HashMap<String, Entry> = HashMap::new();
+    let mut entries: HashMap<String, SessionsIndexEntry> = HashMap::new();
     for (_k, v) in obj {
-        if let Ok(parsed) = serde_json::from_value::<Entry>(v.clone()) {
+        if let Ok(parsed) = serde_json::from_value::<SessionsIndexEntry>(v.clone()) {
             if !parsed.session_id.is_empty() {
                 entries.insert(parsed.session_id.clone(), parsed);
             }
@@ -647,30 +632,62 @@ mod tests {
     fn read_agent_info_from_index_parses_valid_json() {
         let tmp = TempDir::new().expect("tempdir");
         let sessions_json = tmp.path().join("sessions.json");
-        // OpenClaw sessions.json shape: object keyed by id, each value has
-        // sessionId / origin.label / last_channel / last_to
+        // v0.8.10: OpenClaw sessions.json 实际用 camelCase (sessionId / lastChannel /
+        // lastTo) — 跟 Entry::#[serde(rename_all = "camelCase")] 匹配,真实 parse 正确。
         let payload = serde_json::json!({
             "key-1": {
                 "sessionId": "sid-1",
                 "origin": { "label": "merge-g1" },
-                "last_channel": "discord",
-                "last_to": "user-123"
+                "lastChannel": "discord",
+                "lastTo": "user-123"
             },
             "key-2": {
                 "sessionId": "sid-2",
                 "origin": { "label": "another" },
-                "last_channel": "slack",
-                "last_to": "user-456"
+                "lastChannel": "slack",
+                "lastTo": "user-456"
             }
         });
         fs::write(&sessions_json, payload.to_string()).expect("write sessions.json");
 
-        let (_label, _channel, _target) = read_agent_info_from_index(&sessions_json);
-        // 不 panic 即通过。当前实现 Entry::session_id 字段默认 snake_case 映射
-        // (session_id) 但 OpenClaw sessions.json 实际是 camelCase (sessionId),
-        // 所以这个函数对真实 OpenClaw 数据实际上静默返 None — 已知 broken,
-        // 等 v0.8.10+ 加 #[serde(rename = "sessionId")] 再修。
-        // 这里只锁住"valid JSON 输入不 panic"这个契约。
+        let (label, channel, target) = read_agent_info_from_index(&sessions_json);
+        // 强断言: 3 个返回值都 Some,锁住 camelCase parse 正确
+        // (修复前 snake_case 默认映射让 sessionId/lastChannel/lastTo deserialize 成 "",
+        // 函数对真实 OpenClaw 数据静默返 (None, None, None))
+        assert!(label.is_some(), "label 必须 Some (camelCase parse 正确)");
+        assert!(channel.is_some());
+        assert!(target.is_some());
+        assert!(
+            label.as_deref() == Some("merge-g1") || label.as_deref() == Some("another"),
+            "label 必须是 2 个 session 之一"
+        );
+    }
+
+    // v0.8.10: 锁住真实 OpenClaw sessions.json shape 解析 — Item A 的回归测试。
+    // 验证加 #[serde(rename_all = "camelCase")] 之后真实数据能正确提取 label / channel / target。
+    #[test]
+    fn read_agent_info_from_index_extracts_real_openclaw_shape() {
+        let tmp = TempDir::new().expect("tempdir");
+        let sessions_json = tmp.path().join("sessions.json");
+        // 单 entry 简化版(避免 HashMap 顺序不稳定绑死 label 内容)
+        let payload = serde_json::json!({
+            "agent:main:feishu:direct:ou_xxx": {
+                "sessionId": "sid-real",
+                "origin": { "label": "feishu-bot" },
+                "lastChannel": "feishu",
+                "lastTo": "ou_real",
+                "lastAccountId": "acc-real",
+                "lastInteractionAt": 1_700_000_000_000_i64,
+                "chatType": "direct",
+                "abortedLastRun": false
+            }
+        });
+        fs::write(&sessions_json, payload.to_string()).expect("write sessions.json");
+
+        let (label, channel, target) = read_agent_info_from_index(&sessions_json);
+        assert_eq!(label.as_deref(), Some("feishu-bot"));
+        assert_eq!(channel.as_deref(), Some("feishu"));
+        assert_eq!(target.as_deref(), Some("ou_real"));
     }
 
     #[test]

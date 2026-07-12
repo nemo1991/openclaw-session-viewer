@@ -183,57 +183,69 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
     };
 
     let mut stmt = c.prepare(
-        "SELECT session_id, project_key, source, jsonl_path, size_bytes, mtime_ms,
-                first_timestamp, last_timestamp, message_count, thinking_count,
-                tool_use_count, top_tools_json, total_tokens_json, primary_model,
-                error_count, subagent_count, subagent_ids_json, first_prompt, agent_id,
-                tool_usage_json, parent_uuids_text
+        // v0.8.10: 列 alias 跟原始 column name 一致(只是文档化),
+        // 让 r.get("column_name") 按名读 — schema 加列 / 调列顺序不再影响下游。
+        "SELECT session_id         AS session_id,
+                project_key        AS workspace,
+                source,
+                jsonl_path,
+                size_bytes,
+                mtime_ms,
+                first_timestamp    AS first_ts,
+                last_timestamp     AS last_ts,
+                message_count,
+                thinking_count,
+                tool_use_count,
+                top_tools_json,
+                total_tokens_json,
+                primary_model,
+                error_count,
+                subagent_count,
+                subagent_ids_json,
+                first_prompt,
+                agent_id,
+                tool_usage_json,
+                parent_uuids_text
          FROM session_meta
          ORDER BY mtime_ms DESC",
     )?;
 
     let rows: Vec<GraphEntryFE> = stmt
         .query_map([], |r| {
-            let session_id: String = r.get(0)?;
-            let source_raw: String = r.get(2)?;
+            let session_id: String = r.get("session_id")?;
+            let source_raw: String = r.get("source")?;
             let source = if source_raw == "claude" {
                 "Claude"
             } else {
                 "OpenClaw"
             };
 
-            let first_ts: Option<String> = r.get(6)?;
-            let last_ts: Option<String> = r.get(7)?;
+            let first_ts: Option<String> = r.get("first_ts")?;
+            let last_ts: Option<String> = r.get("last_ts")?;
             let first_ts_ms = first_ts.as_deref().and_then(parse_iso_ms);
             let last_ts_ms = last_ts.as_deref().and_then(parse_iso_ms);
 
-            let top_tools_json: Option<String> = r.get(11)?;
+            let top_tools_json: Option<String> = r.get("top_tools_json")?;
             let top_tools: Vec<String> = top_tools_json
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                 .unwrap_or_default();
 
-            let total_tokens_json: Option<String> = r.get(12)?;
+            let total_tokens_json: Option<String> = r.get("total_tokens_json")?;
             let token_total: u64 = total_tokens_json
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<TokenUsageFE>(s).ok())
                 .map(|t| t.input + t.output + t.cache_read + t.cache_write)
                 .unwrap_or(0);
 
-            // v0.8.8: SELECT column index fix — subagent_ids_json 在 idx 16 (不是 17)
-            // 历史: 自 v0.8.5 C 引入 list_graph 起 r.get(17) 错位 1 个, 一直读的是
-            // first_prompt 列。 Bug 在 v0.8.7 加 parent_uuids_text 让 r.get(21) 越界 panic
-            // 才被发现。
-            let subagent_ids_json: Option<String> = r.get(16)?;
+            let subagent_ids_json: Option<String> = r.get("subagent_ids_json")?;
             let subagent_ids: Vec<String> = subagent_ids_json
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                 .unwrap_or_default();
             // v0.8.6 A: 提前读 error_count / subagent_count 给 edges 派生用
-            let error_count: u32 = r.get::<_, i64>(14)? as u32;
-            // 用完 subagent_count 立即释放 borrow
-            let subagent_count: u32 = r.get::<_, i64>(15)? as u32;
-            let _ = subagent_count; // 只在 node 用
+            let error_count: u32 = r.get::<_, i64>("error_count")? as u32;
+            let subagent_count: u32 = r.get::<_, i64>("subagent_count")? as u32;
 
             // v0.8.7 B: 反向 map — 此 session 是否是某个 main 的 subagent
             let (is_subagent_root, parent_session_id) = derive_subagent_root(&session_id, &index);
@@ -242,31 +254,28 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 node_id: session_id.clone(),
                 source: source.to_string(),
                 session_id: session_id.clone(),
-                workspace: r.get(1)?,
-                jsonl_path: r.get(3)?,
-                size_bytes: r.get::<_, i64>(4)? as u64,
-                mtime_ms: r.get::<_, i64>(5)? as u64,
-                // v0.8.8: first_prompt 在 idx 17 (不是 18)
-                first_prompt: r.get(17)?,
+                workspace: r.get("workspace")?,
+                jsonl_path: r.get("jsonl_path")?,
+                size_bytes: r.get::<_, i64>("size_bytes")? as u64,
+                mtime_ms: r.get::<_, i64>("mtime_ms")? as u64,
+                first_prompt: r.get("first_prompt")?,
                 first_timestamp_ms: first_ts_ms,
                 last_timestamp_ms: last_ts_ms,
                 token_total,
-                thinking_count: r.get::<_, i64>(9)? as u32,
-                primary_model: r.get(13)?,
+                thinking_count: r.get::<_, i64>("thinking_count")? as u32,
+                primary_model: r.get("primary_model")?,
                 top_tools,
                 error_count,
                 subagent_count,
                 subagent_ids: subagent_ids.clone(), // v0.8.6 A: edges 派生也要用
                 is_subagent_root,                   // v0.8.7 B: 反向 map 派生
                 parent_session_id,                  // v0.8.7 B: 反向 map 派生
-                message_count: r.get::<_, i64>(8)? as u32,
-                // v0.8.8: agent_id 在 idx 18 (不是 19)
-                agent_id: r.get(18)?,
+                message_count: r.get::<_, i64>("message_count")? as u32,
+                agent_id: r.get("agent_id")?,
             };
 
             // UsedTool edges 派生 from tool_usage_json: [["Bash", 286], ...]
-            // v0.8.8: tool_usage_json 在 idx 19 (不是 20)
-            let tool_usage_json: Option<String> = r.get(19)?;
+            let tool_usage_json: Option<String> = r.get("tool_usage_json")?;
             let mut edges: Vec<EdgeFE> = Vec::new();
             if let Some(json) = tool_usage_json {
                 if let Ok(usage) = serde_json::from_str::<Vec<(String, u32)>>(&json) {
@@ -300,8 +309,8 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
 
             // v0.8.7 A: ParentUuid edges — 读 parent_uuids_text 列(newline-separated),
             // 每个 uuid 派生 1 个 edge 给 G1 跨 session 关联可视化
-            // v0.8.8: parent_uuids_text 在 idx 20 (不是 21) — 原 r.get(21) 越界 panic
-            let parent_uuids_text: Option<String> = r.get(20)?;
+            // v0.8.10: 按 name 读,不再依赖 idx
+            let parent_uuids_text: Option<String> = r.get("parent_uuids_text")?;
             if let Some(text) = parent_uuids_text {
                 for uuid in text.lines().filter(|l| !l.is_empty()) {
                     edges.push(EdgeFE::ParentUuid {

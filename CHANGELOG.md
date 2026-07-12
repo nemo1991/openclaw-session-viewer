@@ -2,6 +2,100 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.10] - 2026-07-12
+
+v0.8.9 完成 test gap 收口。v0.8.10 主题是 **Defense in depth** — 收口 2 个真 bug
+(其中 1 个是 v0.8.9 漏修的同源 bug) + 3 个 schema-drift hardening + 2 个 test gap
+一次性收掉。
+
+### 修复
+
+#### 1. read_agent_info_from_index 对真实 OpenClaw 数据永远返 None (item A)
+
+`src-tauri/src/db/sync.rs::read_agent_info_from_index` 的 `Entry` struct 用默认
+snake_case 映射,但真实 OpenClaw sessions.json 用 camelCase (`sessionId` /
+`lastChannel` / `lastTo`)。结果函数对所有真实 OpenClaw 数据静默返
+`(None, None, None)`,OpenClaw agent 的 session_meta.agent_label /
+last_channel / last_to 列永远是 NULL/空。`commands/sessions.rs` 现场解析
+兜底所以 UI 看起来正常,但 DB 列没沉淀。
+
+**修复**: 加 `#[serde(rename_all = "camelCase")]` 跟 sessions.rs 同 schema
+对齐(1 行)。
+
+**回归测试**: `read_agent_info_from_index_extracts_real_openclaw_shape` 锁 camelCase
+parse,3 个返回值必须 Some 而不是被 ignored。
+
+#### 2. import_overrides 重置 link created_at (item B — 同 v0.8.9 漏修)
+
+`src-tauri/src/commands/overrides.rs:785` 跟 v0.8.9 修的 add_session_link 同源
+bug — `INSERT OR REPLACE INTO session_link` 在 import_overrides 漏修。
+Overwrite / Merge 模式重导时,所有 link created_at 重置成 import 时刻。
+
+**修复**: 改 ON CONFLICT DO UPDATE 只更新 note 字段 (跟 v0.8.9 同模式)。
+
+**回归测试**: `import_overrides_preserves_existing_link_created_at` 锁契约。
+
+### Hardening
+
+#### 3. 抽 SessionsIndexEntry 共用 module (item C)
+
+`src-tauri/src/db/sync.rs::Entry` 跟 `src-tauri/src/commands/sessions.rs::SessionsIndexEntry`
+字段完全 parallel,各写一遍。两份同时存在的设计本身 drift 风险。
+
+**修复**: 抽 `src-tauri/src/parser/openclaw_index.rs::SessionsIndexEntry`,
+sync.rs + sessions.rs 都 use,共享同一 schema + 自动 inherit camelCase rename。
+
+#### 4. commands/graph.rs SELECT 列名 alias + row.get 按 name 读 (item D)
+
+v0.8.8 修过 row.get(N) 索引错位但保留 hand-numbered 索引 (`r.get(0)` /
+`r.get(16)` / `r.get(17)` 等)。**下次加列必然掉坑**。
+
+**修复**: SELECT 列起 alias (e.g. `first_timestamp AS first_ts`),`r.get::<_, String>("first_ts")`
+按名字读。schema 加列自动跟随,不再依赖手数索引。7 个 list_graph e2e 测试
+(v0.8.8 加) 通过验证。
+
+#### 5. 抽 OPENCLAW_PARENT_KEY / CLAUDE_PARENT_KEY const (item E)
+
+`parser/meta_extras.rs:134,139` 硬编码 "parentUuid" / "parentId" 字符串字面量。
+跟 v0.8.4 修过的 build_meta_full 跟 TOOL_USE_ALIASES 漂移同根因 — 当时抽
+TOOL_USE_ALIASES const 解决。现在抽 PARENT_KEY const 沿用同 pattern。
+
+### 测试
+
+#### 6. graphStore.test.ts 新建 (item F)
+
+`packages/frontend/src/views/graph/graphStore.test.ts` 11 个 case,覆盖:
+
+- load 调用 apiListGraph + 状态切换 (loading / error)
+- load 第二次不重复 fetch (已加载短路)
+- load 第二次并发不重复 fetch (loading 短路)
+- reload 覆盖 entries
+- listen mock 框架注册
+
+跟 v0.8.5 C 切 DB 后一直没补的 graph 域唯一 store 测试。
+
+#### 7. DatabasePanel.test.tsx 新建 (item G)
+
+`packages/frontend/src/components/DatabasePanel.test.tsx` 11 个 case。
+**重构**: 把 SettingsRoute.tsx 里 inline 的 DatabasePanel (~150 行) 抽到
+`components/DatabasePanel.tsx`,SettingsRoute 只 import。覆盖:
+
+- panel render + sync stats
+- inProgress / lastError state 显示
+- rebuild / export / import 按钮 + confirm dialog
+- 3 个 import mode (merge / keepboth / overwrite)
+- 用户取消 save dialog 时不调 export_overrides
+
+### 验证
+
+```bash
+cargo test --lib                               # 189 → 192 (+3)
+pnpm -r test                                   # 528 → 550 (+22)
+cargo clippy --all-targets -- -D warnings      # clean
+cargo fmt -- --check                           # clean
+pnpm typecheck                                 # clean
+```
+
 ## [0.8.9] - 2026-07-12
 
 v0.8.5/6/7/8 连续 4 个 release 暴露 "代码改了但测试没跟上" 的 root cause — graph 视图

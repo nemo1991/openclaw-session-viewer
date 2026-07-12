@@ -4,34 +4,18 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use serde::Deserialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::fs::paths;
 use crate::model::{LivePidMeta, SessionMeta, TokenUsage};
 use crate::parser::jsonl;
+use crate::parser::openclaw_index::SessionsIndexEntry;
 use crate::AppState;
 
-/// sessions.json 中的每个 entry (只取必要字段,容错其它大块)
-#[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionsIndexEntry {
-    #[serde(default)]
-    session_id: String,
-    #[serde(default)]
-    origin: SessionsIndexOrigin,
-    #[serde(default)]
-    last_channel: String,
-    #[serde(default)]
-    last_to: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct SessionsIndexOrigin {
-    #[serde(default)]
-    label: String,
-}
+// v0.8.10: SessionsIndexEntry / SessionsIndexOrigin 抽到 parser/openclaw_index.rs 共享
+// (db/sync.rs::read_agent_info_from_index 之前独立定义一份,Item A 修了 camelCase)
+// 这里只保留 alias 跟索引类型。
 
 /// sessions.json 索引:sessionId → 元信息
 type SessionsIndex = HashMap<String, SessionsIndexEntry>;
@@ -788,6 +772,7 @@ pub fn read_live_pids_meta(dir: &Path) -> AppResult<Vec<LivePidMeta>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::openclaw_index::SessionsIndexOrigin;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
