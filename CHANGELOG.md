@@ -2,6 +2,99 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.11] - 2026-07-14
+
+详情页加 **reload** 按钮 — 用户在外部修改了 jsonl / 想看后端最新 sync 后派生指标
+(错误数 / tool 用量 / subagent 数等) 时,需要手动触发"刷新"。v0.8.0 切 DB 之后
+详情页一直被动等 `sessions-updated` 事件,用户没有兜底手动刷新入口。
+
+### 改动
+
+#### 1. header actions 区加 reload 按钮 (item A)
+
+`packages/frontend/src/routes/SessionDetailRoute.tsx` 新增 `↻ RefreshCw` 按钮,
+位置在 Search 按钮**之前**(用户最常操作的位置,显眼),`data-testid="reload-btn"`。
+
+**语义**: 触发后端 sync + 重读 meta + transcript。**不做 destructive 操作** —
+不像 DatabasePanel 的 Rebuild DB,reload 不会清空 session_meta / override / tag /
+link,只是个"重新跑一遍 sync_loop + 重新拉 transcript"。
+
+**实现细节**:
+
+- `useSessionsStore.getState().refresh()` 调 `apiRefreshSessions` 触发后端
+  `refresh_requested` notify → sync_loop 重新跑 → 跑完 emit `sessions-updated`。
+- refresh 完后从 `useSessionsStore.sessions` 找当前 sid 对应新 meta,
+  `navigate(currentPath + search, { state: { session: refreshed }, replace: true })`
+  触发 `meta` 的 `useMemo` 重新派生 (meta 来源是 location.state.session)。
+- **关键技术点**: `transcriptStore.start` 第一行有
+  `if (get().path === path) return` 短路,reload 同 path 不 reset 就**不会重解析**。
+  reload handler 里**先 reset 再 start**(reset 把 entries 清空 + listener unregister,
+  start 再重新注册 listener + invoke stream_transcript)。
+- `reloading` local state 控制按钮 disabled + spin 动画。
+- `if (!meta || reloading) return` 防止重入(连续点只触发 1 次)。
+
+#### 2. Cmd+R / Ctrl+R 快捷键 (item B)
+
+```ts
+useKey(
+  "cmd+r",
+  (e) => {
+    e.preventDefault();
+    void handleReload();
+  },
+  [handleReload]
+);
+useKey(
+  "ctrl+r",
+  (e) => {
+    e.preventDefault();
+    void handleReload();
+  },
+  [handleReload]
+);
+```
+
+- **同时注册两个**绕过 keymap 的 cmd/ctrl 互斥限制(已写在 keymap.ts 注释里)。
+- `e.preventDefault()` 阻止默认 refresh(浏览器 F5 / 系统级 R)。
+- handler 引用通过 `useCallback([meta, reloading, navigate, location.pathname, location.search])`
+  稳定,useKey 才能安全绑 deps。
+
+#### 3. CSS — spin 动画 + reloading 状态
+
+`SessionDetailRoute.css`:
+
+- `.reloading { opacity: 0.6; cursor: wait; }` — 按钮 disabled 时视觉反馈。
+- `@keyframes spin` — `1s linear infinite` 旋转动画,refresh icon 加 `className="spin"`。
+
+### 测试
+
+5 新测试,锁住 reload 契约:
+
+- render reload 按钮 + `data-testid="reload-btn"` + `className.reloading === false`
+- reload 按钮在 `.session-header-actions` 容器里(跟 Search 按钮同父)
+- 点 reload 触发 `sessionsStore.refresh` IPC(走 `refresh_sessions`)
+- refresh 后 navigate 用新 meta 触发 useMemo 重派生(`replace: true`)
+- reload 中按钮 disabled + className 含 `reloading`
+- 正在 reload 时再点 reload 按钮被 `reloading=true` 短路,不重复触发
+
+### 验证
+
+```bash
+pnpm -r test                                   # 550 → 556 (+6 新)
+pnpm -r typecheck                              # clean
+cargo test --lib                               # 192/192 (未变化)
+```
+
+### 设计权衡
+
+- **不绑 F5**: Tauri WebView 里 F5 行为不稳定(macOS 上可能被系统拦截,Linux 上可能触发
+  webkit refresh),Cmd+R 更可控。两条快捷键覆盖 macOS / Windows / Linux。
+- **不在按钮上加文字 "重载"**: 空间有限,RefreshCw 图标 + title tooltip 已足够。
+  跟 SessionsRoute 的 RefreshCw 按钮风格一致。
+- **不监听 sessions-updated 事件自动 reload transcript**: 当前 sessionsStore 已有
+  refresh listener,但 detail 页 transcript store 是独立的。手动 reload 给用户主动权,
+  避免 sync_loop 跑频繁时 transcript 反复 reset。
+
 ## [0.8.10] - 2026-07-12
 
 v0.8.9 完成 test gap 收口,但 review 发现还有 2 个真 bug 没修(其中一个是 v0.8.9
