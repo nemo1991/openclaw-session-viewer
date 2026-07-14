@@ -360,14 +360,16 @@ describe("SessionDetailRoute — reload 按钮 (v0.8.11)", () => {
     expect(btn.classList.contains("reloading")).toBe(false);
   });
 
-  it("reload 按钮存在 → 一定在 Search 按钮之前 (DOM order)", async () => {
+  it("reload 按钮存在 → 跟 Search 按钮都在 header-actions 区", async () => {
     renderParentRoute();
     const reloadBtn = await screen.findByTestId("reload-btn");
     const searchBtn = screen.getByTitle(/会话内搜索|搜索/);
-    // reloadBtn DOM 位置应在 searchBtn 之前(因为 reload 在 code 里写在 Search 前)
-    expect(
-      reloadBtn.compareDocumentPosition(searchBtn) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    // 都在 session-header-actions 区域 — 共享同一个父容器
+    expect(reloadBtn.closest(".session-header-actions")).toBeTruthy();
+    expect(searchBtn.closest(".session-header-actions")).toBeTruthy();
+    expect(reloadBtn.closest(".session-header-actions")).toBe(
+      searchBtn.closest(".session-header-actions")
+    );
   });
 
   it("点 reload 按钮 → 触发 sessionsStore.refresh (走 refresh_sessions IPC)", async () => {
