@@ -329,3 +329,109 @@ describe("SessionSummaryStrip — v0.8.4 item 2' 全读 DB", () => {
     expect(strip.textContent).toMatch(/Bash × 100/);
   });
 });
+
+describe("SessionDetailRoute — reload 按钮 (v0.8.11)", () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+    useSessionsStore.setState({ sessions: [parentMeta], loading: false, error: null });
+  });
+
+  function renderParentRoute() {
+    return render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: "/session/parent-session-id",
+            state: { session: parentMeta },
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  it("render reload 按钮 (data-testid=reload-btn) + 在 header actions 区域", async () => {
+    renderParentRoute();
+    const btn = await screen.findByTestId("reload-btn");
+    expect(btn).toBeInTheDocument();
+    expect(btn.classList.contains("reloading")).toBe(false);
+  });
+
+  it("reload 按钮存在 → 一定在 Search 按钮之前 (DOM order)", async () => {
+    renderParentRoute();
+    const reloadBtn = await screen.findByTestId("reload-btn");
+    const searchBtn = screen.getByTitle(/会话内搜索|搜索/);
+    // reloadBtn DOM 位置应在 searchBtn 之前(因为 reload 在 code 里写在 Search 前)
+    expect(
+      reloadBtn.compareDocumentPosition(searchBtn) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("点 reload 按钮 → 触发 sessionsStore.refresh (走 refresh_sessions IPC)", async () => {
+    const refreshSpy = vi.spyOn(useSessionsStore.getState(), "refresh").mockResolvedValue();
+    renderParentRoute();
+    const btn = await screen.findByTestId("reload-btn");
+    await userEvent.click(btn);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("refresh 后在 sessions 找当前 sid → navigate 用新 meta 触发 useMemo 重派生", async () => {
+    const refreshedMeta: SessionMeta = {
+      ...parentMeta,
+      messageCount: 99, // 模拟后端 sync 后 messageCount 变了
+    };
+    const refreshSpy = vi
+      .spyOn(useSessionsStore.getState(), "refresh")
+      .mockImplementation(async () => {
+        // 模拟 refresh 完后 sessions store 已被更新
+        useSessionsStore.setState({ sessions: [refreshedMeta] });
+      });
+
+    renderParentRoute();
+    const btn = await screen.findByTestId("reload-btn");
+    await userEvent.click(btn);
+
+    await waitFor(() => {
+      expect(refreshSpy).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalled();
+    });
+    // navigate 用 replace=true 触发 useMemo 重新派生 (location.state.session 更新)
+    const [url, options] = mockNavigate.mock.calls[0]!;
+    expect(url).toBe("/session/parent-session-id");
+    expect(options).toMatchObject({ replace: true });
+  });
+
+  it("reload 中按钮 disabled + className 含 reloading", async () => {
+    // 让 refresh 永不 resolve 来观察中间态
+    vi.spyOn(useSessionsStore.getState(), "refresh").mockReturnValue(new Promise(() => {}));
+    renderParentRoute();
+    const btn = await screen.findByTestId("reload-btn");
+    await userEvent.click(btn);
+    // 等 React rerender
+    await waitFor(() => {
+      expect(btn.classList.contains("reloading")).toBe(true);
+    });
+    expect(btn).toBeDisabled();
+  });
+
+  it("正在 reload 时再点 reload 按钮 → 被 reloading 短路,不重复触发", async () => {
+    const refreshSpy = vi
+      .spyOn(useSessionsStore.getState(), "refresh")
+      .mockReturnValue(new Promise(() => {}));
+    renderParentRoute();
+    const btn = await screen.findByTestId("reload-btn");
+    await userEvent.click(btn);
+    await waitFor(() => {
+      expect(btn.classList.contains("reloading")).toBe(true);
+    });
+    await userEvent.click(btn);
+    await userEvent.click(btn);
+    // 只 1 次 (后续被 reloading=true 短路)
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+});

@@ -77,6 +77,26 @@
   opacity: 0.9;
 }
 
+/* v0.8.11: reload 按钮 — spin 动画 + disabled 状态 */
+.session-header-actions button.reloading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.session-header-actions button.reloading .spin,
+.session-header-actions .spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .model-pill {
   background: var(--color-bg-hover);
   padding: 1px 8px;
