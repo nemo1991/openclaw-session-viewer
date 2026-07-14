@@ -10,7 +10,7 @@
  * - data-testid 给 E2E 用
  */
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -27,6 +27,7 @@ import {
   StickyNote,
   X,
   Tag as TagIcon,
+  RefreshCw,
 } from "lucide-react";
 
 import { useTranscriptStore } from "../state/transcriptStore";
@@ -176,6 +177,60 @@ export default function SessionDetailRoute() {
     }
     await apiRevealInFinder(out, null, true);
   };
+
+  // v0.8.11: reload 按钮 — 触发后端 sync + 重读 transcript
+  // 流程: useSessionsStore.refresh() → apiRefreshSessions → 后端 notify sync_loop
+  //       sync_loop 跑完 emit sessions-updated → sessions list 已是最新 → 在 list 里
+  //       找到当前 sid 对应新 meta → reset transcript store + start(jsonlPath) 重解析
+  // 为什么要 reset transcript: transcriptStore.start 第一行有 `if (path === current) return`
+  // 短路,reload 同 path 不重 reset 不会重解析
+  const [reloading, setReloading] = useState(false);
+  const handleReload = useCallback(async () => {
+    if (!meta || reloading) return;
+    setReloading(true);
+    try {
+      await useSessionsStore.getState().refresh();
+      // sessions list 已更新 — 找当前 sid 对应新 meta
+      const refreshed = useSessionsStore
+        .getState()
+        .sessions.find((s) => s.sessionId === meta.sessionId);
+      if (refreshed) {
+        // 用新 meta 替换 location.state 触发 useMemo 重新派生
+        navigate(location.pathname + location.search, {
+          state: { session: refreshed },
+          replace: true,
+        });
+      }
+      // 重解析 transcript (必须先 reset 再 start,start 短路同 path)
+      const currentPath = useTranscriptStore.getState().path;
+      if (currentPath) {
+        useTranscriptStore.getState().reset();
+        await useTranscriptStore.getState().start(currentPath);
+      }
+    } catch (e) {
+      console.error("reload failed", e);
+    } finally {
+      setReloading(false);
+    }
+  }, [meta, reloading, navigate, location.pathname, location.search]);
+
+  // Cmd+R / Ctrl+R 快捷键(同时注册绕过 keymap cmd/ctrl 互斥限制)
+  useKey(
+    "cmd+r",
+    (e) => {
+      e.preventDefault();
+      void handleReload();
+    },
+    [handleReload]
+  );
+  useKey(
+    "ctrl+r",
+    (e) => {
+      e.preventDefault();
+      void handleReload();
+    },
+    [handleReload]
+  );
 
   if (!meta) {
     return (
@@ -477,6 +532,15 @@ export default function SessionDetailRoute() {
           </div>
         </div>
         <div className="session-header-actions">
+          <button
+            onClick={() => void handleReload()}
+            disabled={reloading}
+            className={reloading ? "reloading" : ""}
+            data-testid="reload-btn"
+            title="重新解析 jsonl + 触发后端 sync (Cmd+R)"
+          >
+            <RefreshCw size={14} className={reloading ? "spin" : ""} />
+          </button>
           <button onClick={() => showSearchBar()} title={t("search.inSession")}>
             <Search size={14} />
           </button>
