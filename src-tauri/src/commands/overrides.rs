@@ -749,17 +749,48 @@ pub async fn import_overrides(
             apply_rename(&tx, sid, title, &mode)?;
             count += 1;
         }
+        // v0.8.12 item D: 预计算 Keepboth "fresh sid" 集合 — 行不存在 = 本地无 override
+        // (即"本 import 视为首次写入")。import_overrides 对同一 sid 调 3 次 apply_bool
+        // (hidden/pinned/archived),如果用 apply_bool 内部 SELECT 判 fresh,1st call
+        // INSERT 行后 2nd/3rd call 看见行已存在会跳过 — pinned/archived 永远导不进去。
+        // 必须在 caller 层一次性判定 sid 是不是 fresh,3 次 apply_bool 共享这个判定。
+        let fresh_bool_sids: HashSet<String> = if matches!(mode, ImportMode::Keepboth) {
+            let all_sids: HashSet<String> = exp
+                .hidden
+                .iter()
+                .chain(exp.pinned.iter())
+                .chain(exp.archived.iter())
+                .cloned()
+                .collect();
+            let mut fresh: HashSet<String> = HashSet::new();
+            for sid in &all_sids {
+                let exists: bool = tx
+                    .query_row(
+                        "SELECT 1 FROM session_override WHERE session_id = ?1",
+                        params![sid],
+                        |_| Ok(true),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
+                if !exists {
+                    fresh.insert(sid.clone());
+                }
+            }
+            fresh
+        } else {
+            HashSet::new()
+        };
         // hidden / pinned / archived
         for sid in &exp.hidden {
-            apply_bool(&tx, sid, "hidden", true, &mode)?;
+            apply_bool(&tx, sid, "hidden", true, &mode, &fresh_bool_sids)?;
             count += 1;
         }
         for sid in &exp.pinned {
-            apply_bool(&tx, sid, "pinned", true, &mode)?;
+            apply_bool(&tx, sid, "pinned", true, &mode, &fresh_bool_sids)?;
             count += 1;
         }
         for sid in &exp.archived {
-            apply_bool(&tx, sid, "archived", true, &mode)?;
+            apply_bool(&tx, sid, "archived", true, &mode, &fresh_bool_sids)?;
             count += 1;
         }
         // notes
@@ -846,25 +877,52 @@ fn apply_bool(
     field: &str,
     val: bool,
     mode: &ImportMode,
+    fresh_bool_sids: &HashSet<String>,
 ) -> AppResult<()> {
     let now = now_ms();
-    upsert_override_field(c, sid, None, None, now)?;
     let n: i64 = if val { 1 } else { 0 };
-    // v0.8.1: 此前 _mode 被无视,Keepboth 也会覆盖 hidden/pinned/archived。
-    // Keepboth 语义:"本地无显式 override 时采纳导入值"; 显式定义为本行 NULL
-    // (未在该字段上 write 过)。
-    let sql = match mode {
-        ImportMode::Keepboth => format!(
-            "UPDATE session_override SET {} = ?2, updated_at = ?3
-             WHERE session_id = ?1 AND {} IS NULL",
-            field, field
-        ),
-        ImportMode::Overwrite | ImportMode::Merge => format!(
-            "UPDATE session_override SET {} = ?2, updated_at = ?3 WHERE session_id = ?1",
-            field
-        ),
-    };
-    c.execute(&sql, params![sid, n, now])?;
+    // v0.8.12 item D: 修复 Keepboth bug。
+    // 旧代码: Keepboth 用 `WHERE field IS NULL` 判定"未显式 override",但
+    // schema `hidden/pinned/archived INTEGER NOT NULL DEFAULT 0` 让字段永不为 NULL,
+    // 条件永远 false,Keepboth 模式实际不导 hidden/pinned/archived。
+    // display_title/notes 没这问题因为那俩字段是 nullable (`apply_rename`/`apply_notes`
+    // 用 `IS NOT NULL` 单独判断 OK)。
+    //
+    // 新语义: Keepboth 走"行 sentinel" — caller 预计算 sid 是否在 fresh 集合
+    // (即"本 import 时本地无 override 行"),在集合里 → INSERT 占位行 + UPDATE 该字段;
+    // 不在集合里 → 跳过(本地已有 override)。这样同一 sid 多次 apply_bool 调用
+    // 都能正确处理(都基于 caller 的预判,不会被 1st call INSERT 的行骗到)。
+    // Overwrite/Merge 仍走 `upsert_override_field` + UPDATE 全覆盖,不看 fresh。
+    match mode {
+        ImportMode::Keepboth => {
+            if !fresh_bool_sids.contains(sid) {
+                // 已有 override 行(任意字段写过都算)→ Keepboth 跳过
+                return Ok(());
+            }
+            // 创 session_meta placeholder (FK 约束)
+            upsert_override_field(c, sid, None, None, now)?;
+            // 创 session_override 占位行 (INSERT OR IGNORE 防止 caller 误判
+            // 导致的二次 INSERT — 防御性,理论上 caller 预判已保证行不存在)
+            c.execute(
+                "INSERT OR IGNORE INTO session_override (session_id, updated_at) VALUES (?1, ?2)",
+                params![sid, now],
+            )?;
+            // UPDATE 该 bool 字段
+            let sql = format!(
+                "UPDATE session_override SET {} = ?2, updated_at = ?3 WHERE session_id = ?1",
+                field
+            );
+            c.execute(&sql, params![sid, n, now])?;
+        }
+        ImportMode::Overwrite | ImportMode::Merge => {
+            upsert_override_field(c, sid, None, None, now)?;
+            let sql = format!(
+                "UPDATE session_override SET {} = ?2, updated_at = ?3 WHERE session_id = ?1",
+                field
+            );
+            c.execute(&sql, params![sid, n, now])?;
+        }
+    }
     Ok(())
 }
 
@@ -1364,6 +1422,224 @@ mod tests {
             created_at, ts_first,
             "created_at 必须保留 first import 的值 ({ts_first}),不是 second ({ts_second}) — \
              这是 import_overrides ON CONFLICT 修复的契约"
+        );
+    }
+
+    // ===== v0.8.12 item D: apply_bool Keepboth bool 字段修复回归测试 =====
+    //
+    // Bug: 旧 `apply_bool` Keepboth 模式用 `WHERE field IS NULL` 判定未显式 override,
+    // 但 schema `hidden/pinned/archived INTEGER NOT NULL DEFAULT 0` 让字段永不为 NULL,
+    // 条件永远 false,Keepboth 模式不导 bool 字段。
+    // Fix: Keepboth 改 `INSERT ... DO NOTHING` (行存在 = 本地有 override = 跳过)。
+
+    #[test]
+    fn apply_bool_keepboth_imports_into_fresh_override() {
+        // v0.8.12 item D: fresh DB + Keepboth — hidden/pinned/archived 应被导入
+        let (_tmp, pool) = fresh_db();
+        // v0.8.12: Keepboth 路径下 apply_bool 不调 upsert_override_field,
+        // 所以不会自动占位 session_meta 行,这里要手动建 (FK 约束)
+        pool.with(|c| {
+            placeholder_session(c, "sess-fresh");
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+        pool.with(|c| {
+            // v0.8.12 item D: caller 预计算 fresh_sids — fresh DB 无 override 行,
+            // sess-fresh 算 fresh,3 次 apply_bool 都会写
+            let fresh = HashSet::from(["sess-fresh".to_string()]);
+            apply_bool(
+                c,
+                "sess-fresh",
+                "hidden",
+                true,
+                &ImportMode::Keepboth,
+                &fresh,
+            )?;
+            apply_bool(
+                c,
+                "sess-fresh",
+                "pinned",
+                true,
+                &ImportMode::Keepboth,
+                &fresh,
+            )?;
+            apply_bool(
+                c,
+                "sess-fresh",
+                "archived",
+                true,
+                &ImportMode::Keepboth,
+                &fresh,
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        // 3 个 bool 字段都应是 1 (导入成功)
+        let (hidden, pinned, archived): (bool, bool, bool) = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT hidden, pinned, archived FROM session_override WHERE session_id = 'sess-fresh'",
+                    [],
+                    |r| {
+                        Ok((
+                            r.get::<_, i64>(0)? != 0,
+                            r.get::<_, i64>(1)? != 0,
+                            r.get::<_, i64>(2)? != 0,
+                        ))
+                    },
+                )?)
+            })
+            .unwrap();
+        assert!(hidden, "Keepboth 必须导入 hidden=true 到 fresh DB");
+        assert!(pinned, "Keepboth 必须导入 pinned=true 到 fresh DB");
+        assert!(archived, "Keepboth 必须导入 archived=true 到 fresh DB");
+    }
+
+    #[test]
+    fn apply_bool_keepboth_skips_existing_override() {
+        // v0.8.12 item D: 已存在 override 行 + Keepboth — 本地 bool 必须保留
+        let (_tmp, pool) = fresh_db();
+        // 1) 占位 row (apply_rename 触发)
+        pool.with(|c| {
+            apply_rename(c, "sess-existing", "Local Title", &ImportMode::Overwrite)?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+        // 2) 本地 hidden 已经是 true
+        pool.with(|c| {
+            apply_bool(
+                c,
+                "sess-existing",
+                "hidden",
+                true,
+                &ImportMode::Overwrite,
+                &HashSet::new(),
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+        // 3) 导入 hidden=false (Keepboth) — 应被忽略,本地 hidden=true 保留
+        //    sess-existing 已有 override 行,fresh 集合不含它 → 跳过
+        pool.with(|c| {
+            let fresh = HashSet::new(); // sess-existing 不在 fresh 里
+            apply_bool(
+                c,
+                "sess-existing",
+                "hidden",
+                false,
+                &ImportMode::Keepboth,
+                &fresh,
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        let (hidden, display_title): (bool, Option<String>) = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT hidden, display_title FROM session_override WHERE session_id = 'sess-existing'",
+                    [],
+                    |r| Ok((r.get::<_, i64>(0)? != 0, r.get(1)?)),
+                )?)
+            })
+            .unwrap();
+        assert!(
+            hidden,
+            "Keepboth 必须跳过已存在 override 行,本地 hidden=true 保留 (实际={hidden})"
+        );
+        assert_eq!(
+            display_title.as_deref(),
+            Some("Local Title"),
+            "display_title 也不应被 Keepboth 覆盖"
+        );
+    }
+
+    #[test]
+    fn apply_bool_overwrite_imports_all_three_bools() {
+        // v0.8.12 item D: Overwrite 模式 — hidden/pinned/archived 全部 UPDATE,无 NULL 漏
+        let (_tmp, pool) = fresh_db();
+        // 占位 row
+        pool.with(|c| {
+            placeholder_session(c, "sess-ow");
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+        // Overwrite hidden=true
+        pool.with(|c| {
+            // Overwrite/Merge 模式不看 fresh 集合,传空即可
+            apply_bool(
+                c,
+                "sess-ow",
+                "hidden",
+                true,
+                &ImportMode::Overwrite,
+                &HashSet::new(),
+            )?;
+            apply_bool(
+                c,
+                "sess-ow",
+                "pinned",
+                true,
+                &ImportMode::Overwrite,
+                &HashSet::new(),
+            )?;
+            apply_bool(
+                c,
+                "sess-ow",
+                "archived",
+                true,
+                &ImportMode::Overwrite,
+                &HashSet::new(),
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+
+        let (hidden, pinned, archived): (bool, bool, bool) = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT hidden, pinned, archived FROM session_override WHERE session_id = 'sess-ow'",
+                    [],
+                    |r| {
+                        Ok((
+                            r.get::<_, i64>(0)? != 0,
+                            r.get::<_, i64>(1)? != 0,
+                            r.get::<_, i64>(2)? != 0,
+                        ))
+                    },
+                )?)
+            })
+            .unwrap();
+        assert!(hidden);
+        assert!(pinned);
+        assert!(archived);
+
+        // 再 Overwrite 一次 hidden=false — 必须真的更新 (不是被 IS NULL 漏掉)
+        pool.with(|c| {
+            apply_bool(
+                c,
+                "sess-ow",
+                "hidden",
+                false,
+                &ImportMode::Overwrite,
+                &HashSet::new(),
+            )?;
+            Ok::<_, AppError>(())
+        })
+        .unwrap();
+        let hidden_after: bool = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT hidden FROM session_override WHERE session_id = 'sess-ow'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )? != 0)
+            })
+            .unwrap();
+        assert!(
+            !hidden_after,
+            "Overwrite 必须能翻 hidden=true → false (这是 v0.8.12 item D 修的同条 bug)"
         );
     }
 }
