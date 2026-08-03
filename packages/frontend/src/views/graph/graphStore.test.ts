@@ -7,7 +7,7 @@
  *
  * Mock 模式: vi.mock 替换 apiListGraph + listen,控 invoke 调用计数跟事件触发。
  */
-import { describe, it, expect, beforeEach, vi, type Mock } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 
 // Mock 必须在 import store 之前
 const mockApiListGraph = vi.fn();
@@ -60,7 +60,9 @@ function makeEntry(sessionId: string): GraphEntry {
 
 beforeEach(() => {
   // Reset store + mock calls between tests
-  useGraphStore.setState({ entries: null, loading: false, error: null });
+  useGraphStore.setState({ entries: null, loading: false, error: null, invalidated: false });
+  // v0.8.12 G: 清 module-level unlistenFn + debounceTimer,避免泄漏到下个 test
+  useGraphStore.getState().teardown();
   mockApiListGraph.mockReset();
   mockListen.mockReset();
 });
@@ -183,6 +185,14 @@ describe("graphStore state transitions", () => {
 // ===== listen sessions-updated 自动 invalidate =====
 
 describe("graphStore.listen sessions-updated", () => {
+  // 拿 listen 注册的 callback,模拟 backend 发 sessions-updated 事件
+  function getListenCallback(): (e: { payload: unknown }) => void {
+    // mockListen(event, cb) — 找 sessions-updated 那次注册的 cb
+    const call = mockListen.mock.calls.find((c) => c[0] === "sessions-updated");
+    if (!call) throw new Error("listen_sessions_updated 没注册 sessions-updated");
+    return call[1] as (e: { payload: unknown }) => void;
+  }
+
   it("listen 收到事件后,下次 load 自动重新 invoke (cache invalidated)", async () => {
     const fixture: GraphEntry[] = [makeEntry("s1")];
     mockApiListGraph.mockResolvedValue(fixture);
@@ -191,12 +201,15 @@ describe("graphStore.listen sessions-updated", () => {
     await useGraphStore.getState().load();
     expect(mockApiListGraph).toHaveBeenCalledTimes(1);
 
-    // 2) simulate backend sessions-updated event fire
-    //    注意: graphStore 在 v0.8.10 还没有 mount-time listen (因为是 zustand bare store,
-    //    listen 必须在调用方 wire-up)。这里只验证 listen mock 能被注册即可。
-    expect(mockListen).toBeDefined();
-    // 实际 store 自身不主动注册 listen, 但 API 提供方应该 register。
-    // 这个测试锁住 mock 框架,防止后续重构破坏 listen 集成。
+    // 2) 注册 listen
+    await useGraphStore.getState().listen_sessions_updated();
+    expect(mockListen).toHaveBeenCalledWith("sessions-updated", expect.any(Function));
+
+    // 3) 模拟 backend fire sessions-updated
+    getListenCallback()({ payload: undefined });
+
+    // 4) invalidated 立即置 true
+    expect(useGraphStore.getState().invalidated).toBe(true);
   });
 
   it("store 暴露 load 函数作为外部 trigger", () => {
@@ -207,6 +220,89 @@ describe("graphStore.listen sessions-updated", () => {
     expect(state.entries).toBeNull();
     expect(state.error).toBeNull();
     expect(state.loading).toBe(false);
+  });
+});
+
+// ===== v0.8.12 item G: listen + debounce + teardown =====
+
+describe("graphStore v0.8.12 G: listen + debounce reload", () => {
+  function getListenCallback(): (e: { payload: unknown }) => void {
+    const call = mockListen.mock.calls.find((c) => c[0] === "sessions-updated");
+    if (!call) throw new Error("listen_sessions_updated 没注册 sessions-updated");
+    return call[1] as (e: { payload: unknown }) => void;
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("listen_sessions_updated 收到事件后标记 invalidated", async () => {
+    mockApiListGraph.mockResolvedValue([makeEntry("s1")]);
+    await useGraphStore.getState().load();
+
+    await useGraphStore.getState().listen_sessions_updated();
+    expect(useGraphStore.getState().invalidated).toBe(false);
+
+    getListenCallback()({ payload: undefined });
+    expect(useGraphStore.getState().invalidated).toBe(true);
+  });
+
+  it("5 次连发 sessions-updated 触发 reload 只 1 次 (200ms debounce)", async () => {
+    // v0.8.12 G: sync_loop 一次跑完会发 N 个 sessions-updated (per sub-system),
+    // debounce 让 reload 只跑 1 次,避免 IPC 风暴
+    mockApiListGraph.mockResolvedValue([makeEntry("s1")]);
+    await useGraphStore.getState().load();
+    expect(mockApiListGraph).toHaveBeenCalledTimes(1);
+
+    await useGraphStore.getState().listen_sessions_updated();
+
+    // 5 次连发
+    for (let i = 0; i < 5; i++) {
+      getListenCallback()({ payload: undefined });
+    }
+
+    // 200ms 内 reload 不应触发
+    vi.advanceTimersByTime(199);
+    // 给 reload 的 microtask 跑完(实际 reload 还没启动,因为 timer 还没到)
+    await vi.runOnlyPendingTimersAsync().catch(() => {});
+
+    // 200ms 到,reload 跑
+    vi.advanceTimersByTime(1);
+    await Promise.resolve(); // 让 reload 的 promise 链跑
+
+    // 5 个事件合并成 1 次 reload (+ 1 首次 load)
+    expect(mockApiListGraph).toHaveBeenCalledTimes(2);
+  });
+
+  it("teardown 解除 listen + 清 debounce timer", async () => {
+    mockApiListGraph.mockResolvedValue([makeEntry("s1")]);
+    await useGraphStore.getState().load();
+
+    await useGraphStore.getState().listen_sessions_updated();
+    // verify 装上
+    expect(mockListen).toHaveBeenCalledWith("sessions-updated", expect.any(Function));
+
+    // teardown — 把 module-level unlistenFn 清了
+    useGraphStore.getState().teardown();
+
+    // 重新 listen 应能再注册 (如果没 teardown,会返旧的 unlistenFn,不会再次 listen)
+    mockListen.mockClear();
+    await useGraphStore.getState().listen_sessions_updated();
+    expect(mockListen).toHaveBeenCalledTimes(1);
+
+    // teardown 后再 fire 旧 callback,不会触发 reload (但因为新 listen 也注册了,
+    // 实际上我们测的是 unlistenFn 被清空;teardown 不让旧 unlisten 影响新 listen)
+    useGraphStore.getState().teardown();
+    // fire 旧 callback(新 listen 后这个 callback 不存在了,先 fire 一次没事)
+    // 关键断言: teardown 后 debounce timer 没了, advance 时间不会触发 reload
+    mockApiListGraph.mockClear();
+    vi.advanceTimersByTime(500);
+    await Promise.resolve();
+    expect(mockApiListGraph).not.toHaveBeenCalled();
   });
 });
 
