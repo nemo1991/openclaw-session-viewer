@@ -212,13 +212,19 @@ fn upsert_override_field_inner<'a, 'b>(
     };
 
     if !exists {
-        // 占位 row(防止 FK 失败)
+        // v0.8.12: 占位 row 用 `(unknown):{sid}` 编码路径,避开 session_meta.jsonl_path
+        // UNIQUE 约束冲突(schema.rs:36) — 之前所有 placeholder 都写同一个 `(unknown)`,
+        // 第二个未同步 sid 的 placeholder 被 INSERT OR IGNORE 静默吞,session_override FK 失败。
+        // 真实 sync 走完后 upsert_session_meta ON CONFLICT(session_id) 会把占位行 upgrade 成
+        // 真实 jsonl_path。orphan sweep (sync.rs:188) 的 NOT IN 子查询仍能识别
+        // `(unknown):{sid}` — 永远不在磁盘 jsonl path 集合里,会被 sweep 清掉。
+        let placeholder_path = format!("(unknown):{sid}");
         let placeholder_sql = "INSERT OR IGNORE INTO session_meta
                (session_id, project_key, source, jsonl_path, size_bytes, mtime_ms, line_count, synced_at)
-             VALUES (?1, '(unknown)', 'claude', '(unknown)', 0, 0, 0, ?2)";
+             VALUES (?1, '(unknown)', 'claude', ?2, 0, 0, 0, ?3)";
         match any {
-            AnyTx::Conn(c) => c.execute(placeholder_sql, params![sid, now])?,
-            AnyTx::Tx(tx) => tx.execute(placeholder_sql, params![sid, now])?,
+            AnyTx::Conn(c) => c.execute(placeholder_sql, params![sid, placeholder_path, now])?,
+            AnyTx::Tx(tx) => tx.execute(placeholder_sql, params![sid, placeholder_path, now])?,
         };
     }
 
@@ -1164,6 +1170,88 @@ mod tests {
             })
             .unwrap();
         assert!(exists);
+    }
+
+    // ===== v0.8.12 item A: placeholder `(unknown):{sid}` 编码路径回归测试 =====
+    //
+    // Bug: 之前所有 placeholder 共享 `jsonl_path='(unknown)'`,session_meta.jsonl_path
+    // UNIQUE 约束让第二个 placeholder 被 INSERT OR IGNORE 静默吞,FK 失败抛错。
+    // Fix: placeholder 用 `(unknown):{sid}` 编码路径,每行 unique。
+
+    #[test]
+    fn multiple_unknown_sessions_create_distinct_placeholders() {
+        let (_tmp, pool) = fresh_db();
+        // 3 个 placeholder sid 各自 upsert override,不应有 UNIQUE 冲突
+        let sids = ["ghost-1", "ghost-2", "ghost-3"];
+        for sid in sids {
+            pool.with(|c| {
+                upsert_override_field(
+                    c,
+                    sid,
+                    Some("display_title = excluded.display_title"),
+                    Some(format!("Title for {sid}")),
+                    now_ms(),
+                )
+            })
+            .unwrap();
+        }
+        // 验证: 3 个 placeholder 行都在 session_meta,3 个 override 行都在 session_override
+        let (meta_count, override_count, distinct_paths): (i64, i64, i64) = pool
+            .with(|c| {
+                let m: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM session_meta WHERE session_id IN ('ghost-1','ghost-2','ghost-3')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let o: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM session_override WHERE session_id IN ('ghost-1','ghost-2','ghost-3')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let p: i64 = c.query_row(
+                    "SELECT COUNT(DISTINCT jsonl_path) FROM session_meta
+                     WHERE session_id IN ('ghost-1','ghost-2','ghost-3')",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok((m, o, p))
+            })
+            .unwrap();
+        assert_eq!(meta_count, 3, "3 个 placeholder 行都应在 session_meta");
+        assert_eq!(override_count, 3, "3 个 override 行 FK 都不应失败");
+        assert_eq!(
+            distinct_paths, 3,
+            "3 个 placeholder jsonl_path 必须 distinct(否则 UNIQUE 冲突)"
+        );
+    }
+
+    #[test]
+    fn placeholder_uses_sid_encoded_jsonl_path() {
+        let (_tmp, pool) = fresh_db();
+        pool.with(|c| {
+            upsert_override_field(
+                c,
+                "ghost-x",
+                Some("hidden = excluded.hidden"),
+                Some("1".into()),
+                now_ms(),
+            )
+        })
+        .unwrap();
+        // 占位行 jsonl_path 必须是 `(unknown):{sid}` 编码路径,不是裸 `(unknown)`
+        let path: String = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT jsonl_path FROM session_meta WHERE session_id = 'ghost-x'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(
+            path, "(unknown):ghost-x",
+            "placeholder 必须用 sid 编码路径避开 UNIQUE"
+        );
     }
 
     // ===== v0.8.9: add_session_link ON CONFLICT 回归测试 =====
