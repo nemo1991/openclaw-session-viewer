@@ -2,6 +2,147 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.12] - 2026-08-03
+
+v0.8.11 重点是详情页 reload。v0.8.12 主题是 **Critical bug 收口** —
+一次调研确认了 4 个真实数据丢失/静默失败类 bug + 2 个 test gap + 1 个
+Graph/Analytics UX 缺陷,一次性修掉。
+
+### 修复
+
+#### 1. placeholder `(unknown)` UNIQUE 冲突 (item A)
+
+`commands/overrides.rs::upsert_override_field_inner` 用 `INSERT OR IGNORE
+INTO session_meta VALUES (..., '(unknown)', ...)` 写 placeholder,
+但 `session_meta.jsonl_path` 有 `UNIQUE` 约束(schema.rs:36)。
+
+第二个未同步 session 的 rename / tag / import 会因 `INSERT OR IGNORE` 静默吞
+而 FK 失败,稳定抛错。
+
+**修复**: placeholder 用 `'(unknown):{sid}'` 编码路径,绕过 UNIQUE 冲突,
+sync 走完后真实 sync_one_file 时 `upsert_session_meta ON CONFLICT(session_id)`
+把 placeholder 行升级成真实 jsonl_path。
+
+**回归测试**: `multiple_unknown_sessions_create_distinct_placeholders` 锁 3 个
+placeholder sid 都成功,`placeholder_uses_sid_encoded_jsonl_path` 锁 placeholder
+路径格式。
+
+#### 2. orphan sweep 空 seen_paths 直接 return → 永久残留 (item B)
+
+`sync.rs:182` 旧实现 `if placeholders.is_empty() { return Ok(0); }` —
+用户删完磁盘所有 jsonl 后,`seen_paths` 是空,sweep 早退,旧 session_meta
+行永远残留(stale-list bug)。
+
+**修复**: 空 seen_paths 改成"删除所有无 override 的 session_meta 行"
+(NOT EXISTS 子查询保留 placeholder)。
+
+**回归测试**: `sweep_removes_rows_when_no_files_remain` 锁空 seen_paths
+清理,`sweep_preserves_overridden_placeholders` 锁 placeholder 保留,
+`sweep_with_files_keeps_rows_whose_path_in_seen` 锁非空 seen_paths 行为。
+
+#### 3. CRITICAL: DbPool reader fallback 写空 DB (item C)
+
+`db/mod.rs::build_pool` 在所有 reader open 失败时,把真实 writer 推进 readers
+数组,`writer` 字段用全新 `Connection::open_in_memory()`(独立空 DB)。
+
+后果: `with_write` 落 mutation 到空 DB → `no such table: session_meta`;
+`with_read` 走 readers 拿真实 writer 但 INSERT/UPDATE 不持久化。
+注释说"退化到单 connection",但实际行为不符 — 极罕见(磁盘满/fd 耗尽)
+但生产环境可能触发。
+
+**修复**: 重构 DbPool 内部为 `PoolBackend` enum (Pool / Fallback)。
+Fallback 模式下 reader/writer 共享同一个 `Arc<Mutex<Connection>>`,
+读写互锁但功能正常(跟 v0.8.6 单 Mutex 时代等价)。
+
+**回归测试**: `fallback_writer_receives_writes` 锁 fallback 路径下
+write/read roundtrip 可见,`fallback_shared_between_reader_writer` 锁
+write 持锁期间 read 阻塞(连接共享)。
+
+#### 4. Keepboth bool `IS NULL` 永远 false (item D)
+
+`commands/overrides.rs::apply_bool` Keepboth 模式用 `WHERE field IS NULL`
+判定"未显式 override",但 schema `hidden/pinned/archived NOT NULL DEFAULT 0`
+让字段永不为 NULL。
+
+后果: Keepboth 模式 import 永远不会导入 hidden/pinned/archived,只有
+display_title/notes 能导入。v0.8.1 注释自相矛盾("显式定义为本行 NULL")
+但 schema 没配套改。
+
+**修复**: Keepboth 改"行存在性"sentinel — caller 预计算 sid 是否在 fresh
+集合(本地无 session_override 行 = fresh),fresh 的 sid → INSERT 占位行 +
+UPDATE 该字段;非 fresh → 跳过(本地任意字段写过都视为有 override)。
+Overwrite/Merge 仍走 `upsert_override_field` + UPDATE 全覆盖。
+
+**为什么 caller 预计算**: import_overrides 对同一 sid 调 3 次 apply_bool
+(hidden/pinned/archived),如果 apply_bool 内部 SELECT 判 fresh,1st call
+INSERT 行后 2nd/3rd 看见行已存在会跳过 — pinned/archived 永远导不进去。
+caller 一次性判定 sid 是不是 fresh,3 次 apply_bool 共享这个判定。
+
+**回归测试**: `apply_bool_keepboth_imports_into_fresh_override` 锁 fresh
+DB 3 个 bool 全导入,`apply_bool_keepboth_skips_existing_override` 锁
+已有 override 行不被覆盖,`apply_bool_overwrite_imports_all_three_bools`
+锁 Overwrite 路径 + 翻值。
+
+### 测试
+
+#### 5. commands/tool_stats.rs 新建测试 (item E)
+
+`get_tool_aggregate` / `get_tool_sessions` / `rebuild_tool_stats` 共 10 测试:
+
+- aggregate 3 种排序(default/sessions/errors)
+- limit cap、error_rate 计算、empty table
+- tool_sessions 调用次数排序 + limit
+- rebuild_tool_stats 写入 tool_global_stats
+
+副带把 `r.get(N)` 手数索引改成按 name 读 + SELECT 加 alias(v0.8.10 D 同款
+hardening)。
+
+#### 6. db/sync.rs handler 测试 (item F)
+
+`sync_once` / `sync_one_file` / `rebuild_db` 共 5 端到端测试 (计划 10,先
+核心 5 个):
+
+- `sync_once_with_files_inserts_session_meta_rows` — 2 fixture → 2 行
+- `sync_once_with_no_files_clears_all_session_meta` — Item B 集成版
+- `sync_once_failed_files_skips_sweep` — failed > 0 failsafe
+- `sync_once_emits_progress_and_sessions_updated_events` — RecordingSink
+- `rebuild_db_clears_and_resyncs` — DELETE + 重 sync roundtrip
+
+**关键架构改动**: 抽 `EventSink` trait (`pub(crate)`)
+
+- `AppHandleSink` — 公开 API 用的 wrapper
+- `RecordingSink` — 测试用,捕获所有 emit
+- `sync_once` 拆成 `sync_once_with_sink(state, &dyn EventSink)` + 公开 wrapper
+- `emit_progress` 改走 sink
+- 公开 API 不变,生产代码零调用改动
+
+#### 7. graphStore 监听 sessions-updated 自动 invalidate (item G)
+
+`graphStore` 加 `listen_sessions_updated()` — mount 时调一次,内部注册
+Tauri `listen("sessions-updated")`,事件触发 set `invalidated=true`,
+200ms debounce 后 reload (合并多次事件为 1 次 reload,避免 IPC 风暴)。
+`teardown()` 解除 listen + 清 debounce timer,component unmount 时调,
+避免 listener/timer 泄漏。
+
+singleton 模式 (module-level `unlistenFn`) — 多个 G1/G2/G3 mount 共享同一
+listen 句柄,防重复 register。
+
+3 测试:
+
+- `listen_sessions_updated 收到事件后标记 invalidated`
+- `5 次连发 sessions-updated 触发 reload 只 1 次 (200ms debounce)`
+- `teardown 解除 listen + 清 debounce timer`
+
+### 验证
+
+```
+cargo test --lib           # 192 → 217 (+25)
+pnpm -r test --run         # 556 → 559 (+3)
+cargo clippy --all-targets -- -D warnings   # clean
+cargo fmt -- --check       # clean
+pnpm typecheck             # clean
+```
+
 ## [0.8.11] - 2026-07-14
 
 详情页加 **reload** 按钮 — 用户在外部修改了 jsonl / 想看后端最新 sync 后派生指标
