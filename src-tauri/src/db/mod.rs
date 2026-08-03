@@ -35,16 +35,32 @@ use crate::error::{AppError, AppResult};
 ///
 /// 持有 1 个 writer (串行化所有 mutation) + N 个 reader (round-robin 分发,
 /// 互不阻塞). SQLite WAL 模式下, 多 reader 跟 1 writer 可同时跑.
+///
+/// v0.8.12 item C: 内部用 `PoolBackend` enum 区分两个实现:
+/// - `Pool` 模式 — 正常 1 writer + N readers
+/// - `Fallback` 模式 — 所有 reader open 失败时,共享单个 `Arc<Mutex<Connection>>`,
+///   writer 跟 reader 互锁但功能正常(读写都到同一 connection)
+///
+/// 之前的"退化到单 connection"注释跟实际行为不符(实际把 in-memory 空 DB 当 writer,
+/// mutation 全失败) — 现在 PoolBackend enum 让 fallback 真正可用。
 #[derive(Clone)]
 pub struct DbPool {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) readers: Arc<Vec<Mutex<Connection>>>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) writer: Arc<Mutex<Connection>>,
-    /// round-robin 下次选哪个 reader
-    next_reader: Arc<AtomicUsize>,
+    backend: PoolBackend,
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) path: PathBuf,
+}
+
+#[derive(Clone)]
+enum PoolBackend {
+    /// 1 writer + N readers
+    Pool {
+        readers: Arc<Vec<Mutex<Connection>>>,
+        writer: Arc<Mutex<Connection>>,
+        next_reader: Arc<AtomicUsize>,
+    },
+    /// v0.8.12 item C: 所有 reader open 失败,共享单 connection
+    /// (writer 跟 reader 是同一个 Arc<Mutex<Connection>>)
+    Fallback { single: Arc<Mutex<Connection>> },
 }
 
 impl DbPool {
@@ -56,12 +72,24 @@ impl DbPool {
     ///
     /// 用法: `pool.with_read(|c| schema::list_all_joined(c))`
     pub fn with_read<R>(&self, f: impl FnOnce(&Connection) -> AppResult<R>) -> AppResult<R> {
-        debug_assert!(!self.readers.is_empty(), "DbPool has no readers");
-        let n = self.readers.len();
-        // Relaxed 即可: 不需要 happens-before 同步, 只为分散负载
-        let idx = self.next_reader.fetch_add(1, Ordering::Relaxed) % n;
-        let guard = self.readers[idx].lock();
-        f(&guard)
+        match &self.backend {
+            PoolBackend::Pool {
+                readers,
+                next_reader,
+                ..
+            } => {
+                debug_assert!(!readers.is_empty(), "DbPool::Pool has no readers");
+                let n = readers.len();
+                let idx = next_reader.fetch_add(1, Ordering::Relaxed) % n;
+                let guard = readers[idx].lock();
+                f(&guard)
+            }
+            PoolBackend::Fallback { single } => {
+                // v0.8.12: Fallback 路径下读也走同一 connection(被 writer 排他锁阻塞)
+                let guard = single.lock();
+                f(&guard)
+            }
+        }
     }
 
     /// 排他访问 — 写操作 / 事务用, 阻塞所有 reader + 其它 writer
@@ -70,21 +98,49 @@ impl DbPool {
     ///
     /// 用法: `pool.with_write(|c| { c.execute(...)?; ... })`
     pub fn with_write<R>(&self, f: impl FnOnce(&mut Connection) -> AppResult<R>) -> AppResult<R> {
-        let mut guard = self.writer.lock();
-        f(&mut guard)
+        match &self.backend {
+            PoolBackend::Pool { writer, .. } => {
+                let mut guard = writer.lock();
+                f(&mut guard)
+            }
+            PoolBackend::Fallback { single } => {
+                let mut guard = single.lock();
+                f(&mut guard)
+            }
+        }
     }
 
     /// 兼容 alias: 行为等同于 `with_write` (走 writer 排他锁).
     /// 老调用 `pool.with(|c| ...)` 不动也能编译运行.
     /// 新代码请优先用 `with_read` / `with_write` 显式声明读写意图.
     pub fn with<R>(&self, f: impl FnOnce(&mut Connection) -> AppResult<R>) -> AppResult<R> {
-        let mut guard = self.writer.lock();
-        f(&mut guard)
+        self.with_write(f)
     }
 
     /// DB 文件路径(用于 SettingsRoute 展示)
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// v0.8.7 C: 内部测试 helper — 返回当前 backend 的 reader 数(Pool 模式)
+    /// 或 1(Fallback 模式,共享单 connection)。原 `pool_tests::pool_has_four_readers_by_default`
+    /// 锁住默认 4 readers,改这里之前必须 review G1+G2+lists+HomeStatusBar 同时加载的需求。
+    #[cfg(test)]
+    pub(crate) fn reader_count(&self) -> usize {
+        match &self.backend {
+            PoolBackend::Pool { readers, .. } => readers.len(),
+            PoolBackend::Fallback { .. } => 1,
+        }
+    }
+
+    /// v0.8.7 C: 内部测试 helper — round-robin 计数 (Pool 模式), 验证 fetch_add 累加
+    /// 行为正确。Fallback 模式没有 counter, 永远返 0。
+    #[cfg(test)]
+    pub(crate) fn next_reader_value(&self) -> usize {
+        match &self.backend {
+            PoolBackend::Pool { next_reader, .. } => next_reader.load(Ordering::Relaxed),
+            PoolBackend::Fallback { .. } => 0,
+        }
     }
 }
 
@@ -157,6 +213,12 @@ fn apply_pragmas(conn: &Connection) -> AppResult<()> {
 }
 
 /// v0.8.7 C: 把单个 connection 拆成 1 writer + N readers, 组装 DbPool
+///
+/// v0.8.12 item C: 重构为 `PoolBackend` enum 区分正常 Pool 跟 Fallback。
+/// 所有 reader open 失败时,Fall back 到 `single` 共享同一 `Arc<Mutex<Connection>>`,
+/// reader/writer 都走这一把锁,功能正常(读写互锁,跟 v0.8.6 单 Mutex 等价)。
+/// 之前实现把真实 writer 推进 readers 数组、`writer` 字段用全新 in-memory 空 DB,
+/// mutation 落空 DB → `no such table` → 数据丢失。
 fn build_pool(writer: Connection, db_path: PathBuf) -> DbPool {
     // 经验值: 多于典型并发数 (G1 GraphView + G2 Analytics 同时加载
     // + sessions list + HomeStatusBar 等并发读, 4 足够 cover)
@@ -174,27 +236,21 @@ fn build_pool(writer: Connection, db_path: PathBuf) -> DbPool {
         }
     }
     if readers.is_empty() {
-        // v0.8.8: 兜底改为真退化 — 把 writer 移进 readers 数组,占位 writer 用 :memory:
-        // (永不写)。之前注释说"退化到单 connection"但实际 panic,跟 v0.8.6 时代单 Mutex
-        // 行为不一致。改成真退化后行为 = v0.8.6 单 Mutex,所有读写互锁但功能正常。
-        // (极罕见: 磁盘满 / fd 耗尽时 writer 能开但 reader 全失败才会触发)
-        log::warn!("DbPool 无可用 reader — 退化到单 connection (writer 兼 reader,所有访问互锁)");
-        readers.push(Mutex::new(writer));
-        let placeholder = match Connection::open_in_memory() {
-            Ok(c) => c,
-            Err(e) => panic!("DbPool fallback in-memory open failed: {e}"),
-        };
+        // v0.8.12 item C: Fallback 路径 — 共享同一个 Arc<Mutex<Connection>>
+        // (writer 跟 reader 同一把锁,读写互锁但功能正常 — 跟 v0.8.6 单 Mutex 时代等价)
+        log::warn!("DbPool 无可用 reader — Fallback 到单 connection (writer 兼 reader,读写互锁)");
+        let shared = Arc::new(Mutex::new(writer));
         return DbPool {
-            readers: Arc::new(readers),
-            writer: Arc::new(Mutex::new(placeholder)),
-            next_reader: Arc::new(AtomicUsize::new(0)),
+            backend: PoolBackend::Fallback { single: shared },
             path: db_path,
         };
     }
     DbPool {
-        readers: Arc::new(readers),
-        writer: Arc::new(Mutex::new(writer)),
-        next_reader: Arc::new(AtomicUsize::new(0)),
+        backend: PoolBackend::Pool {
+            readers: Arc::new(readers),
+            writer: Arc::new(Mutex::new(writer)),
+            next_reader: Arc::new(AtomicUsize::new(0)),
+        },
         path: db_path,
     }
 }
@@ -332,7 +388,7 @@ mod pool_tests {
     #[test]
     fn with_read_round_robin_distribution() {
         let (_tmp, pool) = fresh_pool();
-        let n_readers = pool.readers.len();
+        let n_readers = pool.reader_count();
         assert!(n_readers >= 2, "test 假设至少有 2 个 reader");
 
         // 跑 n_readers * 3 次 (确保 round-robin 转一圈以上)
@@ -342,7 +398,7 @@ mod pool_tests {
         }
         // next_reader index 应该回到 total % n_readers (但 atomic add 不 mod, 所以是 total)
         assert_eq!(
-            pool.next_reader.load(Ordering::Relaxed),
+            pool.next_reader_value(),
             total,
             "next_reader 应该精确累加 {} 次 (round-robin 用 fetch_add % n)",
             total,
@@ -427,7 +483,7 @@ mod pool_tests {
     fn pool_has_four_readers_by_default() {
         let (_tmp, pool) = fresh_pool();
         assert_eq!(
-            pool.readers.len(),
+            pool.reader_count(),
             4,
             "DbPool 默认 4 readers — 改这个常量前请确认 G1/G2/lists/HomeStatusBar 同时加载还够用"
         );
@@ -442,6 +498,115 @@ mod pool_tests {
             pool.path().file_name().and_then(|n| n.to_str()),
             Some("observer.db"),
             "DbPool.path() 应指向 observer.db"
+        );
+    }
+
+    // ===== v0.8.12 item C: PoolBackend::Fallback 回归测试 =====
+    //
+    // Bug: build_pool 之前在所有 reader open 失败时,真实 writer 被推进 readers
+    // 数组,writer 字段用全新 Connection::open_in_memory()(独立空 DB)。
+    // mutation 落空 DB → "no such table: session_meta";读也走 in-memory。
+    // Fix: PoolBackend::Fallback 共享单个 Arc<Mutex<Connection>>。
+
+    /// 辅助 — 直接构造 Fallback DbPool(模拟所有 reader open 失败的环境)
+    /// 用跟 build_pool 一样的 open + apply_pragmas 路径,只是把 writer 兼 reader
+    /// 共享到 PoolBackend::Fallback 字段。
+    fn fresh_fallback_pool() -> (TempDir, DbPool) {
+        let tmp = TempDir::new().expect("create tempdir");
+        let db_path = tmp.path().join("observer.db");
+        let conn = open_connection(&db_path).expect("open");
+        apply_pragmas(&conn).expect("pragmas");
+        // v0.8.12: 跟 open() 路径一致,先 apply schema — 否则 with_write 落
+        // INSERT 会 "no such table: session_meta"
+        schema::apply(&conn).expect("apply schema");
+        // 跟 build_pool fallback 路径一致:writer 兼 reader,共享同一 Arc
+        let shared = Arc::new(Mutex::new(conn));
+        let pool = DbPool {
+            backend: PoolBackend::Fallback { single: shared },
+            path: db_path,
+        };
+        (tmp, pool)
+    }
+
+    #[test]
+    fn fallback_writer_receives_writes() {
+        // v0.8.12 item C: Fallback 路径下 with_write 落 mutation 必须能被 with_read 读回
+        let (_tmp, pool) = fresh_fallback_pool();
+        // 1) 先 write 插一行
+        pool.with_write(|c| {
+            c.execute(
+                "INSERT INTO session_meta (session_id, project_key, source, jsonl_path,
+                                           size_bytes, mtime_ms, line_count, synced_at)
+                 VALUES ('fb-1', 'p', 'claude', '/tmp/fb.jsonl', 0, 0, 0, 0)",
+                [],
+            )?;
+            Ok::<(), AppError>(())
+        })
+        .expect("fallback write");
+        // 2) 再 read 必须能拿到
+        let count: i64 = pool
+            .with_read(|c| {
+                let n: i64 = c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?;
+                Ok(n)
+            })
+            .expect("fallback read count");
+        assert_eq!(count, 1, "Fallback 路径下 with_write → with_read 必须可见");
+        // 3) row 内容也对
+        let sid: String = pool
+            .with_read(|c| {
+                Ok(c.query_row(
+                    "SELECT session_id FROM session_meta WHERE session_id = 'fb-1'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .expect("fallback read row");
+        assert_eq!(sid, "fb-1");
+    }
+
+    #[test]
+    fn fallback_shared_between_reader_writer() {
+        // v0.8.12 item C: Fallback 模式下 reader 跟 writer 共享同一 connection
+        // (同一 Arc<Mutex<Connection>>)。验证方法:write 持锁期间 read 阻塞。
+        let (_tmp, pool) = fresh_fallback_pool();
+        let pool = Arc::new(pool);
+        let n_readers = pool.reader_count();
+        assert_eq!(
+            n_readers, 1,
+            "Fallback 模式 reader_count = 1 (共享单 connection)"
+        );
+
+        let start = Instant::now();
+        let write_pool = Arc::clone(&pool);
+        let write_thread = thread::spawn(move || {
+            write_pool.with_write(|_c| {
+                std::thread::sleep(Duration::from_millis(100));
+                Ok::<(), AppError>(())
+            })
+        });
+        // 等 writer 拿锁
+        std::thread::sleep(Duration::from_millis(50));
+        let read_pool = Arc::clone(&pool);
+        let read_thread = thread::spawn(move || {
+            read_pool.with_read(|_c| {
+                std::thread::sleep(Duration::from_millis(100));
+                Ok::<(), AppError>(())
+            })
+        });
+        write_thread.join().expect("write join").expect("write");
+        read_thread.join().expect("read join").expect("read");
+
+        let elapsed = start.elapsed();
+        // write + read 串行 ≈ 50ms (writer 启动) + 100ms (write) + 100ms (read) = 250ms
+        let lower_bound = Duration::from_millis(150);
+        let upper_bound = Duration::from_millis(280);
+        assert!(
+            elapsed >= lower_bound && elapsed <= upper_bound,
+            "Fallback 模式下 write+read 串行耗时 {:?} 不在 [{:?}, {:?}] 区间 — \
+             reader/writer 没共享同一把锁(Fallback 退化失败)",
+            elapsed,
+            lower_bound,
+            upper_bound,
         );
     }
 }
