@@ -177,27 +177,36 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
         state
             .db
             .with(|c| {
-                // 把 seen_paths 转成 N 个 `?` 占位 + 同步的 Vec<String> 用于绑参
-                let placeholders: Vec<&str> = seen_paths.iter().map(|_| "?").collect();
-                if placeholders.is_empty() {
-                    return Ok::<usize, AppError>(0);
-                }
-                let in_clause = placeholders.join(",");
-                let sql = format!(
-                    "DELETE FROM session_meta
-                     WHERE jsonl_path NOT IN ({in_clause})
-                       AND session_id NOT IN (SELECT session_id FROM session_override)"
-                );
-                // 按位置绑参
-                let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-                for p in &seen_paths {
-                    params_dyn.push(Box::new(p.clone()));
-                }
-                let refs: Vec<&dyn rusqlite::ToSql> = params_dyn
-                    .iter()
-                    .map(|b| &**b as &dyn rusqlite::ToSql)
-                    .collect();
-                let n = c.execute(&sql, refs.as_slice())?;
+                // v0.8.12 item B: 空 seen_paths = 用户删完所有 jsonl,sweep 应清空所有
+                // 无 override 的 session_meta 行(NOT EXISTS 子查询保留用户占位),
+                // 而不是早退跳过。修复前:用户删完磁盘所有 jsonl 后,旧 session_meta
+                // 行永远残留(stale-list bug)。
+                let n = if seen_paths.is_empty() {
+                    c.execute(
+                        "DELETE FROM session_meta
+                         WHERE session_id NOT IN (SELECT session_id FROM session_override)",
+                        [],
+                    )?
+                } else {
+                    // 把 seen_paths 转成 N 个 `?` 占位 + 同步的 Vec<String> 用于绑参
+                    let placeholders: Vec<&str> = seen_paths.iter().map(|_| "?").collect();
+                    let in_clause = placeholders.join(",");
+                    let sql = format!(
+                        "DELETE FROM session_meta
+                         WHERE jsonl_path NOT IN ({in_clause})
+                           AND session_id NOT IN (SELECT session_id FROM session_override)"
+                    );
+                    // 按位置绑参
+                    let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+                    for p in &seen_paths {
+                        params_dyn.push(Box::new(p.clone()));
+                    }
+                    let refs: Vec<&dyn rusqlite::ToSql> = params_dyn
+                        .iter()
+                        .map(|b| &**b as &dyn rusqlite::ToSql)
+                        .collect();
+                    c.execute(&sql, refs.as_slice())?
+                };
                 Ok::<_, AppError>(n)
             })
             .unwrap_or(0)
@@ -701,5 +710,161 @@ mod tests {
         assert_eq!(label, None);
         assert_eq!(channel, None);
         assert_eq!(target, None);
+    }
+
+    // ===== v0.8.12 item B: orphan sweep 空 seen_paths 清理回归测试 =====
+    //
+    // Bug: sync.rs:182 之前 `if placeholders.is_empty() return Ok(0)` — 用户删完
+    // 磁盘所有 jsonl 后,seen_paths 是空,sweep 早退,旧 session_meta 行永远残留。
+    // 修复:空 seen_paths 改成"删除所有无 override 的 session_meta 行"。
+    //
+    // 这里直接测 SQL 语义(避开 sync_once 整套 AppHandle/mock):模拟 sweep 的
+    // DELETE 行为,跑完后 assert 行被清 / 被保留。
+
+    fn fresh_pool() -> (TempDir, crate::db::DbPool) {
+        let tmp = TempDir::new().expect("tempdir");
+        let pool = crate::db::open(tmp.path()).expect("open db");
+        (tmp, pool)
+    }
+
+    /// 模拟 sweep 的核心 DELETE:空 seen_paths 走"全删无 override"路径,
+    /// 非空 seen_paths 走"jsonl_path NOT IN"路径。
+    fn run_sweep(pool: &crate::db::DbPool, seen_paths: &[String]) -> usize {
+        pool.with(|c| {
+            let n = if seen_paths.is_empty() {
+                c.execute(
+                    "DELETE FROM session_meta
+                     WHERE session_id NOT IN (SELECT session_id FROM session_override)",
+                    [],
+                )?
+            } else {
+                let placeholders: Vec<&str> = seen_paths.iter().map(|_| "?").collect();
+                let in_clause = placeholders.join(",");
+                let sql = format!(
+                    "DELETE FROM session_meta
+                     WHERE jsonl_path NOT IN ({in_clause})
+                       AND session_id NOT IN (SELECT session_id FROM session_override)"
+                );
+                let mut params_dyn: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+                for p in seen_paths {
+                    params_dyn.push(Box::new(p.clone()));
+                }
+                let refs: Vec<&dyn rusqlite::ToSql> = params_dyn
+                    .iter()
+                    .map(|b| &**b as &dyn rusqlite::ToSql)
+                    .collect();
+                c.execute(&sql, refs.as_slice())?
+            };
+            Ok::<_, crate::error::AppError>(n)
+        })
+        .unwrap()
+    }
+
+    fn insert_session(pool: &crate::db::DbPool, sid: &str, path: &str) {
+        pool.with(|c| {
+            c.execute(
+                "INSERT INTO session_meta
+                   (session_id, project_key, source, jsonl_path, size_bytes, mtime_ms, line_count, synced_at)
+                 VALUES (?1, 'p', 'claude', ?2, 0, 0, 0, 0)",
+                rusqlite::params![sid, path],
+            )?;
+            Ok::<_, crate::error::AppError>(())
+        })
+        .unwrap();
+    }
+
+    fn insert_placeholder(pool: &crate::db::DbPool, sid: &str) {
+        // 用 upsert_override_field_inner 同样的格式 — `(unknown):{sid}`
+        insert_session(pool, sid, &format!("(unknown):{sid}"));
+    }
+
+    fn override_for(pool: &crate::db::DbPool, sid: &str) {
+        pool.with(|c| {
+            c.execute(
+                "INSERT INTO session_override (session_id, hidden, pinned, archived, updated_at)
+                 VALUES (?1, 0, 0, 0, 0)",
+                rusqlite::params![sid],
+            )?;
+            Ok::<_, crate::error::AppError>(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn sweep_removes_rows_when_no_files_remain() {
+        let (_tmp, pool) = fresh_pool();
+        // 2 行真实 session_meta,seen_paths 空(模拟用户删完所有 jsonl)
+        insert_session(&pool, "real-1", "/tmp/a.jsonl");
+        insert_session(&pool, "real-2", "/tmp/b.jsonl");
+
+        let deleted = run_sweep(&pool, &[]);
+        assert_eq!(deleted, 2, "空 seen_paths 必须删掉 2 行");
+
+        let remaining: i64 = pool
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(remaining, 0, "session_meta 必须清空");
+    }
+
+    #[test]
+    fn sweep_preserves_overridden_placeholders() {
+        let (_tmp, pool) = fresh_pool();
+        // 1 行真实 session + 1 行 placeholder(用户对未同步 sid 做过 rename)
+        insert_session(&pool, "real-1", "/tmp/a.jsonl");
+        insert_placeholder(&pool, "ghost-1");
+        override_for(&pool, "ghost-1");
+
+        // 删完所有 jsonl — seen_paths 空
+        let deleted = run_sweep(&pool, &[]);
+        assert_eq!(
+            deleted, 1,
+            "应该删 1 行(real-1),placeholder(有 override)保留"
+        );
+
+        let ghost: bool = pool
+            .with(|c| {
+                let n: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM session_meta WHERE session_id = 'ghost-1'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok(n > 0)
+            })
+            .unwrap();
+        assert!(ghost, "placeholder ghost-1 必须在,因有 override 行");
+
+        let real: bool = pool
+            .with(|c| {
+                let n: i64 = c.query_row(
+                    "SELECT COUNT(*) FROM session_meta WHERE session_id = 'real-1'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok(n > 0)
+            })
+            .unwrap();
+        assert!(!real, "real-1 必须被清(无 override,jsonl 也不在磁盘)");
+    }
+
+    #[test]
+    fn sweep_with_files_keeps_rows_whose_path_in_seen() {
+        let (_tmp, pool) = fresh_pool();
+        // 2 行,seen_paths 含 1 个 — 应该删 1 行
+        insert_session(&pool, "real-1", "/tmp/a.jsonl");
+        insert_session(&pool, "real-2", "/tmp/b.jsonl");
+
+        let deleted = run_sweep(&pool, &["/tmp/a.jsonl".to_string()]);
+        assert_eq!(deleted, 1, "应该删 1 行(real-2 不在 seen_paths)");
+
+        let remaining: Vec<String> = pool
+            .with(|c| {
+                let mut stmt = c.prepare("SELECT session_id FROM session_meta")?;
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .unwrap();
+        assert_eq!(remaining, vec!["real-1".to_string()]);
     }
 }
