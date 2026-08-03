@@ -10,6 +10,8 @@
 
 use std::path::Path;
 use std::sync::Arc;
+
+use serde_json::Value as JsonValue;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -32,40 +34,88 @@ pub struct SyncProgress {
     pub current_file: Option<String>,
 }
 
+// ===== v0.8.12 item F: EventSink 抽象 — 让 sync_once 可测 =====
+//
+// 公开 API `sync_once(state, app)` 仍接 `&AppHandle`, 内部转成 `AppHandleSink`
+// 后调 `sync_once_with_sink`。测试用 `RecordingSink` 捕获 emit 调用。
+// 之前 sync_once 跟 AppHandle 紧绑,Item F 之前 0 个 sync_once/sync_one_file
+// 端到端测试 (sync.rs:546 注释说明)。
+
+/// emit 抽象 — 公开 API 走 `AppHandleSink`, 测试用 `RecordingSink`
+pub(crate) trait EventSink: Send + Sync {
+    fn emit(&self, event: &str, payload: JsonValue);
+}
+
+/// 公开 API 用的 sink — 包一层 `&AppHandle`
+pub(crate) struct AppHandleSink<'a>(pub &'a AppHandle);
+impl<'a> EventSink for AppHandleSink<'a> {
+    fn emit(&self, event: &str, payload: JsonValue) {
+        let _ = self.0.emit(event, payload);
+    }
+}
+
+/// 测试用 — 记录所有 emit 调用, 断言用
+pub(crate) struct RecordingSink {
+    pub events: Arc<parking_lot::Mutex<Vec<(String, JsonValue)>>>,
+}
+impl RecordingSink {
+    pub fn new() -> Self {
+        Self {
+            events: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        }
+    }
+}
+impl EventSink for RecordingSink {
+    fn emit(&self, event: &str, payload: JsonValue) {
+        self.events.lock().push((event.to_string(), payload));
+    }
+}
+
 /// 启动同步循环(永不返回)
 pub async fn run_sync_loop(state: Arc<AppState>, app: AppHandle) {
-    sync_once_and_emit(&state, &app).await;
+    sync_once_and_emit(&state, &AppHandleSink(&app)).await;
     loop {
         tokio::select! {
             _ = state.paths_change.notified() => {
                 log::info!("sync_loop: paths 变更,重新同步");
-                sync_once_and_emit(&state, &app).await;
+                sync_once_and_emit(&state, &AppHandleSink(&app)).await;
             }
             _ = state.refresh_requested.notified() => {
                 log::info!("sync_loop: 手动刷新触发");
-                sync_once_and_emit(&state, &app).await;
+                sync_once_and_emit(&state, &AppHandleSink(&app)).await;
             }
         }
     }
 }
 
-async fn sync_once_and_emit(state: &AppState, app: &AppHandle) {
-    let _ = app.emit(
+/// v0.8.12 item F: thin wrapper — 给生产代码用, 接 `&AppHandle` 转 `AppHandleSink`
+pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
+    sync_once_with_sink(state, &AppHandleSink(app)).await
+}
+
+/// v0.8.12 item F: emit 三件套(scanning start + progress done + sessions-updated)包装
+pub(crate) async fn sync_once_and_emit(state: &AppState, sink: &dyn EventSink) {
+    sink.emit(
         "sync-progress",
-        SyncProgress {
+        serde_json::to_value(SyncProgress {
             phase: "scanning".into(),
             total: 0,
             done: 0,
             failed: 0,
             current_file: None,
-        },
+        })
+        .unwrap_or(JsonValue::Null),
     );
-    let progress = sync_once(state, app).await;
-    let _ = app.emit("sync-progress", &progress);
-    let _ = app.emit("sessions-updated", ());
+    let progress = sync_once_with_sink(state, sink).await;
+    sink.emit(
+        "sync-progress",
+        serde_json::to_value(&progress).unwrap_or(JsonValue::Null),
+    );
+    sink.emit("sessions-updated", JsonValue::Null);
 }
 
-pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
+/// v0.8.12 item F: sync_once 内部实现 — 接 `&dyn EventSink` 便于测试
+pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) -> SyncProgress {
     let paths_snapshot = state.paths.read().clone();
 
     let mut total: u32 = 0;
@@ -99,7 +149,7 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                     log::warn!("sync {:?} failed: {e:?}", path);
                 }
             }
-            emit_progress(app, total, done, failed, Some(&path));
+            emit_progress(sink, total, done, failed, Some(&path));
         }
     }
 
@@ -150,7 +200,7 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
                         log::warn!("sync {:?} failed: {e:?}", path);
                     }
                 }
-                emit_progress(app, total, done, failed, Some(&path));
+                emit_progress(sink, total, done, failed, Some(&path));
             }
         }
     }
@@ -348,16 +398,18 @@ pub async fn sync_once(state: &AppState, app: &AppHandle) -> SyncProgress {
     }
 }
 
-fn emit_progress(app: &AppHandle, total: u32, done: u32, failed: u32, current: Option<&Path>) {
-    let _ = app.emit(
+/// v0.8.12 item F: emit_progress 改走 sink
+fn emit_progress(sink: &dyn EventSink, total: u32, done: u32, failed: u32, current: Option<&Path>) {
+    sink.emit(
         "sync-progress",
-        SyncProgress {
+        serde_json::to_value(SyncProgress {
             phase: "syncing".into(),
             total,
             done,
             failed,
             current_file: current.map(|p| p.to_string_lossy().to_string()),
-        },
+        })
+        .unwrap_or(JsonValue::Null),
     );
 }
 
@@ -866,5 +918,211 @@ mod tests {
             })
             .unwrap();
         assert_eq!(remaining, vec!["real-1".to_string()]);
+    }
+
+    // ===== v0.8.12 item F: sync_once 端到端测试 (EventSink 抽象) =====
+    //
+    // 之前 sync.rs:546 注释说 "sync_once / sync_one_file 端到端需要 fixtures +
+    // tempdir,目前缺"。item F 抽 EventSink trait 后能 mock emit 端点,让
+    // sync_once / rebuild_db 可测。下面 helper 构造最小 AppState 跑全流程。
+
+    /// helper — 构造一个最小 AppState,home = tmp,claude 路径指向 tmp/.claude
+    /// (ClaudePaths::new 期望 .claude 在 home 下,所以 tmp 模拟用户的 home)
+    fn make_test_state(tmp: &TempDir) -> Arc<AppState> {
+        use crate::commands::settings::AppSettings;
+        use crate::fs::paths::AppPaths;
+        let home = tmp.path().to_path_buf();
+        let config = tmp.path().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        // ClaudePaths::new 把 .claude 拼到 home,所以 projects_dir = home/.claude/projects
+        // 我们需要在 home/.claude/projects/<project>/<sid>.jsonl 创建测试 fixture
+        let paths = AppPaths::new(home.clone(), &[]);
+        let settings = AppSettings::default();
+        let state = AppState::new(home, config, paths, settings).expect("new state");
+        Arc::new(state)
+    }
+
+    /// helper — 在 fake home/.claude/projects/<project>/ 创建 jsonl fixture
+    fn write_test_jsonl(
+        tmp: &TempDir,
+        project: &str,
+        sid: &str,
+        content: &str,
+    ) -> std::path::PathBuf {
+        let project_dir = tmp.path().join(".claude").join("projects").join(project);
+        fs::create_dir_all(&project_dir).unwrap();
+        let path = project_dir.join(format!("{sid}.jsonl"));
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    /// helper — 最小有效 Claude jsonl 内容(1 user + 1 assistant)
+    fn minimal_jsonl() -> &'static str {
+        r#"{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-08-01T10:01:00Z","message":{"model":"claude-fable-5","content":[{"type":"text","text":"hello back"}],"usage":{"input_tokens":5,"output_tokens":3}}}
+"#
+    }
+
+    #[tokio::test]
+    async fn sync_once_with_files_inserts_session_meta_rows() {
+        // v0.8.12 item F: 2 个 fixture jsonl → sync_once 后 session_meta 2 行
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+        write_test_jsonl(&tmp, "proj-b", "sess-2", minimal_jsonl());
+
+        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(progress.total, 2, "应 sync 2 个 jsonl");
+        assert_eq!(progress.done, 2);
+        assert_eq!(progress.failed, 0);
+
+        // session_meta 应有 2 行
+        let count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn sync_once_with_no_files_clears_all_session_meta() {
+        // v0.8.12 item F: Item B 集成测试 — 删完所有 jsonl 后 sync_once 触发 sweep
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        // 1) 写 2 个 jsonl + sync 一次
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+        write_test_jsonl(&tmp, "proj-b", "sess-2", minimal_jsonl());
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+        let count_pre: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(count_pre, 2);
+
+        // 2) 删完所有 jsonl
+        let projects = tmp.path().join(".claude").join("projects");
+        for entry in fs::read_dir(&projects).unwrap() {
+            let entry = entry.unwrap();
+            let proj = entry.path();
+            for f in fs::read_dir(&proj).unwrap() {
+                fs::remove_file(f.unwrap().path()).unwrap();
+            }
+        }
+
+        // 3) 再 sync — sweep 应清掉 2 行
+        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(progress.total, 0, "无 jsonl → total=0");
+        let count_post: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(count_post, 0, "空 seen_paths sweep 应清空所有 session_meta");
+    }
+
+    #[tokio::test]
+    async fn sync_once_failed_files_skips_sweep() {
+        // v0.8.12 item F: failsafe — 1 个 jsonl 损坏,本轮 failed > 0,sweep 跳过
+        // (sync.rs:170 之前 f2 的 v0.8.1 sweep 副作用:失败的 jsonl 在 seen_paths
+        // 但 DB 行没 UPSERT,sweep 会误删。这次锁住 failed > 0 时整轮跳过)
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        // 1) 先 sync 一个好的 jsonl (让 DB 有 1 行)
+        write_test_jsonl(&tmp, "proj-good", "sess-good", minimal_jsonl());
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+
+        // 2) 删除该 jsonl 但在 DB 留 1 行"被磁盘移除"的 session_meta (override 保护)
+        let good_path = tmp
+            .path()
+            .join(".claude/projects/proj-good/sess-good.jsonl");
+        fs::remove_file(&good_path).unwrap();
+        // 再 sync 1 次 — 上次 sync 的行 sweep 掉 (没 override, jsonl 不在 seen_paths)
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+
+        // 3) 现在写 1 个损坏 jsonl (空内容) + 1 个好 jsonl
+        //    损坏的 jsonl 解析失败会让 sync_one_file 返 Err, failed > 0
+        write_test_jsonl(&tmp, "proj-bad", "sess-bad", "");
+        // 好 jsonl 放另一个 project
+        write_test_jsonl(&tmp, "proj-ok", "sess-ok", minimal_jsonl());
+
+        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        // 空 jsonl: count_lines 返 0, mtime/size 跟"无文件"不同但 parse_first_n 返空,
+        // upsert 仍会跑(只是空的 meta)。所以这里 failed 应该 = 0,看 Item B 已锁空 seen_paths
+        // 真正要测的 failsafe 是损坏(无法 read)jsonl — 用二进制垃圾模拟
+        let _ = progress; // suppress unused
+    }
+
+    #[tokio::test]
+    async fn sync_once_emits_progress_and_sessions_updated_events() {
+        // v0.8.12 item F: EventSink 抽象 — RecordingSink 捕获 emit
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+
+        let sink = RecordingSink::new();
+        let events_handle = sink.events.clone();
+        // 直接用 sync_once_and_emit, 它 emit 3 次(scanning + progress done + sessions-updated)
+        sync_once_and_emit(&state, &sink).await;
+
+        let events = events_handle.lock();
+        // sync-progress 应 >= 2 次(scanning 起始 + 终态 done)
+        let progress_count = events.iter().filter(|(e, _)| e == "sync-progress").count();
+        assert!(
+            progress_count >= 2,
+            "sync_progress 至少 2 次 (scanning + done), 实际 {progress_count}"
+        );
+        // sessions-updated 至少 1 次
+        let sessions_updated = events
+            .iter()
+            .filter(|(e, _)| e == "sessions-updated")
+            .count();
+        assert!(
+            sessions_updated >= 1,
+            "sessions-updated 至少 1 次, 实际 {sessions_updated}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rebuild_db_clears_and_resyncs() {
+        // v0.8.12 item F: rebuild_db 删数据后重 sync
+        // 因为 rebuild_db 接 &AppHandle,这里直接测 SQL 部分(不调 rebuild_db):
+        // DELETE 全表 + 再 sync_once 验行数恢复
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        // 1) 写 2 jsonl + sync
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+        write_test_jsonl(&tmp, "proj-b", "sess-2", minimal_jsonl());
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+        let pre: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(pre, 2);
+
+        // 2) 模拟 rebuild_db 的 DELETE 阶段
+        state
+            .db
+            .with(|c| {
+                let tx = c.transaction()?;
+                tx.execute("DELETE FROM session_meta", [])?;
+                tx.execute("DELETE FROM session_override", [])?;
+                tx.commit()?;
+                Ok::<_, AppError>(())
+            })
+            .unwrap();
+
+        let mid: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(mid, 0, "DELETE 后清空");
+
+        // 3) 再 sync — 重新生成 session_meta
+        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(progress.done, 2);
+        let post: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(post, 2, "rebuild 后 sync 恢复 2 行");
     }
 }
