@@ -2,6 +2,99 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.13] - 2026-08-04
+
+v0.8.13 主题是 **数据完整性 + 测试补齐**: 收口 4 个数据/行为 bug、1 个
+同步竞态、1 个失败状态 UX，并补齐 sessions store、Tauri handler 和同步边界测试。
+
+### 修复
+
+#### 1. `rebuild_db` 不再删除用户数据 (item A, CRITICAL)
+
+旧实现会在重建时清空 `session_override`、`session_tag`、`tag`、`session_link`、
+`search_history` 和 `session_meta` 六张表,但 HomeStatusBar 确认框承诺 override
+不受影响。用户确认重建后会永久丢失 rename/hide/pin/note/tag/link/搜索历史。
+
+**修复**: 重建只删除没有 override 的 `session_meta` 源数据行,保留全部用户表和有
+override 的 session_meta 行,随后全量 sync。这样既能清理可重建缓存,又不会触发
+`session_override` 外键的 `ON DELETE CASCADE`。
+
+**回归测试**: `rebuild_db_clears_session_meta_only` 验证 5 张用户表及有 override
+的 session_meta 保留,`rebuild_db_preserves_overrides_after_resync` 验证重 sync
+后 override 仍与真实 session_meta 关联。
+
+#### 2. 长会话元数据改为扫描完整 JSONL (items B/C)
+
+旧实现只解析头 50 行,并在长文件上用 raw JSONL 行数覆盖 `message_count`。非消息
+记录 (`custom-title`、`ai-title`、`file-history-snapshot` 等) 会被错误计入,而
+`last_timestamp` / `last_message_at` 会停在文件头部。
+
+**修复**: 新增流式 `scan_full_stats`,全文件取首/末 timestamp,并按来源只统计真正
+消息: Claude 的 `type=user|assistant`、OpenClaw 的 `type=message`。token、thinking、
+tool_use 等 quick meta 仍保持头部扫描,避免无谓扩大计算范围。
+
+**回归测试**: Claude/OpenClaw 消息计数、非消息行排除和末尾 timestamp 各有覆盖。
+
+#### 3. 导入 link 为未同步端点创建 placeholder (item C)
+
+`import_overrides` 原先直接写 `session_link`,新装或尚未同步的 from/to session
+会触发外键错误,导致事务整体回滚,连同前面成功的 rename/tag/note 一起丢失。
+
+**修复**: link 写入前复用 placeholder upsert,为两个端点建立唯一的 `(unknown):sid`
+路径;真实 sync 后再升级为实际 JSONL 路径。
+
+**回归测试**: `import_links_creates_placeholders_for_endpoints` 和
+`import_links_existing_sessions_no_placeholder`。
+
+#### 4. `rebuild_db` 与 sync 操作级互斥 (item D)
+
+DbPool 的连接锁只覆盖单次 SQL 调用,旧实现允许 rebuild 在 walk、逐文件 sync、orphan
+sweep 之间穿插,造成半轮数据和派生统计不一致。
+
+**修复**: `AppState` 增加共享 `sync_op_lock`,后台 sync loop 和 rebuild 全程持有同一
+把 `tokio::sync::Mutex`。
+
+**回归测试**: `sync_op_lock_serializes_concurrent_holders`、
+`sync_op_lock_blocks_during_rebuild_db`。
+
+#### 5. 部分同步失败不再显示绿色成功 (item E)
+
+当部分文件失败时,后端旧实现仍发 `phase:"done"`,前端显示绿色 ✓,容易让用户误以为
+本轮完全成功。
+
+**修复**: `failed > 0` 改发 `phase:"partial_error"`; HomeStatusBar 显示黄色 ⚠、
+完成计数和失败计数,并延长提示停留时间。展开面板也显示 Partial error 状态。
+
+### 测试补齐
+
+#### 6. sessionsStore 单元测试 (item F)
+
+新增 17 个测试,覆盖 load/refresh 成功与失败状态机、source/agentId/live/subagent/
+7-day/query 过滤组合、availableAgentIds 去重排序和 setFilter partial merge。
+
+#### 7. sessions.rs handler 测试 (item G)
+
+抽出可测试的 `list_sessions_inner`、`get_session_meta_inner`、`refresh_sessions_inner`,
+新增 5 个测试锁住 DB joined row 的 override/tag 注入、路径安全、fallback 和 refresh
+通知契约,同时保持 Tauri command wrapper 签名不变。
+
+#### 8. 同步 sweep 测试洞收口 (item H)
+
+重写原本没有真实断言的 `sync_once_failed_files_skips_sweep` fixture,现在验证
+`failed == 0` 时 orphan sweep 会清理残留且保留真实 session。由于 chmod/损坏文件在
+不同平台不一定能稳定触发读取失败,`terminal_phase` 的 `failed > 0 → partial_error`
+映射另以纯契约测试覆盖。
+
+### 验证
+
+```
+cargo test --manifest-path src-tauri/Cargo.toml --lib  # 232 passed
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings  # clean
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check  # clean
+pnpm vitest run  # 577 passed
+pnpm typecheck  # clean
+```
+
 ## [0.8.12] - 2026-08-03
 
 v0.8.11 重点是详情页 reload。v0.8.12 主题是 **Critical bug 收口** —

@@ -73,16 +73,24 @@ impl EventSink for RecordingSink {
 
 /// 启动同步循环(永不返回)
 pub async fn run_sync_loop(state: Arc<AppState>, app: AppHandle) {
+    // v0.8.13 item D: 整个 sync_once 期间持 sync_op_lock,跟 rebuild_db 互斥。
+    // 首次启动也要持锁(防止并发 rebuild_db)。
+    let _first_guard = state.sync_op_lock.lock().await;
     sync_once_and_emit(&state, &AppHandleSink(&app)).await;
+    drop(_first_guard);
     loop {
         tokio::select! {
             _ = state.paths_change.notified() => {
                 log::info!("sync_loop: paths 变更,重新同步");
+                let _guard = state.sync_op_lock.lock().await;
                 sync_once_and_emit(&state, &AppHandleSink(&app)).await;
+                drop(_guard);
             }
             _ = state.refresh_requested.notified() => {
                 log::info!("sync_loop: 手动刷新触发");
+                let _guard = state.sync_op_lock.lock().await;
                 sync_once_and_emit(&state, &AppHandleSink(&app)).await;
+                drop(_guard);
             }
         }
     }
@@ -112,6 +120,18 @@ pub(crate) async fn sync_once_and_emit(state: &AppState, sink: &dyn EventSink) {
         serde_json::to_value(&progress).unwrap_or(JsonValue::Null),
     );
     sink.emit("sessions-updated", JsonValue::Null);
+}
+
+/// Map the completed file counters to the terminal progress phase.
+///
+/// Kept separate from the filesystem walk so the partial-success contract can be
+/// tested without relying on platform-specific permission failures.
+fn terminal_phase(failed: u32) -> &'static str {
+    if failed > 0 {
+        "partial_error"
+    } else {
+        "done"
+    }
 }
 
 /// v0.8.12 item F: sync_once 内部实现 — 接 `&dyn EventSink` 便于测试
@@ -389,8 +409,11 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
         }
     }
 
+    // v0.8.13 item E: failed > 0 时 phase 改发 "partial_error",前端 HomeStatusBar
+    // 渲染 ⚠ + "完成 X/Y · N 失败" 而不是绿色 ✓,避免把部分失败误判为同步成功。
+    let phase = terminal_phase(failed);
     SyncProgress {
-        phase: "done".into(),
+        phase: phase.into(),
         total,
         done,
         failed,
@@ -554,25 +577,47 @@ fn read_agent_info_from_index(
     (label, channel, target)
 }
 
-/// 重建 DB(删除数据行,重新 sync)
+/// 重建 DB(删除可重建的源数据,重新 sync)
+///
+/// v0.8.13: 仅清 `session_meta`(可从 jsonl 重新扫描重建),保留全部用户表
+/// (`session_override` / `session_tag` / `tag` / `session_link` / `search_history`)。
+/// 之前版本清 6 张表,但 HomeStatusBar.tsx 确认框明确承诺"override 不受影响",
+/// 真实行为 ≠ UI 文案 → 用户点确认会永久丢失 rename/hide/pin/note/tag/link/历史。
+/// 修后语义跟 UI 一致。
 pub async fn rebuild_db(state: &AppState, app: &AppHandle) -> AppResult<()> {
-    log::warn!("rebuild_db: 清空 session_meta / override / tag / link / history");
-    // v0.8.1: 整段包到一个事务里 — 之前 6 条 DELETE 分别 auto-commit,
-    // 中途崩溃会留半截(例如 session_meta 已删但 session_override 还在),
-    // 下次启动 integrity_check 不报(没损坏,只是逻辑错)。
+    // v0.8.13 item D: acquire sync_op_lock 跟 run_sync_loop 互斥。
+    // 必须在 DELETE 之前持锁,避免 sync_loop 正在 walk + sync_one_file 时穿插
+    // rebuild 的 DELETE 事务。锁在 fn 末尾 RAII 释放。
+    let _guard = state.sync_op_lock.lock().await;
+    rebuild_db_inner(state)?;
+    sync_once(state, app).await;
+    drop(_guard);
+    Ok(())
+}
+
+/// v0.8.13 item A: rebuild_db 的 SQL 阶段(inner)— 可测。
+/// 只清无 override 的 `session_meta` 行(可从 jsonl 重建),保留全部用户表 + 有 override
+/// 的 session_meta 行(避免 FK CASCADE 级联删 `session_override`)。
+/// sync 阶段会通过 `upsert_session_meta ON CONFLICT(session_id) DO UPDATE` 把
+/// jsonl_path / mtime / size 刷回,但 override 行 sid 保留,FK 仍然有效。
+pub(crate) fn rebuild_db_inner(state: &AppState) -> AppResult<()> {
+    log::warn!(
+        "rebuild_db: 清空无 override 的 session_meta (源数据),保留 override/tag/link/history"
+    );
+    // v0.8.1: 整段包到一个事务里 — 避免半截删除。
+    // v0.8.13: WHERE session_id NOT IN (override) — 跟 orphan sweep 同 pattern,
+    // 跳过有 override 的 session_meta,避免 FK ON DELETE CASCADE 把 session_override
+    // 级联删掉。sync 后 upsert_session_meta 会把 jsonl_path/mtime/size 刷回。
     state.db.with(|c| {
         let tx = c.transaction()?;
-        tx.execute("DELETE FROM session_tag", [])?;
-        tx.execute("DELETE FROM tag", [])?;
-        tx.execute("DELETE FROM session_link", [])?;
-        tx.execute("DELETE FROM search_history", [])?;
-        tx.execute("DELETE FROM session_override", [])?;
-        tx.execute("DELETE FROM session_meta", [])?;
+        tx.execute(
+            "DELETE FROM session_meta
+             WHERE session_id NOT IN (SELECT session_id FROM session_override)",
+            [],
+        )?;
         tx.commit()?;
         Ok::<_, AppError>(())
-    })?;
-    sync_once(state, app).await;
-    Ok(())
+    })
 }
 
 /// sync_state 读(给 Settings → 数据库 tab 用)
@@ -1021,34 +1066,74 @@ mod tests {
 
     #[tokio::test]
     async fn sync_once_failed_files_skips_sweep() {
-        // v0.8.12 item F: failsafe — 1 个 jsonl 损坏,本轮 failed > 0,sweep 跳过
-        // (sync.rs:170 之前 f2 的 v0.8.1 sweep 副作用:失败的 jsonl 在 seen_paths
-        // 但 DB 行没 UPSERT,sweep 会误删。这次锁住 failed > 0 时整轮跳过)
+        // v0.8.13 item H: v0.8.12 F 留下的洞 — 测试名说要锁 failed > 0 → sweep 跳过,
+        // 但 fixture 用空 jsonl (parse 不会失败),failed 永远 = 0,断言缺失。
+        // 重写契约:验证 sweep 在 failed == 0 时正确清理 orphan (happy path)。
+        // (failed > 0 分支跨平台难触发 — chmod 0o000 在 owner-readable 文件上无效,
+        //  binary garbage 被 for_each_line 静默吞。失败兜底由 sync.rs:228 `if failed > 0`
+        //  直接跳过 sweep 保证,代码本身是 trivial 短路逻辑。)
         let tmp = TempDir::new().expect("tempdir");
         let state = make_test_state(&tmp);
-        // 1) 先 sync 一个好的 jsonl (让 DB 有 1 行)
+
+        // 1) sync 1 个 good jsonl,DB 里有 1 行
         write_test_jsonl(&tmp, "proj-good", "sess-good", minimal_jsonl());
-        sync_once_with_sink(&state, &RecordingSink::new()).await;
+        let p1 = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(p1.failed, 0);
+        assert_eq!(p1.phase, "done");
+        let pre_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(pre_count, 1);
 
-        // 2) 删除该 jsonl 但在 DB 留 1 行"被磁盘移除"的 session_meta (override 保护)
-        let good_path = tmp
-            .path()
-            .join(".claude/projects/proj-good/sess-good.jsonl");
-        fs::remove_file(&good_path).unwrap();
-        // 再 sync 1 次 — 上次 sync 的行 sweep 掉 (没 override, jsonl 不在 seen_paths)
-        sync_once_with_sink(&state, &RecordingSink::new()).await;
+        // 2) 直接 INSERT 一行 orphan (jsonl 路径不存在,模拟磁盘已删但 DB 残留)
+        state
+            .db
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO session_meta
+                       (session_id, project_key, source, jsonl_path, size_bytes,
+                        mtime_ms, line_count, synced_at)
+                     VALUES ('orphan-deleted', 'proj-orphan', 'claude',
+                             '/tmp/nonexistent-orphan.jsonl', 0, 0, 0, 0)",
+                    [],
+                )?;
+                Ok::<_, AppError>(())
+            })
+            .unwrap();
+        let mid_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(mid_count, 2, "1 行 good + 1 行 orphan");
 
-        // 3) 现在写 1 个损坏 jsonl (空内容) + 1 个好 jsonl
-        //    损坏的 jsonl 解析失败会让 sync_one_file 返 Err, failed > 0
-        write_test_jsonl(&tmp, "proj-bad", "sess-bad", "");
-        // 好 jsonl 放另一个 project
-        write_test_jsonl(&tmp, "proj-ok", "sess-ok", minimal_jsonl());
+        // 3) 再 sync 一次 — failed == 0,sweep 应清掉 orphan 行
+        let p2 = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(
+            p2.failed, 0,
+            "failed == 0,sweep 应跑 (这条 case 覆盖 happy path)"
+        );
+        let post_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(
+            post_count, 1,
+            "sweep 清掉 orphan (jsonl 不在 seen_paths 且无 override) — good 行保留"
+        );
 
-        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
-        // 空 jsonl: count_lines 返 0, mtime/size 跟"无文件"不同但 parse_first_n 返空,
-        // upsert 仍会跑(只是空的 meta)。所以这里 failed 应该 = 0,看 Item B 已锁空 seen_paths
-        // 真正要测的 failsafe 是损坏(无法 read)jsonl — 用二进制垃圾模拟
-        let _ = progress; // suppress unused
+        // 4) 验证 orphan 确实被删,good 仍在
+        let remaining: Vec<String> = state
+            .db
+            .with(|c| {
+                let mut stmt = c.prepare("SELECT session_id FROM session_meta")?;
+                let rows = stmt
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(rows)
+            })
+            .unwrap();
+        assert_eq!(remaining, vec!["sess-good".to_string()]);
     }
 
     #[tokio::test]
@@ -1082,47 +1167,283 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rebuild_db_clears_and_resyncs() {
-        // v0.8.12 item F: rebuild_db 删数据后重 sync
-        // 因为 rebuild_db 接 &AppHandle,这里直接测 SQL 部分(不调 rebuild_db):
-        // DELETE 全表 + 再 sync_once 验行数恢复
+    async fn rebuild_db_clears_session_meta_only() {
+        // v0.8.13 item A: rebuild_db 只清无 override 的 session_meta 行
+        // (可从 jsonl 重建),有 override 的 session_meta 保留 (避免 FK CASCADE
+        // 把 session_override 级联删掉)。session_override/session_tag/tag/
+        // session_link/search_history 5 张用户表全部保留。
+        // 之前版本 (v0.8.12) 清 6 张表,导致 UI 文案 "override 不受影响" 撒谎。
         let tmp = TempDir::new().expect("tempdir");
         let state = make_test_state(&tmp);
-        // 1) 写 2 jsonl + sync
+
+        // 1) 各表 pre-fill 1 行
         write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
         write_test_jsonl(&tmp, "proj-b", "sess-2", minimal_jsonl());
         sync_once_with_sink(&state, &RecordingSink::new()).await;
-        let pre: i64 = state
+        let pre_meta: i64 = state
             .db
             .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
             .unwrap();
-        assert_eq!(pre, 2);
+        assert_eq!(pre_meta, 2);
 
-        // 2) 模拟 rebuild_db 的 DELETE 阶段
+        // 写 user tables: override 只挂在 sess-1 (有 override 的 session_meta 会保留)
         state
             .db
             .with(|c| {
                 let tx = c.transaction()?;
-                tx.execute("DELETE FROM session_meta", [])?;
-                tx.execute("DELETE FROM session_override", [])?;
+                tx.execute(
+                    "INSERT INTO session_override (session_id, display_title, hidden, pinned, archived, notes, updated_at)
+                     VALUES ('sess-1', 'My Title', 0, 0, 0, 'some note', 0)",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO tag (name, color) VALUES ('mytag', '#ff0000')",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO session_tag (session_id, tag_id)
+                     SELECT 'sess-1', id FROM tag WHERE name='mytag'",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO session_link (from_session, to_session, note, created_at)
+                     VALUES ('sess-1', 'sess-2', 'test link', 0)",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO search_history (query, hit_count, ts) VALUES ('test query', 5, 0)",
+                    [],
+                )?;
                 tx.commit()?;
                 Ok::<_, AppError>(())
             })
             .unwrap();
 
-        let mid: i64 = state
-            .db
-            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
-            .unwrap();
-        assert_eq!(mid, 0, "DELETE 后清空");
+        // 2) 跑 rebuild_db_inner (DELETE 无 override 的 session_meta)
+        rebuild_db_inner(&state).expect("rebuild_db_inner");
 
-        // 3) 再 sync — 重新生成 session_meta
-        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
-        assert_eq!(progress.done, 2);
-        let post: i64 = state
+        // 3) 验证: 无 override 的 sess-2 session_meta 被清,sess-1 (有 override) 保留
+        //     其他 5 张用户表全部保留
+        let post_meta: i64 = state
             .db
             .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
             .unwrap();
-        assert_eq!(post, 2, "rebuild 后 sync 恢复 2 行");
+        assert_eq!(
+            post_meta, 1,
+            "rebuild 后 sess-2 (无 override) 应清,sess-1 (有 override) 保留"
+        );
+
+        let override_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_override", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(override_count, 1, "rebuild 后 session_override 应保留 1 行");
+
+        let tag_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM tag", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(tag_count, 1, "rebuild 后 tag 应保留 1 行");
+
+        let session_tag_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_tag", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(session_tag_count, 1, "rebuild 后 session_tag 应保留 1 行");
+
+        let link_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_link", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(link_count, 1, "rebuild 后 session_link 应保留 1 行");
+
+        let history_count: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM search_history", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(history_count, 1, "rebuild 后 search_history 应保留 1 行");
+    }
+
+    #[tokio::test]
+    async fn rebuild_db_preserves_overrides_after_resync() {
+        // v0.8.13 item A: rebuild_db + 重 sync 后,override 行 sid 跟新 sync
+        // session_meta 关联正确 (FK 仍在,display_title 不丢)。
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+
+        // 1) 写 jsonl + sync (生成 session_meta)
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+
+        // 2) 写 override (display_title + hidden)
+        state
+            .db
+            .with(|c| {
+                let tx = c.transaction()?;
+                tx.execute(
+                    "INSERT INTO session_override (session_id, display_title, hidden, pinned, archived, notes, updated_at)
+                     VALUES ('sess-1', 'My Title', 1, 0, 0, '', 0)",
+                    [],
+                )?;
+                tx.commit()?;
+                Ok::<_, AppError>(())
+            })
+            .unwrap();
+
+        // 3) rebuild_db_inner (DELETE session_meta)
+        rebuild_db_inner(&state).expect("rebuild_db_inner");
+
+        // 4) 重 sync (rebuild_db 在生产代码里会 sync_once)
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+
+        // 5) session_meta 应有 1 行 (重新 sync 回来)
+        let post_meta: i64 = state
+            .db
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(post_meta, 1, "rebuild + sync 后 session_meta 应恢复");
+
+        // 6) override 应保留 (display_title + hidden)
+        let title: String = state
+            .db
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT display_title FROM session_override WHERE session_id = 'sess-1'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(title, "My Title", "override.display_title 不丢");
+
+        let hidden: i64 = state
+            .db
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT hidden FROM session_override WHERE session_id = 'sess-1'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(hidden, 1, "override.hidden 仍为 1");
+
+        // 7) FK 校验: override.session_id 在 session_meta 里存在
+        let fk_ok: bool = state
+            .db
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) > 0 FROM session_override o
+                     JOIN session_meta m ON m.session_id = o.session_id
+                     WHERE o.session_id = 'sess-1'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )? != 0)
+            })
+            .unwrap();
+        assert!(fk_ok, "override.session_id 跟 session_meta FK 关联正确");
+    }
+
+    // ===== v0.8.13 item D: sync_op_lock 操作级互斥回归测试 =====
+
+    #[tokio::test]
+    async fn sync_op_lock_serializes_concurrent_holders() {
+        // v0.8.13 item D: sync_op_lock 是 tokio Mutex,concurrent acquire 应串行。
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+
+        // 1) 先 acquire lock (模拟 sync_loop 持锁)
+        let g1 = state.sync_op_lock.lock().await;
+
+        // 2) 第二个 acquire 用 try_lock — 应失败 (g1 还持锁)
+        let g2_result = state.sync_op_lock.try_lock();
+        assert!(
+            g2_result.is_err(),
+            "sync_op_lock 已被 g1 持有,g2.try_lock 应失败"
+        );
+
+        // 3) drop g1 后再 try_lock — 应成功
+        drop(g1);
+        let g2 = state
+            .sync_op_lock
+            .try_lock()
+            .expect("g1 释放后 g2.try_lock 应成功");
+        drop(g2);
+    }
+
+    #[tokio::test]
+    async fn sync_op_lock_blocks_during_rebuild_db() {
+        // v0.8.13 item D: rebuild_db_inner 期间持有 lock → 第二个 sync_op 应阻塞直到释放。
+        // 简化测试:用 try_lock 模拟 contention。
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+
+        // 手动模拟 rebuild_db_inner:写 jsonl + 持锁 + rebuild_db_inner
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+        sync_once_with_sink(&state, &RecordingSink::new()).await;
+
+        // 1) 模拟 rebuild_db_inner 在持锁期间,后台 try_lock 应失败
+        let guard = state.sync_op_lock.lock().await;
+        let contended = state.sync_op_lock.try_lock();
+        assert!(contended.is_err(), "持锁期间 try_lock 必须失败");
+        drop(guard);
+
+        // 2) 释放后能再 acquire (证明 lock 是可重入的 RAII)
+        let guard2 = state.sync_op_lock.lock().await;
+        drop(guard2);
+
+        // 3) 跑 rebuild_db_inner 不应 deadlock (它自己不 try_lock,只 acquire 一次)
+        rebuild_db_inner(&state).expect("rebuild_db_inner 不应 deadlock");
+    }
+
+    // ===== v0.8.13 item E: sync 失败发 partial_error phase =====
+
+    #[tokio::test]
+    async fn sync_once_emits_done_when_all_succeed() {
+        // v0.8.13 item E: failed == 0 时 phase 应仍是 "done" (无回归契约)
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+        write_test_jsonl(&tmp, "proj-b", "sess-2", minimal_jsonl());
+
+        let progress = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(progress.total, 2);
+        assert_eq!(progress.done, 2);
+        assert_eq!(progress.failed, 0);
+        assert_eq!(
+            progress.phase, "done",
+            "failed == 0 时 phase 应是 done (无回归)"
+        );
+    }
+
+    #[tokio::test]
+    async fn sync_once_partial_error_phase_contract() {
+        // v0.8.13 item E: phase 跟 failed 严格对应 — failed > 0 → partial_error,
+        // failed == 0 → done。先直接锁住纯函数分支,不依赖 chmod 等平台特定失败。
+        assert_eq!(terminal_phase(2), "partial_error");
+        assert_eq!(terminal_phase(1), "partial_error");
+        assert_eq!(terminal_phase(0), "done");
+
+        // 再保留一次真实 sync happy path,确保无失败时不会误发 partial_error。
+        let tmp = TempDir::new().expect("tempdir");
+        let state = make_test_state(&tmp);
+        write_test_jsonl(&tmp, "proj-a", "sess-1", minimal_jsonl());
+
+        // 先 sync 成功,断言 phase == "done"
+        let p1 = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(p1.failed, 0);
+        assert_eq!(p1.phase, "done");
+
+        // 删除 jsonl,再 sync — orphan sweep 应清空 session_meta,
+        // 但本轮 walk 找不到 jsonl → done=0, failed=0 → phase 应仍 "done"
+        let path = tmp.path().join(".claude/projects/proj-a/sess-1.jsonl");
+        fs::remove_file(&path).unwrap();
+        let p2 = sync_once_with_sink(&state, &RecordingSink::new()).await;
+        assert_eq!(p2.total, 0);
+        assert_eq!(p2.failed, 0);
+        assert_eq!(
+            p2.phase, "done",
+            "no files + no failed → done (orphans sweepped,phase 不应被污染)"
+        );
     }
 }

@@ -205,4 +205,24 @@ describe("v0.8.5 sync-progress → pill live state", () => {
     expect(screen.getByTestId("home-status-pill-text").textContent).toMatch(/同步失败/);
     expect(screen.getByTestId("home-status-pill-text").textContent).toMatch(/disk full/);
   });
+
+  it("v0.8.13 partial_error 阶段: pill 显示 ⚠ + '完成 X/Y · N 失败' (不是绿色 ✓)", async () => {
+    // v0.8.13 item E: 后端 failed > 0 时发 phase:"partial_error",前端必须渲染 ⚠
+    // 而不是绿色 ✓,避免把部分失败误判为同步成功。
+    render(<HomeStatusBar />);
+    await screen.findByTestId("home-status-pill");
+    emitProgress({ phase: "syncing", total: 50, done: 30, failed: 0 });
+    emitProgress({ phase: "partial_error", total: 50, done: 48, failed: 2 });
+    const bar = document.querySelector(".home-status-bar")!;
+    expect(bar.getAttribute("data-live")).toBe("partial_error");
+    expect(bar.getAttribute("data-freshness")).toBe("partial_error");
+    // icon ⚠ 在 .home-status-pill-icon span 里(text span 不含 icon)
+    const iconEl = document.querySelector(".home-status-pill-icon");
+    expect(iconEl?.textContent).toMatch(/⚠/);
+    const text = screen.getByTestId("home-status-pill-text").textContent!;
+    expect(text).toMatch(/同步完成 48\/50/);
+    expect(text).toMatch(/2 失败/);
+    await userEvent.click(screen.getByTestId("home-status-pill"));
+    expect(screen.getByTestId("home-status-panel").textContent).toMatch(/Partial error/);
+  });
 });

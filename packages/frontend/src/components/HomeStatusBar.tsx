@@ -19,7 +19,7 @@ import type { SyncStatus } from "../lib/overridesApi";
 import "./HomeStatusBar.css";
 
 interface ProgressPayload {
-  phase: "scanning" | "syncing" | "done" | "error";
+  phase: "scanning" | "syncing" | "done" | "partial_error" | "error";
   total?: number;
   done?: number;
   failed?: number;
@@ -33,15 +33,25 @@ type LivePhase =
   | { kind: "scanning" }
   | { kind: "syncing"; total: number; done: number; failed: number; currentFile: string | null }
   | { kind: "done"; total: number; done: number; failed: number; expiresAt: number }
+  | { kind: "partial_error"; total: number; done: number; failed: number; expiresAt: number }
   | { kind: "error"; message: string };
 
-type Freshness = "ok" | "stale" | "error" | "syncing" | "scanning" | "done" | "live-error";
+type Freshness =
+  | "ok"
+  | "stale"
+  | "error"
+  | "syncing"
+  | "scanning"
+  | "done"
+  | "partial_error"
+  | "live-error";
 
 function computeFreshness(s: SyncStatus | null, live: LivePhase): Freshness {
   if (live.kind === "error") return "live-error";
   if (live.kind === "scanning") return "scanning";
   if (live.kind === "syncing") return "syncing";
   if (live.kind === "done") return "done";
+  if (live.kind === "partial_error") return "partial_error";
   if (!s) return "stale";
   if (s.inProgress) return "syncing";
   if (s.lastError) return "error";
@@ -83,6 +93,15 @@ function buildPillText(status: SyncStatus | null, live: LivePhase): { icon: stri
     case "done": {
       const failedNote = live.failed > 0 ? ` · ${live.failed} failed` : "";
       return { icon: "✓", text: `同步完成 ${live.done}/${live.total}${failedNote}` };
+    }
+    // v0.8.13 item E: failed > 0 时 phase 是 partial_error,渲染 ⚠ + "完成 X/Y · N 失败"
+    // 避免把部分失败误判为同步成功 (之前 done case 仍 fallback 显示 failed,但用户第一眼
+    // 看绿色 ✓ + done text,2s 后才看到 failed 提示 — 误导)
+    case "partial_error": {
+      return {
+        icon: "⚠",
+        text: `同步完成 ${live.done}/${live.total} · ${live.failed} 失败`,
+      };
     }
     case "error":
       return { icon: "✗", text: `同步失败: ${truncate(live.message, 40)}` };
@@ -187,6 +206,27 @@ export function HomeStatusBar() {
           }, 2000);
           break;
         }
+        // v0.8.13 item E: failed > 0 时后端发 partial_error phase,
+        // 渲染黄色 ⚠ 而不是绿色 ✓ (避免误导用户部分失败 = 同步成功)
+        case "partial_error": {
+          const total = p.total ?? 0;
+          const done = p.done ?? 0;
+          const failed = p.failed ?? 0;
+          setLive({
+            kind: "partial_error",
+            total,
+            done,
+            failed,
+            expiresAt: Date.now() + 5000, // 5s 让用户看清失败计数
+          });
+          doneTimerRef.current = setTimeout(() => {
+            setLive({ kind: "idle" });
+            void apiGetSyncStatus()
+              .then(setStatus)
+              .catch(() => {});
+          }, 5000);
+          break;
+        }
         case "error":
           setLive({ kind: "error", message: p.message ?? "sync error" });
           break;
@@ -218,7 +258,7 @@ export function HomeStatusBar() {
   const handleRebuild = async () => {
     if (
       !window.confirm(
-        "重建数据库会删除 observer.db 并触发全量重新同步。\n所有 override (rename/hide/pin/note/tag) 都保留在 session_override 表, 不受影响。\n\n确认重建?"
+        "重建数据库会清空 sync 缓存并触发全量重新同步。\n所有用户数据 (override / tag / link / 搜索历史) 都保留。\n\n确认重建?"
       )
     )
       return;
@@ -248,7 +288,9 @@ export function HomeStatusBar() {
       >
         <span className={`home-status-dot home-status-dot-${freshness}`} aria-hidden />
         <span className="home-status-pill-icon" aria-hidden>
-          {isLive || live.kind === "done" || live.kind === "error" ? pillContent.icon : ""}
+          {isLive || live.kind === "done" || live.kind === "partial_error" || live.kind === "error"
+            ? pillContent.icon
+            : ""}
         </span>
         <span className="home-status-pill-text" data-testid="home-status-pill-text">
           {pillContent.text}
@@ -294,13 +336,15 @@ export function HomeStatusBar() {
                       ? `Syncing ${live.done}/${live.total}`
                       : live.kind === "done"
                         ? `Done (${live.done}/${live.total})`
-                        : live.kind === "error"
-                          ? `Error: ${live.message}`
-                          : status?.inProgress
-                            ? "Syncing…"
-                            : status?.lastError
-                              ? `Error: ${status.lastError}`
-                              : "Idle"}
+                        : live.kind === "partial_error"
+                          ? `Partial error (${live.done}/${live.total}, ${live.failed} failed)`
+                          : live.kind === "error"
+                            ? `Error: ${live.message}`
+                            : status?.inProgress
+                              ? "Syncing…"
+                              : status?.lastError
+                                ? `Error: ${status.lastError}`
+                                : "Idle"}
                 </td>
               </tr>
               <tr>

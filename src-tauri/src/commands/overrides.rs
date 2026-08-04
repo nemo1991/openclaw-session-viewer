@@ -818,6 +818,11 @@ pub async fn import_overrides(
         }
         // links
         for link in &exp.links {
+            // v0.8.13 item C: link 端点未 sync 时建 placeholder (跟 v0.8.12 A 同 pattern)。
+            // session_link 有 FK → session_meta.session_id,没 placeholder 会触发 FK 失败
+            // → 整批 import 在事务里回滚 (前面 rename/tag/note 全部丢失)。
+            upsert_override_field_in_tx(&tx, &link.from_session, None, None, now_ms())?;
+            upsert_override_field_in_tx(&tx, &link.to_session, None, None, now_ms())?;
             // v0.8.10: 跟 v0.8.9 add_session_link 同样的 ON CONFLICT 修复 —
             // 重导 (Overwrite / Merge 模式) 不重置 created_at (代表 link 何时建立)。
             tx.execute(
@@ -1641,5 +1646,112 @@ mod tests {
             !hidden_after,
             "Overwrite 必须能翻 hidden=true → false (这是 v0.8.12 item D 修的同条 bug)"
         );
+    }
+
+    // ===== v0.8.13 item C: import_overrides link 端点 placeholder =====
+    //
+    // 之前 link INSERT 前没为 from_session/to_session 建 placeholder,未 sync 端点
+    // 触发 session_link FK → session_meta.session_id 失败 → 整批 import 在事务里回滚
+    // (前面 rename/tag/note 全部丢失)。修后跟 v0.8.12 A 同 pattern,在 link INSERT 前
+    // 对两端点调 upsert_override_field_in_tx 建 `(unknown):{sid}` placeholder。
+
+    #[test]
+    fn import_links_creates_placeholders_for_endpoints() {
+        let (_tmp, pool) = fresh_db();
+        // 模拟 import_overrides link 路径用的 SQL 模式:
+        // 1) 对每个端点 upsert_override_field_in_tx (建 placeholder)
+        // 2) INSERT INTO session_link (FK 现在能查到 placeholder session_meta 行)
+        pool.with(|c| {
+            let tx = c.transaction()?;
+
+            // 占位 from_session / to_session (未 sync 的 sid)
+            upsert_override_field_in_tx(&tx, "from-unknown", None, None, 1)?;
+            upsert_override_field_in_tx(&tx, "to-unknown", None, None, 1)?;
+
+            tx.execute(
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
+                rusqlite::params![
+                    "from-unknown",
+                    "to-unknown",
+                    "test link",
+                    1_700_000_000_000_i64
+                ],
+            )?;
+            tx.commit()?;
+            Ok::<_, AppError>(())
+        })
+        .expect("import link + placeholder");
+
+        // 验证: 2 个 placeholder session_meta 行 + 1 个 link
+        let meta_count: i64 = pool
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(meta_count, 2, "应为 from/to 各建 1 行 placeholder");
+
+        let link_count: i64 = pool
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_link", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(link_count, 1, "session_link 应有 1 行 (FK 不再失败)");
+
+        // placeholder 的 jsonl_path 应该是 `(unknown):{sid}` (v0.8.12 A 编码)
+        let from_path: String = pool
+            .with(|c| {
+                Ok(c.query_row(
+                    "SELECT jsonl_path FROM session_meta WHERE session_id = 'from-unknown'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(from_path, "(unknown):from-unknown");
+    }
+
+    #[test]
+    fn import_links_existing_sessions_no_placeholder() {
+        // 端点 session_meta 已存在时,upsert_override_field_in_tx 不重复建 placeholder
+        let (_tmp, pool) = fresh_db();
+        pool.with(|c| {
+            // 2 个真实 session_meta (模拟已 sync 过,用 sid-specific jsonl_path 避开 UNIQUE)
+            c.execute(
+                "INSERT INTO session_meta
+                   (session_id, project_key, source, jsonl_path, size_bytes, mtime_ms, line_count, synced_at)
+                 VALUES (?1, 'p', 'claude', ?2, 0, 0, 0, 0)",
+                rusqlite::params!["real-a", "/tmp/real-a.jsonl"],
+            )?;
+            c.execute(
+                "INSERT INTO session_meta
+                   (session_id, project_key, source, jsonl_path, size_bytes, mtime_ms, line_count, synced_at)
+                 VALUES (?1, 'p', 'claude', ?2, 0, 0, 0, 0)",
+                rusqlite::params!["real-b", "/tmp/real-b.jsonl"],
+            )?;
+
+            // 模拟 import link
+            let tx = c.transaction()?;
+            upsert_override_field_in_tx(&tx, "real-a", None, None, 1)?;
+            upsert_override_field_in_tx(&tx, "real-b", None, None, 1)?;
+            tx.execute(
+                "INSERT INTO session_link (from_session, to_session, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(from_session, to_session) DO UPDATE SET note = excluded.note",
+                rusqlite::params!["real-a", "real-b", "real link", 1_700_000_000_000_i64],
+            )?;
+            tx.commit()?;
+            Ok::<_, AppError>(())
+        })
+        .expect("import link between existing sessions");
+
+        // 验证: 仍是 2 行 session_meta (没重复建)
+        let meta_count: i64 = pool
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_meta", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(meta_count, 2, "已存在的 session_meta 不应重复 placeholder");
+
+        // link 应有 1 行
+        let link_count: i64 = pool
+            .with(|c| Ok(c.query_row("SELECT COUNT(*) FROM session_link", [], |r| r.get(0))?))
+            .unwrap();
+        assert_eq!(link_count, 1);
     }
 }
