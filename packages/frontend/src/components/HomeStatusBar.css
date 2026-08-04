@@ -65,6 +65,10 @@
 .home-status-dot-done {
   background: #16a34a;
 }
+.home-status-dot-partial_error {
+  background: #ca8a04;
+  box-shadow: 0 0 0 0 rgba(202, 138, 4, 0.5);
+}
 .home-status-dot-live-error {
   background: #dc2626;
   animation: home-status-pulse 1.2s ease-in-out infinite;
@@ -85,6 +89,9 @@
 }
 .home-status-bar[data-live="done"] .home-status-pill-icon {
   color: #16a34a;
+}
+.home-status-bar[data-live="partial_error"] .home-status-pill-icon {
+  color: #ca8a04;
 }
 .home-status-bar[data-live="error"] .home-status-pill-icon {
   color: #dc2626;

@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use tauri::Manager;
-use tokio::sync::Notify;
+use tokio::sync::{Mutex, Notify};
 
 mod cache;
 mod commands;
@@ -53,6 +53,11 @@ pub struct AppState {
     pub paths_change: Arc<Notify>,
     /// 手动刷新通知(前端 refresh_sessions 命令调用)→ sync_loop 重新跑
     pub refresh_requested: Arc<Notify>,
+    /// v0.8.13 item D: 操作级互斥 — `rebuild_db` 跟 `sync_once` 不能并发跑。
+    /// DbPool writer lock 只在单次 `with(...)` 持有,run_sync_loop 多次取得/释放锁之间
+    /// rebuild_db 可穿插 DELETE → 扫一半删一半。`run_sync_loop` 整个 sync_once 期间
+    /// 持锁,`rebuild_db` 也 acquire 同一锁;`Mutex::lock()` 是 fair FIFO 不会饿死。
+    pub sync_op_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -72,6 +77,7 @@ impl AppState {
             db,
             paths_change: Arc::new(Notify::new()),
             refresh_requested: Arc::new(Notify::new()),
+            sync_op_lock: Arc::new(Mutex::new(())),
         })
     }
 }

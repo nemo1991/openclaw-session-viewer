@@ -87,6 +87,11 @@ fn agent_info_from_index(
 /// DB 同步完成后,这里就是个纯 SELECT,启动后秒出。
 #[tauri::command]
 pub async fn list_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<SessionMeta>> {
+    list_sessions_inner(&state)
+}
+
+/// v0.8.13 item G: list_sessions 的 state-independent body — 可测。
+pub(crate) fn list_sessions_inner(state: &Arc<AppState>) -> AppResult<Vec<SessionMeta>> {
     // v0.8.7 C: 纯读, 走 reader pool (跟其它读并发不互锁)
     let rows = state.db.with_read(crate::db::schema::list_all_joined)?;
     let mut out = Vec::with_capacity(rows.len());
@@ -117,7 +122,12 @@ pub async fn get_session_meta(
     path: String,
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<SessionMeta> {
-    let p = Path::new(&path);
+    get_session_meta_inner(&path, &state)
+}
+
+/// v0.8.13 item G: get_session_meta 的 state-independent body — 可测。
+pub(crate) fn get_session_meta_inner(path: &str, state: &Arc<AppState>) -> AppResult<SessionMeta> {
+    let p = Path::new(path);
 
     // 路径安全:遍历所有 root 验证(支持 custom_root)
     paths::assert_within_any_root(&state.paths.read(), p)?;
@@ -125,7 +135,7 @@ pub async fn get_session_meta(
     // 1) 优先查 DB(joined)
     if let Some(row) = state
         .db
-        .with(|c| crate::db::schema::fetch_session_meta_by_path(c, &path))?
+        .with(|c| crate::db::schema::fetch_session_meta_by_path(c, path))?
     {
         let mut m = row.meta;
         m.display_title = row.display_title;
@@ -164,7 +174,7 @@ pub async fn get_session_meta(
         let (agent_label, agent_channel, agent_target) = agent_info_from_index(&sessions_index);
         build_openclaw_session_meta(p, &agent_id, agent_label, agent_channel, agent_target)
     } else {
-        build_claude_session_meta(p, &state, &live_pids)
+        build_claude_session_meta(p, state, &live_pids)
     }
 }
 
@@ -174,8 +184,55 @@ pub async fn get_session_meta(
 /// 然后返回 DB 当前结果(可能还是旧数据,sync 跑完后前端会收到 sessions-updated 事件再次刷新)
 #[tauri::command]
 pub async fn refresh_sessions(state: State<'_, Arc<AppState>>) -> AppResult<Vec<SessionMeta>> {
+    refresh_sessions_inner(&state)
+}
+
+/// v0.8.13 item G: refresh_sessions 的 state-independent body — 可测。
+/// notify sync_loop 重新跑 + 返回当前 DB 快照。
+pub(crate) fn refresh_sessions_inner(state: &Arc<AppState>) -> AppResult<Vec<SessionMeta>> {
     state.refresh_requested.notify_waiters();
-    list_sessions(state).await
+    list_sessions_inner(state)
+}
+
+/// v0.8.13 item B: 流式扫全 jsonl 取 (first_ts, last_ts, message_count)。
+///
+/// 之前 build_claude_session_meta / build_openclaw_session_meta 用 `parse_first_n(50)`
+/// 算 first/last_ts + message_count,长会话的 last_ts 停在 head-only 范围,
+/// message_count 被 `jsonl::count_lines()`(raw 行数,含 custom-title/ai-title/
+/// file-history-snapshot 等非消息行)覆盖导致系统性偏大。
+///
+/// 修后用 `for_each_line` 流式扫一遍,只数 `type=user|assistant` (Claude) 或
+/// `type=message` (OpenClaw),first_ts 取首条带 timestamp 的记录,last_ts 取末条。
+/// token / thinking / tool_use 等 quick meta 仍走 head-only — 那些不用全文件也够准。
+pub(crate) fn scan_full_stats(
+    jsonl_path: &Path,
+    source: &str,
+) -> AppResult<(Option<String>, Option<String>, u32)> {
+    let mut first: Option<String> = None;
+    let mut last: Option<String> = None;
+    let mut count: u32 = 0;
+    jsonl::for_each_line(jsonl_path, |_, _, v| {
+        let obj = match v.as_object() {
+            Some(o) => o,
+            None => return,
+        };
+        if let Some(ts) = obj.get("timestamp").and_then(|x| x.as_str()) {
+            if first.is_none() {
+                first = Some(ts.to_string());
+            }
+            last = Some(ts.to_string());
+        }
+        let ty = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        let is_msg = match source {
+            "claude" => ty == "user" || ty == "assistant",
+            "openclaw" => ty == "message",
+            _ => false,
+        };
+        if is_msg {
+            count += 1;
+        }
+    })?;
+    Ok((first, last, count))
 }
 
 pub(crate) fn build_claude_session_meta(
@@ -204,13 +261,11 @@ pub(crate) fn build_claude_session_meta(
         .unwrap_or("")
         .to_string();
 
-    // 解析头部 ~50 条提取 quick meta
+    // 解析头部 ~50 条提取 quick meta (custom_title/ai_title/first_user_text/
+    // token_total/model_count/thinking/tool_use/top_tools — 这些 head-only 已够)
     let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
-    let mut first_ts: Option<String> = None;
-    let mut last_ts: Option<String> = None;
     let mut custom_title: Option<String> = None;
     let mut ai_title: Option<String> = None;
-    let mut message_count: u32 = 0;
     let mut first_user_text: Option<String> = None;
     let mut token_total = TokenUsage::default();
     let mut model_count: HashMap<String, u32> = HashMap::new();
@@ -225,17 +280,12 @@ pub(crate) fn build_claude_session_meta(
         };
         let r#type = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
 
-        // 时间戳
-        if let Some(ts) = obj.get("timestamp").and_then(|x| x.as_str()) {
-            if first_ts.is_none() {
-                first_ts = Some(ts.to_string());
-            }
-            last_ts = Some(ts.to_string());
-        }
+        // v0.8.13 item B: first_ts / last_ts / message_count 不再在 head-only 累加,
+        // 改成后面 scan_full_stats 流式扫全文件 — 长会话的 last_ts 不能停在 head 范围,
+        // message_count 不能被 raw count_lines 覆盖(包含非消息行)。
 
         match r#type {
             "user" => {
-                message_count += 1;
                 if first_user_text.is_none() {
                     if let Some(msg) = obj.get("message") {
                         if let Some(content) = msg.get("content") {
@@ -254,7 +304,6 @@ pub(crate) fn build_claude_session_meta(
                 }
             }
             "assistant" => {
-                message_count += 1;
                 if let Some(msg) = obj.get("message") {
                     if let Some(model) = msg.get("model").and_then(|x| x.as_str()) {
                         *model_count.entry(model.to_string()).or_insert(0) += 1;
@@ -313,13 +362,14 @@ pub(crate) fn build_claude_session_meta(
     // v0.8.4: top 3 -> top 5 (item 2: top_tools_json 复用, 扩大保存范围)
     let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
 
-    // 完整计数 (可能比 50 多)
-    let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
-    let message_count = if total > head.len() as u32 {
-        total
-    } else {
-        message_count.max(total)
-    };
+    // v0.8.13 item B: first_ts / last_ts / message_count 用 scan_full_stats 流式扫全文件
+    // 之前 head-only 算 last_ts 停在 head 范围,message_count 被 jsonl::count_lines
+    // (raw 行数,含 custom-title/ai-title 等非消息行)覆盖导致系统性偏大。
+    let (scanned_first, scanned_last, scanned_msg_count) =
+        scan_full_stats(jsonl_path, "claude").unwrap_or((None, None, 0));
+    let first_ts = scanned_first;
+    let last_ts = scanned_last;
+    let message_count = scanned_msg_count;
 
     // 主模型 (使用次数最多的)
     let primary_model = model_count
@@ -472,10 +522,7 @@ pub(crate) fn build_openclaw_session_meta(
         .to_string();
 
     let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
-    let mut first_ts: Option<String> = None;
-    let mut last_ts: Option<String> = None;
     let mut name: Option<String> = None;
-    let mut message_count: u32 = 0;
     let mut first_user_text: Option<String> = None;
     let mut thinking_count: u32 = 0;
     let mut tool_use_count: u32 = 0;
@@ -488,16 +535,10 @@ pub(crate) fn build_openclaw_session_meta(
         };
         let r#type = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
 
-        if let Some(ts) = obj.get("timestamp").and_then(|x| x.as_str()) {
-            if first_ts.is_none() {
-                first_ts = Some(ts.to_string());
-            }
-            last_ts = Some(ts.to_string());
-        }
+        // v0.8.13 item B: first_ts / last_ts / message_count 改用 scan_full_stats 流式扫全文件
 
         match r#type {
             "message" => {
-                message_count += 1;
                 if let Some(msg) = obj.get("message") {
                     if let Some(content) = msg.get("content") {
                         if first_user_text.is_none() {
@@ -544,12 +585,11 @@ pub(crate) fn build_openclaw_session_meta(
     // v0.8.4: top 3 -> top 5 (item 2: top_tools_json 复用, 扩大保存范围)
     let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
 
-    let total = jsonl::count_lines(jsonl_path).unwrap_or(head.len() as u64) as u32;
-    let message_count = if total > head.len() as u32 {
-        total
-    } else {
-        message_count.max(total)
-    };
+    // v0.8.13 item B: first_ts / last_ts / message_count 用 scan_full_stats 流式扫全文件
+    // 之前 OpenClaw 跟 Claude 一样被 jsonl::count_lines (raw 行数) 覆盖 message_count,
+    // 长会话 last_ts 停在 head-only 范围。
+    let (first_ts, last_ts, message_count) =
+        scan_full_stats(jsonl_path, "openclaw").unwrap_or((None, None, 0));
 
     // projectKey 加 "openclaw:" 前缀,避免和 Claude 的 projectKey 冲突
     // (例如 Claude 恰好有 projectKey="main" 的目录)
@@ -862,5 +902,277 @@ mod tests {
         assert!(label.is_none());
         assert!(channel.is_none());
         assert!(target.is_none());
+    }
+
+    // ===== v0.8.13 item B: scan_full_stats + message_count/last_ts 全文件 =====
+    //
+    // 之前 build_*_session_meta 用 parse_first_n(50) + jsonl::count_lines(),长会话的
+    // message_count 被 raw 行数覆盖(包含 custom-title 等非消息行),last_ts 停在 head
+    // 范围。修后用 scan_full_stats 流式扫全文件,只数 type=user|assistant。
+
+    /// fixture — 30 user + 30 assistant + 20 custom-title = 80 行 (Claude)
+    fn fixture_claude_80_lines() -> String {
+        let mut s = String::new();
+        // 30 user + 30 assistant 各带 timestamp
+        for i in 0..30 {
+            s.push_str(&format!(
+                r#"{{"type":"user","timestamp":"2026-08-01T10:{:02}:00Z","message":{{"content":"user msg {i}"}}}}
+"#,
+                i % 60
+            ));
+        }
+        for i in 0..30 {
+            s.push_str(&format!(
+                r#"{{"type":"assistant","timestamp":"2026-08-01T11:{:02}:00Z","message":{{"model":"claude-fable-5","content":[{{"type":"text","text":"hi {i}"}}],"usage":{{"input_tokens":1,"output_tokens":1}}}}}}
+"#,
+                i % 60
+            ));
+        }
+        // 20 custom-title 行(不应被计入 message_count)
+        for i in 0..20 {
+            s.push_str(&format!(
+                r#"{{"type":"custom-title","timestamp":"2026-08-01T12:{:02}:00Z","title":"custom title {i}"}}
+"#,
+                i % 60
+            ));
+        }
+        s
+    }
+
+    /// fixture — Claude 80 行,末尾的 custom-title 时间戳最晚
+    fn fixture_claude_last_ts_after_head() -> String {
+        let mut s = String::new();
+        // 60 行 user/assistant + 1 行末尾的 file-history-snapshot(ts 是 12:30)
+        for i in 0..30 {
+            s.push_str(&format!(
+                r#"{{"type":"user","timestamp":"2026-08-01T10:{:02}:00Z","message":{{"content":"u{i}"}}}}
+"#,
+                i % 60
+            ));
+        }
+        for i in 0..30 {
+            s.push_str(&format!(
+                r#"{{"type":"assistant","timestamp":"2026-08-01T11:{:02}:00Z","message":{{"content":"a{i}"}}}}
+"#,
+                i % 60
+            ));
+        }
+        // 末尾 non-message 行带最晚 timestamp (T2)
+        s.push_str(
+            r#"{"type":"file-history-snapshot","timestamp":"2026-08-01T15:00:00Z","data":{}}"#,
+        );
+        s
+    }
+
+    #[test]
+    fn scan_full_stats_claude_counts_only_user_assistant() {
+        // v0.8.13 item B: 80 行 fixture (60 msg + 20 custom-title) → message_count=60,
+        // 不是 raw count_lines=80。first_ts/last_ts 也对。
+        let tmp = NamedTempFile::new().expect("tempfile");
+        std::fs::write(tmp.path(), fixture_claude_80_lines()).unwrap();
+
+        let (first, last, count) = scan_full_stats(tmp.path(), "claude").expect("scan");
+        assert_eq!(count, 60, "只数 user+assistant,custom-title 不算");
+        assert!(first.is_some(), "first_ts 应有值");
+        assert!(last.is_some(), "last_ts 应有值");
+        // first_ts 是 user msg 0 的 10:00,last_ts 是 assistant msg 29 的 11:29
+        assert!(first.as_deref().unwrap().starts_with("2026-08-01T10:"));
+        // last_ts 是末尾 custom-title 行 (T12),不是 head-only 范围的 assistant (T11)
+        assert!(
+            last.as_deref().unwrap().starts_with("2026-08-01T12:"),
+            "last_ts 应是末尾 custom-title 行的 12:xx,证明全文件扫描生效"
+        );
+    }
+
+    #[test]
+    fn scan_full_stats_uses_last_record_timestamp() {
+        // v0.8.13 item B: 末尾 non-message 行的 timestamp 也算 last_ts (T2=15:00),
+        // 之前 head-only 停在 11:29,T2 是用户活跃时间但被忽略。
+        let tmp = NamedTempFile::new().expect("tempfile");
+        std::fs::write(tmp.path(), fixture_claude_last_ts_after_head()).unwrap();
+
+        let (_first, last, _count) = scan_full_stats(tmp.path(), "claude").expect("scan");
+        assert_eq!(
+            last.as_deref().unwrap(),
+            "2026-08-01T15:00:00Z",
+            "last_ts 应是末尾 file-history-snapshot 的 15:00,不是 head-only 的 11:29"
+        );
+    }
+
+    #[test]
+    fn scan_full_stats_openclaw_counts_only_message_type() {
+        // v0.8.13 item B: OpenClaw 同 pattern,只数 type=message
+        let tmp = NamedTempFile::new().expect("tempfile");
+        let content = r#"{"type":"session_info","timestamp":"2026-08-01T09:00:00Z","name":"my session"}
+{"type":"message","timestamp":"2026-08-01T09:01:00Z","message":{"content":"hi"}}
+{"type":"message","timestamp":"2026-08-01T09:02:00Z","message":{"content":"back"}}
+{"type":"progress","timestamp":"2026-08-01T09:03:00Z","data":{}}
+"#;
+        std::fs::write(tmp.path(), content).unwrap();
+
+        let (first, last, count) = scan_full_stats(tmp.path(), "openclaw").expect("scan");
+        assert_eq!(
+            count, 2,
+            "只数 type=message (2 条),session_info/progress 不算"
+        );
+        assert_eq!(first.as_deref().unwrap(), "2026-08-01T09:00:00Z");
+        assert_eq!(last.as_deref().unwrap(), "2026-08-01T09:03:00Z");
+    }
+
+    // ===== v0.8.13 item G: list_sessions / get_session_meta / refresh_sessions inner =====
+
+    /// helper — 构造最小 AppState,跟 db::sync::tests::make_test_state 同 pattern
+    fn make_test_state(tmp: &tempfile::TempDir) -> Arc<AppState> {
+        use crate::commands::settings::AppSettings;
+        use crate::fs::paths::AppPaths;
+        let home = tmp.path().to_path_buf();
+        let config = tmp.path().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let paths = AppPaths::new(home.clone(), &[]);
+        let settings = AppSettings::default();
+        Arc::new(AppState::new(home, config, paths, settings).expect("new state"))
+    }
+
+    /// fixture — 写 jsonl + 跑 sync_once 一次,让 DB 里有 session_meta 行
+    fn setup_session_meta(tmp: &tempfile::TempDir) -> Arc<AppState> {
+        use crate::db::sync::sync_once_with_sink;
+        let state = make_test_state(tmp);
+        let project = tmp.path().join(".claude/projects/proj-a");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            project.join("sess-1.jsonl"),
+            r#"{"type":"user","timestamp":"2026-08-01T10:00:00Z","message":{"content":"hi"}}
+{"type":"assistant","timestamp":"2026-08-01T10:01:00Z","message":{"model":"claude-fable-5","content":[{"type":"text","text":"hello"}]}}
+"#,
+        )
+        .unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            sync_once_with_sink(&state, &crate::db::sync::RecordingSink::new()).await;
+        });
+        state
+    }
+
+    #[test]
+    fn list_sessions_inner_returns_db_rows_with_override_injection() {
+        // v0.8.13 item G: list_sessions_inner 必须从 DB joined row 注入 override 字段
+        // (display_title/hidden/pinned/archived/notes/tags) 到 SessionMeta
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state = setup_session_meta(&tmp);
+
+        // 写 override: display_title + hidden + pinned + 1 个 tag
+        state
+            .db
+            .with(|c| {
+                let tx = c.transaction()?;
+                tx.execute(
+                    "INSERT INTO session_override
+                       (session_id, display_title, hidden, pinned, archived, notes, updated_at)
+                     VALUES ('sess-1', 'My Title', 1, 1, 0, 'a note', 0)",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO tag (name, color) VALUES ('urgent', '#ff0000')",
+                    [],
+                )?;
+                tx.execute(
+                    "INSERT INTO session_tag (session_id, tag_id)
+                     SELECT 'sess-1', id FROM tag WHERE name='urgent'",
+                    [],
+                )?;
+                tx.commit()?;
+                Ok::<_, AppError>(())
+            })
+            .unwrap();
+
+        let out = list_sessions_inner(&state).expect("list_sessions_inner");
+        assert_eq!(out.len(), 1, "1 个 session_meta");
+        let m = &out[0];
+        assert_eq!(m.session_id, "sess-1");
+        assert_eq!(
+            m.display_title.as_deref(),
+            Some("My Title"),
+            "override.display_title 注入"
+        );
+        assert!(m.hidden, "override.hidden 注入");
+        assert!(m.pinned, "override.pinned 注入");
+        assert!(!m.archived);
+        assert_eq!(m.notes.as_deref(), Some("a note"));
+        assert_eq!(
+            m.tags.as_deref(),
+            Some(&vec!["urgent".to_string()][..]),
+            "tag_names 注入"
+        );
+    }
+
+    #[test]
+    fn list_sessions_inner_no_override_keeps_defaults() {
+        // 没有 override 的 session_meta,list_sessions_inner 必须返 None override 字段
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state = setup_session_meta(&tmp);
+
+        let out = list_sessions_inner(&state).expect("list_sessions_inner");
+        assert_eq!(out.len(), 1);
+        let m = &out[0];
+        assert!(
+            m.display_title.is_none(),
+            "无 override → display_title None"
+        );
+        assert!(!m.hidden);
+        assert!(!m.pinned);
+        assert!(!m.archived);
+        assert!(m.notes.is_none());
+        assert!(m.tags.is_none(), "无 tag → tags None (不是空 Vec)");
+    }
+
+    #[test]
+    fn get_session_meta_inner_db_hit_returns_joined_row() {
+        // v0.8.13 item G: DB hit path — fetch_session_meta_by_path 命中时直接返 joined row
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state = setup_session_meta(&tmp);
+
+        state
+            .db
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO session_override
+                       (session_id, display_title, hidden, pinned, archived, notes, updated_at)
+                     VALUES ('sess-1', 'From DB', 0, 0, 0, '', 0)",
+                    [],
+                )?;
+                Ok::<_, AppError>(())
+            })
+            .unwrap();
+
+        // 直接按 jsonl_path 命中
+        let path = tmp.path().join(".claude/projects/proj-a/sess-1.jsonl");
+        let path_str = path.to_string_lossy().to_string();
+        let m = get_session_meta_inner(&path_str, &state).expect("get_session_meta_inner");
+        assert_eq!(m.session_id, "sess-1");
+        assert_eq!(m.display_title.as_deref(), Some("From DB"));
+    }
+
+    #[test]
+    fn get_session_meta_inner_path_outside_roots_rejected() {
+        // v0.8.13 item G: 路径安全校验 — 必须在 Claude/OpenClaw root 下
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state = setup_session_meta(&tmp);
+
+        // /etc/passwd 不在任何 root 下
+        let m = get_session_meta_inner("/etc/passwd", &state);
+        assert!(m.is_err(), "path outside roots 应被拒绝");
+    }
+
+    #[test]
+    fn refresh_sessions_inner_notifies_and_returns_list() {
+        // v0.8.13 item G: refresh_sessions_inner 必须 notify + 返当前 snapshot
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let state = setup_session_meta(&tmp);
+
+        let out = refresh_sessions_inner(&state).expect("refresh_sessions_inner");
+        assert_eq!(out.len(), 1, "notify 后返当前 DB snapshot");
+        assert_eq!(out[0].session_id, "sess-1");
+        // notify_waiters 是即时唤醒;这里没阻塞 awaiter,所以无需 await。
+        // 我们只验证 API 路径 + 结果契约,notify 副作用由 sync_loop 测试覆盖。
     }
 }
