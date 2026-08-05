@@ -142,17 +142,9 @@ export default function SessionDetailRoute() {
     jumpToEntry,
   });
 
-  // Cmd+F:会话内搜索(handler 引用稳定,deps 用 [])
+  // v0.8.15: 跨平台 — Cmd+F (macOS) / Ctrl+F (Win/Linux) 统一一个 useKey。
   useKey(
     "cmd+f",
-    (e) => {
-      e.preventDefault();
-      showSearchBar();
-    },
-    []
-  );
-  useKey(
-    "ctrl+f",
     (e) => {
       e.preventDefault();
       showSearchBar();
@@ -214,17 +206,9 @@ export default function SessionDetailRoute() {
     }
   }, [meta, reloading, navigate, location.pathname, location.search]);
 
-  // Cmd+R / Ctrl+R 快捷键(同时注册绕过 keymap cmd/ctrl 互斥限制)
+  // v0.8.15: 跨平台 — Cmd+R / Ctrl+R 统一一个 useKey, 不再需要 band-aid。
   useKey(
     "cmd+r",
-    (e) => {
-      e.preventDefault();
-      void handleReload();
-    },
-    [handleReload]
-  );
-  useKey(
-    "ctrl+r",
     (e) => {
       e.preventDefault();
       void handleReload();
@@ -537,7 +521,7 @@ export default function SessionDetailRoute() {
             disabled={reloading}
             className={reloading ? "reloading" : ""}
             data-testid="reload-btn"
-            title="重新解析 jsonl + 触发后端 sync (Cmd+R)"
+            title="重新解析 jsonl + 触发后端 sync (Cmd/Ctrl+R)"
           >
             <RefreshCw size={14} className={reloading ? "spin" : ""} />
           </button>
