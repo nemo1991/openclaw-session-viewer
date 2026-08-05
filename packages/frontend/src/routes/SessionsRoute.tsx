@@ -95,11 +95,9 @@ export default function SessionsRoute() {
     };
   }, [refresh]);
 
+  // v0.8.15: 跨平台 — matchKey 的 meta 组同时接受 macOS Cmd 和 Win/Linux Ctrl,
+  // 不再需要分别注册两个 useKey。
   useKey("cmd+k", (e) => {
-    e.preventDefault();
-    search.show();
-  });
-  useKey("ctrl+k", (e) => {
     e.preventDefault();
     search.show();
   });

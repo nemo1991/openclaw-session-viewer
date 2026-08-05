@@ -3,16 +3,16 @@
  *
  * 测试快捷键匹配逻辑:
  * - 单键 (key="Enter")
- * - cmd+k 匹配 Meta+k (macOS 风格)
+ * - cmd+k 匹配 Meta+k (macOS 风格) **及** Ctrl+k (Win/Linux) — 跨平台契约
  * - cmd+shift+f 多 modifier
  * - 大小写不敏感 (pattern 和 e.key 都 lowercase)
  * - modifier 不匹配返回 false
  *
- * 已知限制:  "cmd"/"ctrl"/"meta" 在 pattern 里被合并为一组,
- * 但只检查 e.metaKey, 不检查 e.ctrlKey / e.altKey。
- * 后果: Windows/Linux 上 Ctrl+K 不匹配 "cmd+k" pattern。
- * 调用方在 SessionsRoute.tsx 同时注册 "cmd+k" + "ctrl+k" 两个 useKey 绕过。
- * TODO: 修复 — 让 "meta 组" 同时接受 e.metaKey OR (e.ctrlKey && !e.metaKey)
+ * 跨平台契约 (v0.8.15): "cmd"/"ctrl"/"meta" 在 pattern 里被合并为一组,
+ * 接受 e.metaKey (macOS Cmd) OR (e.ctrlKey && !e.metaKey) (Win/Linux Ctrl)。
+ * `!e.metaKey` guard 让 macOS 上 Ctrl (right-click 修饰键) 不被 Cmd 模式误吞。
+ *
+ * 旧版同时在 route 注册 "cmd+x" + "ctrl+x" 两个 useKey 的 band-aid 已被移除。
  */
 
 import { describe, it, expect } from "vitest";
@@ -54,11 +54,31 @@ describe("matchKey", () => {
     expect(matchKey(makeKeyEvent("k", { meta: true }), "cmd+k")).toBe(true);
   });
 
-  it("ctrl+k 匹配 'ctrl+k' pattern (因为 meta 组 = true, e.metaKey = false,不一致?)", () => {
-    // 实际行为:  pattern "ctrl+k" → meta=true, e.ctrlKey=true 但 e.metaKey=false
-    // → e.metaKey (false) !== meta (true) → false
-    // 已知 bug,Windows 上 Ctrl+K 不工作
-    expect(matchKey(makeKeyEvent("k", { ctrl: true }), "ctrl+k")).toBe(false);
+  it("ctrl+k 匹配 'cmd+k' pattern (Win/Linux 跨平台契约)", () => {
+    // v0.8.15 修复: meta 组 = e.metaKey || (e.ctrlKey && !e.metaKey)
+    // → Windows/Linux 上 Ctrl+K 现在能匹配 "cmd+k" pattern, 不需要在 route 重复注册。
+    expect(matchKey(makeKeyEvent("k", { ctrl: true }), "cmd+k")).toBe(true);
+  });
+
+  it("ctrl+k 匹配 'ctrl+k' pattern (语义对称)", () => {
+    // "ctrl+k" pattern 跟 "cmd+k" 同样激活 meta 组 → Ctrl+k 也匹配。
+    expect(matchKey(makeKeyEvent("k", { ctrl: true }), "ctrl+k")).toBe(true);
+  });
+
+  it("meta+k 匹配 'ctrl+k' pattern (cmd / ctrl / meta 三者等价)", () => {
+    expect(matchKey(makeKeyEvent("k", { meta: true }), "ctrl+k")).toBe(true);
+  });
+
+  it("Cmd+Ctrl+K 双按归 meta 组 (macOS Cmd 优先约定)", () => {
+    // macOS 上 Ctrl 是 right-click 修饰键, Cmd 优先。如果以后反例出现,
+    // 把 `e.ctrlKey && !e.metaKey` 改成 `e.ctrlKey` 即可。
+    expect(matchKey(makeKeyEvent("k", { meta: true, ctrl: true }), "cmd+k")).toBe(true);
+  });
+
+  it("macOS 裸 Ctrl+K 归 meta 组 (e.ctrlKey && !e.metaKey → true)", () => {
+    // 副作用契约: macOS 上单独按 Ctrl+K 也会匹配 "cmd+k"。
+    // 用户可接受 — Cmd 优先的延伸。如果想区分,需要 isMac() 检测。
+    expect(matchKey(makeKeyEvent("k", { ctrl: true }), "cmd+k")).toBe(true);
   });
 
   it("cmd+shift+f 多 modifier", () => {

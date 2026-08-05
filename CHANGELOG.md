@@ -2,6 +2,67 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.15] - 2026-08-05
+
+v0.8.14 收口了后端安全 + 流式契约。v0.8.15 主题是 **跨平台快捷键收口** —
+`keymap.test.ts` 自留的一个真 bug: `matchKey` 的 meta 组只检查 `e.metaKey`,
+Win/Linux 上 `Ctrl+K` 不匹配 `cmd+k` pattern。旧实现靠在 route 里同时注册
+`cmd+k` + `ctrl+k` / `cmd+f` + `ctrl+f` / `cmd+r` + `ctrl+r` 6 个 band-aid
+绕过 — `SessionDetailRoute.tsx` 自承 "同时注册绕过 keymap cmd/ctrl 互斥限制"。
+
+任何新加 meta 快捷键的开发者如果只注册 `cmd+x`,Win/Linux 用户静默不可用。
+
+### 修复
+
+#### 1. `matchKey` meta 组接受 Ctrl (item A)
+
+`packages/frontend/src/lib/keymap.ts:20-32` 把 `cmd` / `ctrl` / `meta`
+合并激活条件改成 `e.metaKey || (e.ctrlKey && !e.metaKey)` — macOS Cmd +
+Win/Linux Ctrl 都匹配同一 pattern。Mac 上 Ctrl 是 right-click 修饰键,
+`!e.metaKey` guard 让 Cmd+Ctrl 双按仍归 meta 组（Cmd 优先约定）。
+
+`alt` 保留字面 `e.altKey`（codebase 无 `alt+*` 调用,remapping 是 scope creep）。
+
+#### 2. 删 6 处 band-aid,合并到 3 处单注册 (item B)
+
+- `SessionsRoute.tsx` — 删 `ctrl+k` 行,留 `cmd+k`
+- `SessionDetailRoute.tsx` — 删 `ctrl+f` 行,留 `cmd+f`
+- `SessionDetailRoute.tsx` — 删 `ctrl+r` 行,留 `cmd+r`
+
+#### 3. tooltip 文案对齐 README 双标签惯例 (item C)
+
+`SessionDetailRoute.tsx` reload 按钮 `title="重新解析 jsonl + 触发后端 sync (Cmd+R)"`
+→ `"(Cmd/Ctrl+R)"`。Platform-aware 动态 tooltip（需要新 `useIsMac()`
+
+- i18n key）留 v0.8.16+。
+
+### 测试
+
+#### 4. `keymap.test.ts` 反转 + 补全跨平台用例 (item D)
+
+- 反转 `ctrl+k → 'cmd+k' pattern` 断言从 `false` → `true`
+- 新增 4 个 case: `ctrl+k → 'ctrl+k' pattern` / `meta+k → 'ctrl+k' pattern` /
+  `Cmd+Ctrl+K 双按归 meta 组` / `macOS 裸 Ctrl+K 归 meta 组`
+- 顶部注释 "TODO: 修复" → "跨平台契约"
+
+### 验证
+
+```bash
+cargo test --lib                                       # 252 (不变)
+pnpm -r test                                           # 593 → ~600 (+7)
+cargo clippy --all-targets -- -D warnings              # clean
+cargo fmt -- --check                                   # clean
+pnpm typecheck                                         # clean
+```
+
+### Skip 留给 v0.8.16+ (这次不动)
+
+- `useIsMac()` hook + 动态 tooltip label (Mac "Cmd+R" vs Win/Linux "Ctrl+R")
+- `GraphDetailPanel.tsx` inline keydown listener 迁到 `useKey`（只处理 Escape）
+- `alt` 重映射为 macOS Option（无 caller 受益）
+
+---
+
 ## [0.8.14] - 2026-08-05
 
 v0.8.13 收口了 CRITICAL 数据丢失 + 同步竞态。v0.8.14 主题是 **后端安全
