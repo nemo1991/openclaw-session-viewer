@@ -48,6 +48,8 @@ export const useSearchStore = create<SearchStore>((set) => ({
     } catch (e) {
       console.error("search_all 失败:", e);
       set({ searching: false });
+    } finally {
+      // v0.8.14 item F: 无论成功失败都清理 listener,避免累积监听
       unlisteners.forEach((u) => u());
     }
   },

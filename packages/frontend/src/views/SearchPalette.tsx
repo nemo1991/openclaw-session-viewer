@@ -44,33 +44,45 @@ export function SearchPalette() {
       .catch(() => {});
   }, []);
 
-  // 搜索完成后(有 query + 不在 searching + hits 稳定)记录一条
-  useEffect(() => {
-    if (!debouncedQuery.trim() || searching) return;
-    // debounce 500ms 避免抖动
-    const t = setTimeout(() => {
-      void apiRecordSearch(debouncedQuery.trim(), hits.length)
-        .then(() => {
-          // 刷新历史
-          void apiListSearchHistory(10)
-            .then(setHistory)
-            .catch(() => {});
-        })
-        .catch(() => {});
-    }, 500);
-    return () => clearTimeout(t);
-  }, [debouncedQuery, hits.length, searching]);
+  // v0.8.14 item E: 移除自动 record-search effect — 之前 deps [debouncedQuery,
+  // hits.length, searching] 每次 search 完成都重置 500ms timer,typing "claude code"
+  // 多次 search 完成 → 多次 setTimeout(虽然 cleanup 会 cancel 旧的,实际上仍可能 fire
+  // 多次)。改成只在 Enter 提交时 record 一次。
+  //
+  // 副作用:用户 typing 但没 Enter 不再写历史 — 接受,因为这是 user-initiated 行为。
+  // 历史只记 "user 真正提交过的搜索",更有意义。
+  //
+  // 注意: useKey 默认 deps=[] 闭包捕获首渲染的 hits/debouncedQuery,
+  // 必须传 [hits, debouncedQuery] 让 handler 每次都拿到最新值,否则 Enter
+  // 永远看到 hits=[] / debouncedQuery="" — record + navigate 都不会触发。
 
   useKey("escape", () => hide());
-  useKey("enter", () => {
-    if (hits.length > 0) {
-      const h = hits[0]!;
-      navigate(`/session/${encodeURIComponent(h.sessionId)}`, {
-        state: { session: { sessionId: h.sessionId, jsonlPath: h.sessionPath } },
-      });
-      hide();
-    }
-  });
+  useKey(
+    "enter",
+    () => {
+      if (hits.length > 0) {
+        const h = hits[0]!;
+        const queryToRecord = debouncedQuery.trim();
+        const hitsCount = hits.length;
+        // v0.8.14 item E: 提交时立刻 record(也是 fire-and-forget,
+        // 不 await 让 navigation 不被 IPC 阻塞)
+        if (queryToRecord) {
+          void apiRecordSearch(queryToRecord, hitsCount)
+            .then(() => {
+              void apiListSearchHistory(10)
+                .then(setHistory)
+                .catch(() => {});
+            })
+            .catch(() => {});
+        }
+        navigate(`/session/${encodeURIComponent(h.sessionId)}`, {
+          state: { session: { sessionId: h.sessionId, jsonlPath: h.sessionPath } },
+        });
+        hide();
+      }
+    },
+    [hits, debouncedQuery]
+  );
 
   return (
     <div className="search-palette-overlay" onClick={hide}>

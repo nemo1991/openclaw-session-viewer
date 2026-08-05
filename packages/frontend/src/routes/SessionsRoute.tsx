@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
@@ -26,6 +26,20 @@ import { SearchPalette } from "../views/SearchPalette";
 import { HomeStatusBar } from "../components/HomeStatusBar"; // v0.8.4 item 1
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionsRoute.css";
+
+interface SessionCardProps {
+  s: SessionMeta;
+  navigate: ReturnType<typeof useNavigate>;
+  overrides: ReturnType<typeof useOverrides.getState>;
+  fmtOpts: ReturnType<typeof useFormatOpts>;
+  editingSid: string | null;
+  draftTitle: string;
+  setDraftTitle: (v: string) => void;
+  startRename: (s: SessionMeta) => void;
+  commitRename: (s: SessionMeta) => Promise<void>;
+  /** v0.8.14 item G: Escape 取消编辑 */
+  cancelRename: (s: SessionMeta) => void;
+}
 
 interface Group {
   key: string;
@@ -164,21 +178,46 @@ export default function SessionsRoute() {
   const displayTitleOf = (s: SessionMeta) =>
     overrides.snap.renames[s.sessionId] ?? s.title ?? s.sessionId.slice(0, 8);
 
+  // v0.8.14 item G: Enter + blur 双触发场景的 inFlight guard。
+  // 用 useRef 而不是 useState — Enter 和 blur 在同一 tick 触发时
+  // setEditingSid(null) 还没 flush,闭包持有的 editingSid 仍是旧值,
+  // 两个 commitRename 都会 past `if (!editingSid) return` 进入。
+  // ref 同步设置,第二次 commit 看到 inFlight=true 直接 bail。
+  const renameInFlightRef = useRef(false);
+
   const startRename = (s: SessionMeta) => {
+    renameInFlightRef.current = false;
     setEditingSid(s.sessionId);
     setDraftTitle(displayTitleOf(s));
   };
 
   const commitRename = async (s: SessionMeta) => {
-    if (!editingSid) return;
+    if (renameInFlightRef.current) return;
+    if (!editingSid || s.sessionId !== editingSid) return;
+    renameInFlightRef.current = true;
+
     const trimmed = draftTitle.trim();
     setEditingSid(null);
-    if (!trimmed || trimmed === displayTitleOf(s)) return;
+    if (!trimmed || trimmed === displayTitleOf(s)) {
+      renameInFlightRef.current = false;
+      return;
+    }
     try {
       await overrides.rename(s.sessionId, trimmed);
     } catch (e) {
       console.error("rename failed", e);
+    } finally {
+      renameInFlightRef.current = false;
     }
+  };
+
+  // v0.8.14 item G: Escape 也清 editing state,之前只重置 draftTitle,
+  // 用户按 Esc 后输入框还在(只改了文本内容),不点 Enter/blur 就退不出。
+  const cancelRename = (s: SessionMeta) => {
+    if (renameInFlightRef.current) return;
+    renameInFlightRef.current = true; // 防止后续 blur 再触发 commit
+    setEditingSid(null);
+    setDraftTitle(displayTitleOf(s));
   };
 
   return (
@@ -361,6 +400,7 @@ export default function SessionsRoute() {
                   setDraftTitle={setDraftTitle}
                   startRename={startRename}
                   commitRename={commitRename}
+                  cancelRename={cancelRename}
                 />
               ))}
             </section>
@@ -388,6 +428,7 @@ export default function SessionsRoute() {
                   setDraftTitle={setDraftTitle}
                   startRename={startRename}
                   commitRename={commitRename}
+                  cancelRename={cancelRename}
                 />
               ))}
             </section>
@@ -410,17 +451,8 @@ function SessionCard({
   setDraftTitle,
   startRename,
   commitRename,
-}: {
-  s: SessionMeta;
-  navigate: ReturnType<typeof useNavigate>;
-  overrides: ReturnType<typeof useOverrides.getState>;
-  fmtOpts: ReturnType<typeof useFormatOpts>;
-  editingSid: string | null;
-  draftTitle: string;
-  setDraftTitle: (v: string) => void;
-  startRename: (s: SessionMeta) => void;
-  commitRename: (s: SessionMeta) => Promise<void>;
-}) {
+  cancelRename,
+}: SessionCardProps) {
   const displayTitle = overrides.snap.renames[s.sessionId] ?? s.title ?? s.sessionId.slice(0, 8);
   const isEditing = editingSid === s.sessionId;
   const isPinned = overrides.snap.pinned[s.sessionId];
@@ -453,7 +485,7 @@ function SessionCard({
             onChange={(e) => setDraftTitle(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") void commitRename(s);
-              if (e.key === "Escape") setDraftTitle(displayTitle);
+              if (e.key === "Escape") cancelRename(s);
             }}
             onBlur={() => void commitRename(s)}
             maxLength={80}

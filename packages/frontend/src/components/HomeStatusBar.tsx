@@ -16,6 +16,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useSessionsStore } from "../state/sessionsStore";
 import { apiGetSyncStatus, apiGetDbPath, apiRebuildDb } from "../lib/overridesApi";
 import type { SyncStatus } from "../lib/overridesApi";
+import { REBUILD_CONFIRM_TEXT } from "../lib/rebuild";
 import "./HomeStatusBar.css";
 
 interface ProgressPayload {
@@ -256,12 +257,8 @@ export function HomeStatusBar() {
   };
 
   const handleRebuild = async () => {
-    if (
-      !window.confirm(
-        "重建数据库会清空 sync 缓存并触发全量重新同步。\n所有用户数据 (override / tag / link / 搜索历史) 都保留。\n\n确认重建?"
-      )
-    )
-      return;
+    // v0.8.14 item A: 共享文案 — DatabasePanel 也用同一个常量
+    if (!window.confirm(REBUILD_CONFIRM_TEXT)) return;
     setRebuilding(true);
     setRebuildError(null);
     try {

@@ -98,6 +98,8 @@ export const useAnalyzeStore = create<AnalyzeStore>((set, get) => ({
       });
     } catch (e) {
       set({ error: extractErrorMessage(e), streaming: false });
+    } finally {
+      // v0.8.14 item F: 无论成功失败都清理 listener,避免长会话累积监听
       unlisteners.forEach((u) => u());
     }
   },

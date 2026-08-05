@@ -60,14 +60,10 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
     get().reset();
     set({ path, loading: true });
 
-    try {
-      const total = await apiCountEntries(path);
-      set({ totalCount: total });
-    } catch (e) {
-      console.warn("count_entries 失败:", e);
-    }
-
-    // 监听事件
+    // v0.8.14 item F: 把 listen 放到 invoke 之前,**中间不插任何 await** —
+    // 之前 count_entries 在 listen 和 invoke 之间,backend 一发
+    // transcript-batch 可能早于 listener 注册完成 → 前几批丢失。
+    // count 只是 progress UI hint,移到 invoke 之后即可。
     const unlisteners = await listenTranscriptBatches(
       (batch) => {
         set((s) => ({
@@ -75,12 +71,17 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
           loadedCount: s.entries.length + batch.entries.length,
         }));
       },
-      () => {
-        set({ loading: false });
+      // v0.8.14 item D: done 事件现在带 error 字段,后端 stream_batches
+      // 失败时通过这里把错误信息塞进 store error state。
+      (errMsg) => {
+        if (errMsg) {
+          set({ error: errMsg, loading: false });
+        } else {
+          set({ loading: false });
+        }
       }
     );
 
-    // 触发后端流
     const { invoke } = await import("@tauri-apps/api/core");
     try {
       await invoke("stream_transcript", { path });
@@ -90,6 +91,14 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
       const errMsg = extractErrorMessage(e);
       set({ error: errMsg, loading: false });
       unlisteners.forEach((u) => u());
+    }
+
+    // count 移到 invoke 之后 — 只是 UI hint,不影响数据流
+    try {
+      const total = await apiCountEntries(path);
+      set({ totalCount: total });
+    } catch (e) {
+      console.warn("count_entries 失败:", e);
     }
   },
 }));
