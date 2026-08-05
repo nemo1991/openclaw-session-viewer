@@ -1,5 +1,6 @@
 //! 大模型分析命令 — 调用 Anthropic 兼容 API
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -54,7 +55,11 @@ pub enum AnalyzeEvent {
 
 /// 开始分析
 #[tauri::command]
-pub async fn analyze_session(args: AnalyzeArgs, app: AppHandle) -> AppResult<()> {
+pub async fn analyze_session(
+    args: AnalyzeArgs,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> AppResult<()> {
     if args.api_key.is_empty() {
         return Err(AppError::Config("请先在设置页填入 API Key".into()));
     }
@@ -93,9 +98,28 @@ pub async fn analyze_session(args: AnalyzeArgs, app: AppHandle) -> AppResult<()>
     };
     let user_msg = system.replace("{{context}}", &context);
 
+    // v0.8.14 item C: 注册 abort handle — cancel_analyze 翻 true 后,
+    // 后端 stream task 立刻 bail,不再发后续 delta 也不再发 Done,
+    // 避免空烧 API quota 和 CPU。
+    let job_id = format!(
+        "{}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+        std::process::id()
+    );
+    let abort_flag = Arc::new(parking_lot::Mutex::new(false));
+    {
+        let mut map = state.analyze_aborts.write();
+        map.insert(job_id.clone(), abort_flag.clone());
+    }
+
     // 4) 流式调用
     let (tx, mut rx) = mpsc::channel::<AnalyzeEvent>(64);
     let app_clone = app.clone();
+    let state_clone = Arc::clone(&state);
+    let job_id_for_task = job_id.clone();
 
     let req = AnthropicRequest {
         base_url: args.base_url.clone(),
@@ -108,6 +132,10 @@ pub async fn analyze_session(args: AnalyzeArgs, app: AppHandle) -> AppResult<()>
     tauri::async_runtime::spawn(async move {
         let mut stream = stream_anthropic(&req);
         while let Some(chunk) = stream.recv().await {
+            // v0.8.14 item C: cancel 检查 — abort=true 立刻跳出
+            if *abort_flag.lock() {
+                break;
+            }
             let evt = match chunk {
                 Ok((text, _usage)) => {
                     if !text.is_empty() {
@@ -124,12 +152,20 @@ pub async fn analyze_session(args: AnalyzeArgs, app: AppHandle) -> AppResult<()>
                 break;
             }
         }
-        let _ = tx
-            .send(AnalyzeEvent::Done {
-                total_input_tokens: None,
-                total_output_tokens: None,
-            })
-            .await;
+        // v0.8.14 item C: 区分 done vs cancelled — cancelled 时不发 Done
+        // 事件(前端 store 已在 cancel handler reset state),避免误把
+        // cancel 触发成 "分析完成"。
+        let aborted = *abort_flag.lock();
+        if !aborted {
+            let _ = tx
+                .send(AnalyzeEvent::Done {
+                    total_input_tokens: None,
+                    total_output_tokens: None,
+                })
+                .await;
+        }
+        // 任务结束 — 清理 abort handle (done/cancelled/error 都清)
+        state_clone.analyze_aborts.write().remove(&job_id_for_task);
     });
 
     tauri::async_runtime::spawn(async move {
@@ -142,12 +178,26 @@ pub async fn analyze_session(args: AnalyzeArgs, app: AppHandle) -> AppResult<()>
     Ok(())
 }
 
-/// 取消当前分析(简化版:通过事件通知前端停止消费)
+/// 取消当前分析(v0.8.14 item C: 真停后端)
 #[tauri::command]
-pub async fn cancel_analyze(_state: State<'_, Arc<AppState>>, app: AppHandle) -> AppResult<()> {
-    // 占位:前端应停止监听 analyze-event
+pub async fn cancel_analyze(state: State<'_, Arc<AppState>>, app: AppHandle) -> AppResult<()> {
+    flip_all_abort_flags(&state.analyze_aborts);
     let _ = app.emit("analyze-cancelled", &serde_json::json!({}));
     Ok(())
+}
+
+/// v0.8.14 item C: 把所有活跃 abort flag 翻 true。
+/// stream task 下次 while 循环开头检查 *abort_flag.lock() 就会 break,
+/// 不再发后续 delta 也不再发 Done — 避免空烧 API quota 和 CPU。
+///
+/// 单独抽出来便于测试 — 不需要构造完整 AppState 就能验证 flag flip。
+pub(crate) fn flip_all_abort_flags(
+    aborts: &parking_lot::RwLock<HashMap<String, Arc<parking_lot::Mutex<bool>>>>,
+) {
+    let map = aborts.read();
+    for flag in map.values() {
+        *flag.lock() = true;
+    }
 }
 
 const ANALYSIS_PROMPTS: [&str; 3] = [
@@ -221,3 +271,66 @@ const ANALYSIS_PROMPTS: [&str; 3] = [
 // 占位,实际不直接用
 #[allow(dead_code)]
 fn _ensure_value(_v: &Value) {}
+
+#[cfg(test)]
+mod tests {
+    //! v0.8.14 item C: cancel_analyze 真停后端 — 测试 abort flag
+    //! 翻转契约。完整 stream task 行为需要 mock HTTP server,这里
+    //! 只锁住"flag 翻 true 后下游 stream task 能检测到"这个核心
+    //! 机制 — 跟生产代码里的 abort_flag.lock() 检查一致。
+
+    use super::*;
+    use parking_lot::RwLock;
+    use std::collections::HashMap;
+
+    fn empty_aborts() -> parking_lot::RwLock<HashMap<String, Arc<parking_lot::Mutex<bool>>>> {
+        RwLock::new(HashMap::new())
+    }
+
+    #[test]
+    fn flip_all_abort_flags_marks_every_active_job() {
+        let aborts = empty_aborts();
+        let flag1 = Arc::new(parking_lot::Mutex::new(false));
+        let flag2 = Arc::new(parking_lot::Mutex::new(false));
+        aborts.write().insert("job-1".to_string(), flag1.clone());
+        aborts.write().insert("job-2".to_string(), flag2.clone());
+
+        flip_all_abort_flags(&aborts);
+
+        assert!(*flag1.lock(), "job-1 abort flag 应该被翻 true");
+        assert!(*flag2.lock(), "job-2 abort flag 应该被翻 true");
+    }
+
+    #[test]
+    fn flip_all_abort_flags_empty_map_is_noop() {
+        let aborts = empty_aborts();
+        // 不 panic 即过
+        flip_all_abort_flags(&aborts);
+        assert!(aborts.read().is_empty());
+    }
+
+    #[test]
+    fn abort_flag_pattern_matches_stream_loop_check() {
+        // 锁住"stream task 检查 abort 的语义":一旦 flag = true,
+        // 下次 while 循环开头的 *abort_flag.lock() == true 就 break。
+        // 模拟:跑 3 次后 cancel,验证第 4 次循环开头能 break。
+        let flag = Arc::new(parking_lot::Mutex::new(false));
+        let mut iterations = 0;
+        loop {
+            if *flag.lock() {
+                break;
+            }
+            iterations += 1;
+            if iterations == 3 {
+                // 第 3 次迭代后 flip — 模拟 cancel_analyze 被调用
+                *flag.lock() = true;
+            }
+            if iterations > 5 {
+                panic!("loop 没按预期 break — abort flag 没生效");
+            }
+        }
+        // iterations=3 时翻 true;循环回到顶部 → 检查 → break。
+        // iterations 此时停在 3(break 前没有 +=1)。
+        assert_eq!(iterations, 3, "iter 3 flip → 下次循环 check 应该 break");
+    }
+}

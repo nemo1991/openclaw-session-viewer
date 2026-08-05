@@ -21,13 +21,16 @@ export const apiCountEntries = (path: string): Promise<number> => invoke("count_
 /** 订阅流式转录批次 */
 export function listenTranscriptBatches(
   onBatch: (batch: { startIndex: number; entries: TranscriptEntryOut[] }) => void,
-  onDone: () => void
+  onDone: (errorMsg: string | null) => void
 ): Promise<UnlistenFn[]> {
   return Promise.all([
     listen<{ startIndex: number; entries: TranscriptEntryOut[] }>("transcript-batch", (e) =>
       onBatch(e.payload)
     ),
-    listen("transcript-done", () => onDone()),
+    // v0.8.14 item D: done 事件 payload 现在带 `{ error?: string }` —
+    // 后端 stream_batches 失败时把错误信息塞进 error,前端 store 据此
+    // 设置 error state 而不是 silently 视为成功。
+    listen<{ error: string | null }>("transcript-done", (e) => onDone(e.payload?.error ?? null)),
   ]).then((arr) => arr);
 }
 
@@ -255,13 +258,14 @@ export const apiStreamTrajectory = (path: string): Promise<void> =>
 
 export function listenTrajectoryBatches(
   onBatch: (batch: { startIndex: number; events: TrajectoryEventFE[] }) => void,
-  onDone: () => void
+  onDone: (errorMsg: string | null) => void
 ): Promise<UnlistenFn[]> {
   return Promise.all([
     listen<{ startIndex: number; events: TrajectoryEventFE[] }>("trajectory-batch", (e) =>
       onBatch(e.payload)
     ),
-    listen("trajectory-done", () => onDone()),
+    // v0.8.14 item D: done 事件 payload 现在带 `{ error?: string }`
+    listen<{ error: string | null }>("trajectory-done", (e) => onDone(e.payload?.error ?? null)),
   ]).then((arr) => arr);
 }
 

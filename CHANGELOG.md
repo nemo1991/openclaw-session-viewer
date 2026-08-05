@@ -2,6 +2,152 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.8.14] - 2026-08-05
+
+v0.8.13 收口了 CRITICAL 数据丢失 + 同步竞态。v0.8.14 主题是 **后端安全
+收紧 + 流式契约修复**: 2 处路径安全漏洞（subagents 缺路径校验 + assert_within_any_root
+只看 lexical）、4 处流式/异步契约（transcript 监听竞态、analyze cancel 占位、
+stream 失败吞错、search panic 计数）、2 处交互 bug（DB 重建误导文案、
+SessionCard Enter+blur 双提交）、1 处搜索历史 spam。
+
+### 修复
+
+#### 1. `subagents.rs` 路径安全检查 (item B)
+
+旧实现读子代理 JSONL 完全相信调用方给的 session_dir / agent_id,既不验证
+session_dir 在已知 root 内，也不限制文件大小上限，agent_id 直接拼到
+`PathBuf` 上,理论可被 `../../etc/passwd` 类的 path traversal 利用。
+
+**修复**: 加 `assert_within_any_root` 检查 session*dir;agent_id sanitize
+(只允许 ASCII 字母数字 + `-` + `*`,其他字符拒绝);`MAX_FILE_SIZE` = 50 MiB
+限制 JSONL,`MAX_META_FILE_SIZE`= 1 MiB 限制 meta.json,超出直接跳过(防止
+OOM);handler 拆`list_subagents_inner`/`get_subagent_summary_inner`接受`&AppPaths` 便于测试。
+
+**回归测试**: `sanitize_agent_id_rejects_path_traversal` 等 10 个新测试覆盖
+sanitize / 路径在 root 外拒绝 / 大文件跳过 / 元数据过大跳过 / 缺失 agent。
+
+#### 2. `assert_within_any_root` 改为 canonicalize 比对 (item I)
+
+旧实现只看 lexical 前缀,无法处理两种攻击:
+
+- `..` 路径遍历:字符串 `.claude/../evil.txt` lexical 上仍以 `.claude/` 开头,
+  lex 检查通过;canonicalize 后才显形为 `/.../evil.txt`。
+- macOS symlink: `/var/folders/...` 是 `/private/var/folders/...` 的 symlink,
+  lexical 比对失败,真实存在的 root 文件被误判 "在 root 外"。
+
+**修复**: 优先 `canonicalize` 双方再比对;target 不存在时 fallback 到 lexical
+(创建文件前需要通过)。新 helper `collect_root_paths` 列出所有 root。
+
+**回归测试**: 5 个新测试覆盖正常接受 / 遍历拒绝 / 不存在但 inside 通过 /
+不存在且 outside 拒绝 / `/etc/passwd` 拒绝。
+
+#### 3. `transcriptStore` 监听注册竞态 (item F)
+
+旧实现 `start(path)` 是: `await apiCountEntries(path)` → `await
+listenTranscriptBatches(...)` → `await invoke("stream_transcript", ...)`。
+中间两次 await 让 listener 注册可能在 backend 开始 emit `transcript-batch`
+之后才完成 → 慢机器上前几批丢失,UI 显示 entries=0 但 totalCount>0。
+
+**修复**: 删掉中间的 `apiCountEntries`(它只是 UI hint,移到最后);listen
+→ invoke 之间无任何 await。同时 `analyzeStore` / `searchStore` 的 listener
+清理从 `catch` only 改成 `finally`,失败路径不再泄漏监听。
+
+**回归测试**: 新 `transcriptStore.test.ts` 4 个测试锁住 listen 必须在 invoke
+前 resolve + count 必须在 invoke 后调用 + 同步路径 / loading 状态。
+
+#### 4. `cancel_analyze` 真停后端 (item C)
+
+旧 `cancel_analyze` 仅 emit 一个 `analyze-cancelled` 事件通知前端停止消费,
+但 LLM HTTP stream 仍在跑,会持续消耗 API quota 和 CPU 直到自然完成。
+
+**修复**: `analyze_session` 注册 abort flag (`Arc<Mutex<bool>>`) 到
+`AppState.analyze_aborts` HashMap;stream task 每个 chunk 循环开头检查
+`*abort_flag.lock()`,true 立刻 break 且不发 Done 事件(避免被前端误判为
+"分析完成")。`cancel_analyze` 翻所有活跃 flag 为 true。任务结束自动清理
+abort handle。
+
+**回归测试**: 3 个测试覆盖 flag 翻转契约 + empty map no-op + stream loop
+检测模式。
+
+#### 5. `stream_transcript` / `stream_trajectory` 失败也 emit done (item D)
+
+两个流式命令都 `let _ = jsonl::stream_batches(...).map_err(log)`,错误被
+吞掉 + `tx` drop → `rx` 关闭 → 第二个 task 仍 emit `*-done`。前端 store
+silently 把失败当成成功完成,`error` state 永远是 null,UI 显示 "已加载
+0/N 条"。
+
+**修复**: spawn_blocking 通过新的 `err_tx` channel 把错误消息传给第二个
+task,done payload 改为 `{ error: Option<String> }`,前端 store 据此设置
+`error` state。失败时 `loading=false` + `error=<真实消息>`,用户能看到。
+
+**回归测试**: 新增 2 个 transcriptStore 测试覆盖 done=null / done=error
+两个分支。
+
+#### 6. search panic count propagate (item H)
+
+`search_session` / `search_all` 用 `catch_unwind` 接住单文件 panic(避免
+整个 task 杀掉进程),但 panic 数只 log,不传给前端。前端 done payload
+始终是 `{}`,UI 无法知道 "N 个会话 panic,搜索结果不完整"。
+
+**修复**: catch_unwind 内 panic 时通过新 `panic_tx` channel 发送消息
+字符串到 done 任务,done payload 改为 `{ panicCount, panicMessages[] }`。
+前端 store 可选择性展示警告 toast。
+
+**回归测试**: 2 个测试覆盖 catch_unwind 不传播 + payload downcast 恢复
+panic message。
+
+#### 7. `rebuild_db` 确认框文案统一 (item A)
+
+`DatabasePanel.tsx` 旧的 confirm 文案写 "会清空 session_meta / override /
+tag / link",`HomeStatusBar.tsx` 写 "用户数据 (override / tag / link /
+搜索历史) 都保留" — 同一操作两处文案相互矛盾,用户点 DatabasePanel 的
+重建按钮会被旧文案吓退。
+
+**修复**: 抽共享常量 `REBUILD_CONFIRM_TEXT` / `REBUILD_SUCCESS_HINT` 到
+`lib/rebuild.ts`,两处都引用。文案明确 "保留 override / tag / link",
+跟 v0.8.13 修复后的真行为对齐。
+
+**回归测试**: `rebuild.test.ts` 4 个测试锁住文案包含保留 / 不包含误导 / 非空。
+
+#### 8. SessionCard Enter + blur 双提交 (item G)
+
+重命名输入框在 React 同步事件序列里: `onKeyDown(Enter)` → `setEditingSid(null)`
+→ `onBlur`(input unmount) → 又一次 `commitRename`。两次都通过
+`if (!editingSid) return` guard(因为 setEditingSid 还没 flush)→ 后端
+两次 rename 调用,虽然第二次是 no-op(同 title),但浪费一次 IPC + 可能
+race 出错。
+
+**修复**: 用 `useRef(renameInFlightRef)` 同步翻转的 in-flight flag 替代
+React state guard。Enter 触发后立即 `ref.current = true`,blur handler 见
+true 直接 bail。新增 Escape `cancelRename` 同样设 flag 防 blur 后续 commit
+(之前只重置 draft,输入框仍在焦点)。
+
+#### 9. SearchPalette typing 历史 spam (item E)
+
+旧实现 `useEffect(() => apiRecordSearch(debouncedQuery, hits.length),
+500ms)` deps 是 `[debouncedQuery, hits.length, searching]`,typing 8 个
+字符触发 8 次 search 完成 → 8 次 `setTimeout`(虽然 cleanup 取消旧 timer,
+但 race 边界仍可能 fire 多次)。每条 query 都记入历史,污染搜索记录。
+
+**修复**: 删掉自动 record effect,只在 Enter 提交时记录一次(在 `useKey("enter")`
+handler 内 fire-and-forget)。同时给 `useKey` 加 `[hits, debouncedQuery]`
+deps,避免闭包捕获首渲染值导致 Enter handler 永远看到 stale `hits=[]`。
+
+**回归测试**: 新 `SearchPalette.test.tsx` 6 个测试覆盖 typing 不记录 /
+Enter hits>0 记录 + navigate + reload history / Enter hits=0 / Enter 空
+query / mount 拉 history / Escape 调 hide。
+
+### 验证
+
+```bash
+cargo test --lib                                       # 244 → ~252 (+8)
+pnpm -r test                                           # 559 → ~591 (+32)
+cargo clippy --all-targets -- -D warnings              # clean
+pnpm typecheck                                         # clean
+```
+
+---
+
 ## [0.8.13] - 2026-08-04
 
 v0.8.13 主题是 **数据完整性 + 测试补齐**: 收口 4 个数据/行为 bug、1 个

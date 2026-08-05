@@ -44,6 +44,11 @@ pub async fn search_session(path: String, query: String, app: AppHandle) -> AppR
     let (tx, mut rx) = mpsc::channel::<SearchHitOut>(128);
     let app_clone = app.clone();
 
+    // v0.8.14 item H: 跟踪 panic 计数 → done 事件 payload 透传给前端,
+    // 让 UI 能展示 "N 个会话 panic, 搜索结果不完整" 提示,而不是 silently
+    // 当作全部成功。
+    let (panic_tx, mut panic_rx) = mpsc::channel::<String>(4);
+
     tauri::async_runtime::spawn_blocking(move || {
         // 第二层兜底: 单会话 panic 不影响其他会话/前端。
         // 用 catch_unwind catch + log + 吞掉(不要 rethrow — rethrow
@@ -87,6 +92,7 @@ pub async fn search_session(path: String, query: String, app: AppHandle) -> AppR
                     .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
                     .unwrap_or_else(|| "<non-string panic>".to_string());
                 log::error!("search_session panic,此会话未完成搜索: {}", msg);
+                let _ = panic_tx.blocking_send(msg);
             }
         }
     });
@@ -95,7 +101,17 @@ pub async fn search_session(path: String, query: String, app: AppHandle) -> AppR
         while let Some(hit) = rx.recv().await {
             let _ = app_clone.emit("search-hit", &hit);
         }
-        let _ = app_clone.emit("search-done", &serde_json::json!({}));
+        let mut panic_msgs: Vec<String> = Vec::new();
+        while let Ok(msg) = panic_rx.try_recv() {
+            panic_msgs.push(msg);
+        }
+        let _ = app_clone.emit(
+            "search-done",
+            &serde_json::json!({
+                "panicCount": panic_msgs.len(),
+                "panicMessages": panic_msgs,
+            }),
+        );
     });
 
     Ok(())
@@ -130,6 +146,9 @@ pub async fn search_all(
             }
         }
     }
+
+    // v0.8.14 item H: panic 计数 → done 事件 payload 透传
+    let (panic_tx, mut panic_rx) = mpsc::channel::<String>(16);
 
     tauri::async_runtime::spawn_blocking(move || {
         // 第二层兜底: 单文件 panic 不影响其他文件
@@ -187,6 +206,7 @@ pub async fn search_all(
                     .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
                     .unwrap_or_else(|| "<non-string panic>".to_string());
                 log::error!("search_all panic,部分会话可能未搜索到: {}", msg);
+                let _ = panic_tx.blocking_send(msg);
             }
         }
     });
@@ -195,7 +215,17 @@ pub async fn search_all(
         while let Some(hit) = rx.recv().await {
             let _ = app_clone.emit("global-search-hit", &hit);
         }
-        let _ = app_clone.emit("global-search-done", &serde_json::json!({}));
+        let mut panic_msgs: Vec<String> = Vec::new();
+        while let Ok(msg) = panic_rx.try_recv() {
+            panic_msgs.push(msg);
+        }
+        let _ = app_clone.emit(
+            "global-search-done",
+            &serde_json::json!({
+                "panicCount": panic_msgs.len(),
+                "panicMessages": panic_msgs,
+            }),
+        );
     });
 
     Ok(())
@@ -298,5 +328,40 @@ mod tests {
         let text = "İstanbul";
         let s = extract_snippet(text, 0, 1);
         assert!(s.contains("tanbul") || s.contains("İ"));
+    }
+
+    // v0.8.14 item H: search panic count propagate —
+    // 测试 catch_unwind 后的 panic 计数契约。
+    // 核心契约:catch_unwind 不应让 panic 杀掉整个 task,
+    // panic count 应被记录且 done payload 携带它。
+    #[test]
+    fn test_panic_count_contract_catch_unwind_does_not_propagate() {
+        // 故意触发 panic,确保 catch_unwind 接住
+        let inner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: i32 = "not-a-number".parse().unwrap(); // 故意 panic
+        }));
+        assert!(
+            inner.is_err(),
+            "catch_unwind 应该接住 parse 失败引发的 panic"
+        );
+    }
+
+    #[test]
+    fn test_panic_payload_downcast_recovers_string_message() {
+        // 验证 panic payload → string 转换契约(跟生产代码同 pattern)
+        let inner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            panic!("故意 panic: 测试契约");
+        }));
+        let payload = inner.expect_err("应该有 panic payload");
+        let msg = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "<non-string panic>".to_string());
+        assert!(
+            msg.contains("故意 panic"),
+            "应能恢复 panic message,got: {}",
+            msg
+        );
     }
 }

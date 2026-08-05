@@ -129,9 +129,11 @@ pub async fn stream_trajectory(
 
     let path_for_log = trajectory_path.to_string_lossy().to_string();
     let (tx, mut rx) = mpsc::channel::<TrajectoryBatch>(64);
+    // v0.8.14 item D: 跟踪 stream_batches 错误,通过 done 的 error 字段传出
+    let (err_tx, mut err_rx) = mpsc::channel::<String>(4);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = jsonl::stream_batches(&trajectory_path, 200, |batch| {
+        if let Err(e) = jsonl::stream_batches(&trajectory_path, 200, |batch| {
             let events: Vec<TrajectoryEvent> = batch
                 .records
                 .iter()
@@ -144,16 +146,25 @@ pub async fn stream_trajectory(
                 start_index: batch.start_index,
                 events,
             });
-        })
-        .map_err(|e| log::error!("stream_trajectory 失败 ({}): {}", path_for_log, e));
+        }) {
+            log::error!("stream_trajectory 失败 ({}): {}", path_for_log, e);
+            let _ = err_tx.blocking_send(e.to_string());
+        }
     });
 
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut stream_error: Option<String> = None;
         while let Some(batch) = rx.recv().await {
             let _ = app_clone.emit("trajectory-batch", &batch);
         }
-        let _ = app_clone.emit("trajectory-done", &serde_json::json!({}));
+        if let Some(msg) = err_rx.recv().await {
+            stream_error = Some(msg);
+        }
+        let _ = app_clone.emit(
+            "trajectory-done",
+            &serde_json::json!({ "error": stream_error }),
+        );
     });
 
     Ok(())

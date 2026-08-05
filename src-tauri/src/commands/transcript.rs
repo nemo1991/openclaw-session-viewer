@@ -41,11 +41,14 @@ pub async fn stream_transcript(
     let is_openclaw = path.contains(".openclaw");
     let path_for_log = path.clone();
 
-    // 启动一个 blocking task 流式读取
+    // v0.8.14 item D: 跟踪 stream_batches 的错误,通过 done 事件的
+    // `error` 字段传给前端。之前 spawn_blocking 用 `let _ = ...` 吞掉
+    // error,前端只看到 `transcript-done` 不带任何错误信息,误以为成功。
     let (tx, mut rx) = mpsc::channel::<StreamBatch>(64);
+    let (err_tx, mut err_rx) = mpsc::channel::<String>(4);
 
     tauri::async_runtime::spawn_blocking(move || {
-        let _ = jsonl::stream_batches(&p, 500, |batch| {
+        if let Err(e) = jsonl::stream_batches(&p, 500, |batch| {
             let entries: Vec<TranscriptEntryOut> = batch
                 .records
                 .iter()
@@ -69,17 +72,27 @@ pub async fn stream_transcript(
                 start_index: batch.start_index,
                 entries,
             });
-        })
-        .map_err(|e| log::error!("stream_transcript 失败 ({}): {}", path_for_log, e));
+        }) {
+            log::error!("stream_transcript 失败 ({}): {}", path_for_log, e);
+            let _ = err_tx.blocking_send(e.to_string());
+        }
     });
 
-    // 把 batch 通过 event 推送到前端
+    // 把 batch 通过 event 推送到前端 + done 事件带 error 字段
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut stream_error: Option<String> = None;
         while let Some(batch) = rx.recv().await {
             let _ = app_clone.emit("transcript-batch", &batch);
         }
-        let _ = app_clone.emit("transcript-done", &serde_json::json!({}));
+        // drain error channel(可能有 0/1 个)
+        if let Some(msg) = err_rx.recv().await {
+            stream_error = Some(msg);
+        }
+        let _ = app_clone.emit(
+            "transcript-done",
+            &serde_json::json!({ "error": stream_error }),
+        );
     });
 
     Ok(())

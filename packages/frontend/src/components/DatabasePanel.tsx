@@ -6,9 +6,14 @@
  * - 一键 Rebuild DB (清空 session_meta / override / tag / link, 重跑 sync)
  * - Export overrides → 选 JSON 路径
  * - Import overrides → 选 JSON 路径 + 冲突模式 (KeepBoth/Overwrite/Merge)
+ *
+ * v0.8.14 item A: confirm 文案改用共享常量 REBUILD_CONFIRM_TEXT — 跟
+ * HomeStatusBar 一致,跟 v0.8.13 修后的 rebuild_db 真行为(只清
+ * session_meta, 保留 override/tag/link/history)对齐。
  */
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { REBUILD_CONFIRM_TEXT, REBUILD_SUCCESS_HINT } from "../lib/rebuild";
 
 export interface SyncStatusRow {
   lastRunAt: number | null;
@@ -40,12 +45,12 @@ export function DatabasePanel() {
   }, []);
 
   const handleRebuild = async () => {
-    if (!confirm("确认重建数据库?会清空所有 session_meta / override / tag / link,然后重新同步。"))
-      return;
+    // v0.8.14 item A: 共享文案 — 跟 HomeStatusBar + rebuild_db 真行为对齐
+    if (!confirm(REBUILD_CONFIRM_TEXT)) return;
     setRebuilding(true);
     try {
       await invoke("rebuild_db");
-      setHint("数据库已重建");
+      setHint(REBUILD_SUCCESS_HINT);
       await refresh();
     } catch (e) {
       setHint(`重建失败: ${String(e)}`);

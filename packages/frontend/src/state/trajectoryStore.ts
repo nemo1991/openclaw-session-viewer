@@ -60,8 +60,15 @@ export const useTrajectoryStore = create<TrajectoryStore>((set, get) => ({
             totalCount: Math.max(s.totalCount, s.loadedCount + batch.events.length),
           }));
         },
-        () => {
-          set({ loading: false });
+        // v0.8.14 item D: done 事件现在带 error 字段,后端 stream_batches
+        // 失败时通过这里把错误信息塞进 store,UI 能正常显示而不是
+        // silently 视为成功。
+        (errMsg) => {
+          if (errMsg) {
+            set({ error: errMsg, loading: false });
+          } else {
+            set({ loading: false });
+          }
         }
       );
       unlistenBatch = unlisteners[0] ?? null;

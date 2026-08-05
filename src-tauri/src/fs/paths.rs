@@ -238,45 +238,79 @@ impl AppPaths {
 /// 之前用 `target.to_string_lossy().starts_with(base.to_string_lossy())` 在 Windows
 /// 上失败:base canonicalize 后会带 `\\?\` UNC 前缀,target 是短路径,
 /// 字符串比较失败但实际是子路径。
+///
+/// v0.8.14 item I: lexical 检查之外,当 target 实际存在时再 canonicalize 一遍
+/// re-check,防止 `/Users/test/.claude/../../../.ssh/id_rsa` 这种 lexical-pass
+/// (starts_with `.claude` ✓) 但 canonicalize 后实际指向 root 外的路径逃逸。
+///
+/// 行为表(对 _存在_ 的 path):
+/// - `.claude/foo.txt` → canonicalize = 同 → lexical Ok ✓
+/// - `.claude/../.ssh/id_rsa` → canonicalize = `parent_dir/.ssh/id_rsa` → lexical fails → Err ✓ (原本 lexical-pass 漏掉!)
+/// - `/etc/passwd` → lexical fails, canonicalize = `/etc/passwd` (or `/private/etc/passwd`) → lexical fails → Err ✓
+///
+/// 非存在 path 仍走纯 lexical 检查(canonicalize 需要文件存在);
+/// 真实使用里非存在 path 是 DB fallback 场景,sanitize 上游过滤已经覆盖。
 pub fn assert_within_any_root(paths: &AppPaths, target: &Path) -> crate::error::AppResult<()> {
-    // 1) default claude.projects_dir (含所有 Claude 子树: projects/plans/skills/...)
-    //    v0.6.x: 接受整个 ~/.claude 而不仅是 ~/.claude/projects/, 让 plan 文件
-    //    (~/.claude/plans/*.md) 也能 reveal
-    if let Some(c) = &paths.default_root.claude {
-        if path_starts_with(target, &c.home) {
-            return Ok(());
-        }
-    }
-    // 2) default openclaw.agents_dir
-    if let Some(o) = &paths.default_root.openclaw {
-        if path_starts_with(target, &o.home) {
-            return Ok(());
-        }
-    }
-    // 3) 每个 custom_root (整个 root 也接受, 用户自定义的 Claude/OpenClaw 路径
-    //    以及 ~/Downloads 之类的也可能含 projects/)
-    for cr in &paths.custom_roots {
-        // 3a) 用户提供的整个 path 都接受 (e.g. /tmp/my-claude-root/*)
-        if path_starts_with(target, &cr.path) {
-            return Ok(());
-        }
-        // 3b) Claude home (整个 ~/.claude 子树)
-        if let Some(c) = &cr.claude {
-            if path_starts_with(target, &c.home) {
-                return Ok(());
+    // 1) 如果 target 实际存在,canonicalize 拿真实路径。
+    //    防 `..` traversal:`/a/b/.claude/../.ssh/id_rsa` lexical-pass `.claude`,
+    //    但 canonical 后是 `/a/b/.ssh/id_rsa` 在 root 外。
+    let target_canonical = if target.exists() {
+        std::fs::canonicalize(target).ok()
+    } else {
+        None
+    };
+
+    let roots = collect_root_paths(paths);
+
+    // 2) 优先 canonical-target vs canonical-root (防 macOS /var→/private/var symlink)
+    if let Some(tc) = &target_canonical {
+        for root in &roots {
+            if let Ok(rc) = std::fs::canonicalize(root) {
+                if path_starts_with(tc, &rc) {
+                    return Ok(());
+                }
             }
         }
-        // 3c) OpenClaw home (整个 ~/.openclaw 子树)
-        if let Some(o) = &cr.openclaw {
-            if path_starts_with(target, &o.home) {
-                return Ok(());
-            }
+        // canonical-target 存在但不在任一 canonical-root 下 → 拒绝
+        return Err(crate::error::AppError::PathSecurity(format!(
+            "路径安全: {:?} (canonical: {:?}) 不在任一已知 root 下",
+            target, tc
+        )));
+    }
+
+    // 3) target 不存在(或 canonicalize 失败):回退到 raw lexical 比较
+    //    (向后兼容 — DB fallback 场景)
+    for root in &roots {
+        if path_starts_with(target, root) {
+            return Ok(());
         }
     }
     Err(crate::error::AppError::PathSecurity(format!(
         "路径安全: {:?} 不在任一已知 root 下",
         target
     )))
+}
+
+/// Collect every root path we treat as "inside" for `assert_within_any_root`:
+/// default Claude + OpenClaw homes, plus each custom_root (whole + each home).
+fn collect_root_paths(paths: &AppPaths) -> Vec<&Path> {
+    let mut out: Vec<&Path> = Vec::new();
+    if let Some(c) = &paths.default_root.claude {
+        out.push(c.home.as_path());
+    }
+    if let Some(o) = &paths.default_root.openclaw {
+        out.push(o.home.as_path());
+    }
+    for cr in &paths.custom_roots {
+        out.push(cr.path.as_path());
+        if let Some(c) = &cr.claude {
+            out.push(c.home.as_path());
+        }
+        if let Some(o) = &cr.openclaw {
+            out.push(o.home.as_path());
+        }
+    }
+    out
 }
 
 /// 路径"target 是 base 的子路径"比较,跨平台安全:
@@ -555,5 +589,106 @@ mod tests {
         std::fs::create_dir(dir.path().join("agents")).unwrap();
         let result = CustomRoot::probe(dir.path().to_path_buf()).expect("probe");
         assert_eq!(result.kind, RootKind::Both);
+    }
+
+    // ===== v0.8.14 item I: canonicalize-based traversal defense =====
+
+    /// 构造 AppPaths,default root 指向 tmpdir(让 .claude/... 视为 inside)
+    fn make_test_paths_with_root(tmp: &tempfile::TempDir) -> AppPaths {
+        let home = tmp.path().to_path_buf();
+        AppPaths {
+            home: home.clone(),
+            default_root: RootSource {
+                label: "default".to_string(),
+                path: home.clone(),
+                claude: Some(ClaudePaths::new(&home)),
+                openclaw: None,
+            },
+            custom_roots: vec![],
+        }
+    }
+
+    #[test]
+    fn test_assert_within_any_root_accepts_existing_file_in_root() {
+        // v0.8.14 item I: 合法现有文件应被接受 (canonicalize + re-check)
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_root(&tmp);
+        let claude_dir = tmp.path().join(".claude/projects/proj-a");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        let legit = claude_dir.join("sess.jsonl");
+        std::fs::write(&legit, b"{\"type\":\"user\"}\n").unwrap();
+
+        assert!(
+            assert_within_any_root(&paths, &legit).is_ok(),
+            "存在的合法文件应被接受"
+        );
+    }
+
+    #[test]
+    fn test_assert_within_any_root_canonicalize_blocks_traversal() {
+        // v0.8.14 item I: `..` traversal — lexical-pass .claude,但 canonicalize
+        // 后实际指向 root 外 — 应被拒绝。
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_root(&tmp);
+        let claude_dir = tmp.path().join(".claude");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+
+        // 创建 tmpdir/.claude/../evil.txt (= tmpdir/evil.txt)
+        // 注意:这是真实文件,所以 canonicalize 能 resolve 它
+        let evil_path = tmp.path().join(".claude/../evil.txt");
+        std::fs::write(&evil_path, b"evil\n").unwrap();
+
+        // 直接传 path string,不 canonicalize — lexical starts_with `.claude/` 应 PASS
+        // 这是被 fix 之前的脆弱点。我们的 assert_within_any_root 现在应:
+        // 1) lexical-passes → 走 canonicalize(re-check) → fails → Err
+        assert!(
+            assert_within_any_root(&paths, &evil_path).is_err(),
+            "traversal 应被 canonicalize 检查拦截"
+        );
+    }
+
+    #[test]
+    fn test_assert_within_any_root_non_existent_inside_root_passes() {
+        // v0.8.14 item I: 非存在 path 在 root 内 — 应被接受(向后兼容,
+        // DB fallback 场景)
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_root(&tmp);
+        // canonicalize 失败(target 不存在),lexical 必须 PASS
+        let ghost = tmp.path().join(".claude/projects/proj-a/ghost.jsonl");
+        assert!(!ghost.exists());
+        assert!(
+            assert_within_any_root(&paths, &ghost).is_ok(),
+            "非存在 path 在 root 内应被接受(DB fallback 场景)"
+        );
+    }
+
+    #[test]
+    fn test_assert_within_any_root_non_existent_outside_root_rejected() {
+        // v0.8.14 item I: 非存在 path 在 root 外 — canonicalize 失败,
+        // lexical 失败 → Err
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_root(&tmp);
+        let outside = tmp.path().join("not_claude/ghost.jsonl");
+        assert!(!outside.exists());
+        assert!(
+            assert_within_any_root(&paths, &outside).is_err(),
+            "非存在 path 在 root 外应被拒绝"
+        );
+    }
+
+    #[test]
+    fn test_assert_within_any_root_etc_passwd_rejected() {
+        // v0.8.14 item I: 现实攻击 — /etc/passwd 存在,根是 .claude,
+        // lexical starts_with `.claude` 失败;canonicalize 后仍在 /etc/passwd,
+        // 仍失败 → Err
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_root(&tmp);
+        // 只在 /etc/passwd 真的存在时跑这条断言(macOS / Linux 通常都在)
+        if Path::new("/etc/passwd").exists() {
+            assert!(
+                assert_within_any_root(&paths, Path::new("/etc/passwd")).is_err(),
+                "/etc/passwd 应被拒绝"
+            );
+        }
     }
 }
