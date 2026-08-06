@@ -264,8 +264,8 @@ export default function SettingsRoute() {
               <div className="data-source-paths">
                 <code>~/.claude</code>
                 <code>~/.openclaw</code>
-                {/* v0.9.0: Kimi Code */}
-                <code>~/.kimi</code>
+                {/* v0.9.0: Kimi Code — v0.9.1: 默认 home 改为 ~/.kimi-code */}
+                <code>~/.kimi-code</code>
               </div>
             </div>
           </div>

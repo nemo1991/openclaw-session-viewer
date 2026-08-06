@@ -64,12 +64,13 @@ impl OpenClawPaths {
 }
 
 /// v0.9.0: Kimi Code CLI (Moonshot) 路径解析
+/// v0.9.1: 默认 home 改为 `~/.kimi-code` (Kimi Code CLI 实际安装路径)
 ///
 /// 目录布局:
-/// - `~/.kimi/sessions/wd_<workspace>_<hash>/session_<uuid>/agents/main/wire.jsonl`
-/// - `~/.kimi/session_index.jsonl` (best-effort 全局索引,本项目只做 cache lookup)
-/// - `~/.kimi/workspaces.json` (workspace 注册表,本项目暂不读)
-/// - `~/.kimi/user-history/` (文本片段,跟 session 无关 — 跳过)
+/// - `~/.kimi-code/sessions/wd_<workspace>_<hash>/session_<uuid>/agents/main/wire.jsonl`
+/// - `~/.kimi-code/session_index.jsonl` (best-effort 全局索引,本项目只做 cache lookup)
+/// - `~/.kimi-code/workspaces.json` (workspace 注册表,本项目暂不读)
+/// - `~/.kimi-code/user-history/` (文本片段,跟 session 无关 — 跳过)
 #[derive(Debug, Clone)]
 pub struct KimiPaths {
     pub home: PathBuf,
@@ -80,7 +81,7 @@ pub struct KimiPaths {
 
 impl KimiPaths {
     pub fn new(home_dir: &Path) -> Self {
-        let home = home_dir.join(".kimi");
+        let home = home_dir.join(".kimi-code");
         Self {
             home: home.clone(),
             sessions_root: home.join("sessions"),
