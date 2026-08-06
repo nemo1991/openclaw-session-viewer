@@ -22,7 +22,7 @@ test.describe("会话详情页", () => {
     const errors: string[] = [];
     page.on("pageerror", (err) => errors.push(err.message));
 
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
 
     // 等待 React mount
     await page.waitForLoadState("domcontentloaded");
@@ -40,7 +40,7 @@ test.describe("会话详情页", () => {
   });
 
   test("FilterPanel preset='all':4 个 preset 按钮可见,datetime 不渲染", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     // 即使 transcript 加载失败,FilterPanel 也会渲染(TranscriptView mount 即挂)
@@ -56,7 +56,7 @@ test.describe("会话详情页", () => {
   });
 
   test("FilterPanel:点 24h preset → footer 文字变化(若 entries 已加载)", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(500);
 
     // 先看 footer 初始文字
@@ -77,7 +77,7 @@ test.describe("会话详情页", () => {
   });
 
   test("SortPanel:点 desc 按钮 → button 变 active", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     const descBtn = page.locator('[data-testid="sort-desc"]').first();
@@ -92,7 +92,7 @@ test.describe("会话详情页", () => {
   });
 
   test("Cmd+F:打开搜索栏", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     // Cmd+F (macOS 用 Meta,Windows/Linux 用 Control)
@@ -105,7 +105,7 @@ test.describe("会话详情页", () => {
 
   test("URL ?from=ISO:filter-from-input 应同步 ISO(若组件已 mount)", async ({ page }) => {
     // 这个 test 验证 useSessionUrlSync 的 round-trip
-    await page.goto("/session/abc123?from=2026-06-25T00:00:00Z");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl&from=2026-06-25T00:00:00Z");
     await page.waitForTimeout(500);
 
     // URL sync → setRange → preset='custom' → datetime 输入渲染
@@ -130,7 +130,7 @@ test.describe("会话详情页", () => {
 test.describe.skip("v0.5.0: 主-子 agent 关联", () => {
   // 公共 fixture:mock Tauri IPC + 跳到指定 URL + 注入 location.state
   // (state.session 是 SessionDetailRoute / SessionsRoute 渲染必需)
-  async function setupSubagentMock(page: any, targetUrl = "/session/main-session") {
+  async function setupSubagentMock(page: any, targetUrl = "/#/session/main-session") {
     await page.addInitScript(() => {
       (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
         transformCallback: () => 0,
@@ -198,7 +198,7 @@ test.describe.skip("v0.5.0: 主-子 agent 关联", () => {
     await page.goto(targetUrl);
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(300);
-    if (targetUrl.startsWith("/session/")) {
+    if (targetUrl.startsWith("/#/session/")) {
       await page.evaluate(() => {
         window.history.replaceState(
           {
@@ -279,7 +279,7 @@ test.describe.skip("v0.5.0: 主-子 agent 关联", () => {
         invoke: async () => null,
       };
     });
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForLoadState("domcontentloaded");
     await page.waitForTimeout(300);
     // 模拟 SubagentPanel 的 navigate 调用,加 location.state.subagentContext
