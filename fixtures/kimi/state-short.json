@@ -1,0 +1,15 @@
+{
+  "createdAt": "2026-08-05T07:30:03.363Z",
+  "updatedAt": "2026-08-05T07:30:03.363Z",
+  "title": "New Session",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_bpm_ab308ba3bc10/session_fff88220-8993-4784-bcb3-eba34ccdd0b5/agents/main",
+      "type": "main",
+      "parentAgentId": null
+    }
+  },
+  "custom": {},
+  "workDir": "D:/workspace/carrier/BPM"
+}

@@ -1,0 +1,21 @@
+{
+  "createdAt": "2026-07-27T01:21:39.276Z",
+  "updatedAt": "2026-07-27T01:37:29.467Z",
+  "title": "将 src/TsingTao.Sites.[redacted].cs 返回的结果中，将姓名、手机号、身份证号进行脱敏",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_cust-portal-server_f4b726d70c42/session_71661b56-edc3-4e0a-9a63-c2058483539e/agents/main",
+      "type": "main",
+      "parentAgentId": null
+    },
+    "agent-0": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_cust-portal-server_f4b726d70c42/session_71661b56-edc3-4e0a-9a63-c2058483539e/agents/agent-0",
+      "type": "sub",
+      "parentAgentId": "main"
+    }
+  },
+  "custom": {},
+  "workDir": "D:/workspace/tsingtao/MB0037-DevOps/cust-portal-server",
+  "lastPrompt": "将 src/TsingTao.Sites.[redacted].cs 返回的结果中，将姓名、手机号、身份证号进行脱敏"
+}
