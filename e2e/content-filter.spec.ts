@@ -17,7 +17,9 @@ import { test, expect } from "@playwright/test";
 
 test.describe("ContentFilterPanel", () => {
   test("DOM 渲染:role 3 选项 + has 4 选项 + clear 隐藏(初始无 active)", async ({ page }) => {
-    await page.goto("/session/abc123");
+    // v0.9.2: ?path= 让 SessionDetailRoute 构造最小 meta,绕过 notFound;
+    // ContentFilterPanel 仍然 mount(TranscriptView render 时挂载,跟 transcript 加载无关)
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     // Role buttons
@@ -42,7 +44,7 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("role:点 user → onSetRole → chip data-active=true", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     await page.locator('[data-testid="filter-role-user"]').first().click();
@@ -57,7 +59,7 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("has 多选:点 thinking 后 chip 高亮 + clear 按钮出现", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     const thinkingChip = page.locator('[data-testid="content-filter-has-thinking"]').first();
@@ -69,7 +71,7 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("clear 按钮 → 重置 content filter,clear 按钮消失", async ({ page }) => {
-    await page.goto("/session/abc123");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl");
     await page.waitForTimeout(300);
 
     // 激活一个 has → clear 出现
@@ -87,7 +89,7 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("URL ?role=user → store setRole → DOM chip active=true", async ({ page }) => {
-    await page.goto("/session/abc123?role=user");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl&role=user");
     await page.waitForTimeout(400);
 
     const userBtn = page.locator('[data-testid="filter-role-user"]').first();
@@ -97,7 +99,7 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("URL ?has=thinking,error → 2 个 chip 同时高亮", async ({ page }) => {
-    await page.goto("/session/abc123?has=thinking,error");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl&has=thinking,error");
     await page.waitForTimeout(400);
 
     const thinking = page.locator('[data-testid="content-filter-has-thinking"]').first();
@@ -114,7 +116,7 @@ test.describe("ContentFilterPanel", () => {
   }) => {
     // vite preview 无 entries → availableTools 为空 → tool 行不渲染
     // 但 URL 解析会把 store.tools=["Bash","Read"],只是 DOM 上没 chip 显示
-    await page.goto("/session/abc123?tool=Bash,Read");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl&tool=Bash,Read");
     await page.waitForTimeout(400);
 
     // 验证 hook 已读 URL(通过 clear 按钮出现间接证明 store.tools 非空)
@@ -122,7 +124,9 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("URL 组合 ?from&role&has → 同时生效,clear 出现", async ({ page }) => {
-    await page.goto("/session/abc123?from=2026-06-25T00:00:00Z&role=assistant&has=thinking");
+    await page.goto(
+      "/#/session/abc123?path=/tmp/abc123.jsonl&from=2026-06-25T00:00:00Z&role=assistant&has=thinking"
+    );
     await page.waitForTimeout(400);
 
     // time:preset='custom' → datetime 输入可见
@@ -141,7 +145,7 @@ test.describe("ContentFilterPanel", () => {
   });
 
   test("URL ?has=evil(非法值) → 静默跳过", async ({ page }) => {
-    await page.goto("/session/abc123?has=evil,bogus");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl&has=evil,bogus");
     await page.waitForTimeout(400);
 
     // 非法值不进 store → clear 按钮不应出现
@@ -151,7 +155,7 @@ test.describe("ContentFilterPanel", () => {
   test("URL ?has=thinking 后点 clear → store 清空,URL 不变(单向同步,reverse 在另一个 effect)", async ({
     page,
   }) => {
-    await page.goto("/session/abc123?has=thinking");
+    await page.goto("/#/session/abc123?path=/tmp/abc123.jsonl&has=thinking");
     await page.waitForTimeout(400);
     await expect(page.locator('[data-testid="content-filter-clear"]').first()).toHaveCount(1);
 
