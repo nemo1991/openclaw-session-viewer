@@ -355,7 +355,7 @@ describe("sessionsStore.v0.9.0 Kimi", () => {
           sessionId: "k-with-subs",
           source: "kimi",
           agentId: "main",
-          subagentDir: "/home/.kimi/sessions/wd_x/session_y/agents",
+          subagentDir: "/home/.kimi-code/sessions/wd_x/session_y/agents",
         }),
       ],
     });

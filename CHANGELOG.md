@@ -2,6 +2,25 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.1] - 2026-08-06
+
+v0.9.0 引入 Kimi Code 作为第三种 source 时用了 `~/.kimi` 作为默认 home 路径,
+但 Kimi Code CLI 实际安装路径是 `~/.kimi-code`。v0.9.1 修正默认路径,
+**不** 兼容探测老 `~/.kimi` 用户 — 硬切换,如有旧数据用户在 Settings 自定义根。
+
+### Changed
+
+- `fs/paths.rs::KimiPaths::new` 默认 home 改 `~/.kimi` → `~/.kimi-code`
+- `i18n/zh-CN.ts` `dataSources.hint` / `errors.noKimiDir` 文案同步
+- `SettingsRoute.tsx` Data sources 默认路径标签改 `~/.kimi-code`
+- `sessionsStore.test.ts` fixture 路径同步
+
+### Notes
+
+- `source_from_path` 用 `path.contains(".kimi")` 子串判断,`.kimi-code` 仍命中,无需改
+- `parser/meta_extras.rs::build_meta_full` 早 return 条件同上,继续生效
+- 老 `~/.kimi` 用户: 在 Settings 添加自定义根指向原目录即可
+
 ## [0.9.0] - 2026-08-05
 
 v0.8.x 收口跨平台快捷键等小修。v0.9.0 主题是 **新增第三种 source — Moonshot Kimi Code CLI**。
