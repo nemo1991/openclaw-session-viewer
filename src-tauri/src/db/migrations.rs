@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::error::AppResult;
 
@@ -117,6 +117,119 @@ pub fn ensure_tables(conn: &Connection) -> AppResult<()> {
     for stmt in NEW_TABLES {
         conn.execute_batch(stmt)?;
     }
+    Ok(())
+}
+
+/// v0.9.0: 给老 v0.8.x DB 的 `session_meta.source` CHECK 约束加 'kimi'
+///
+/// SQLite 不支持 ALTER TABLE 修改 CHECK 约束。走标准 12-step rebuild dance:
+/// 1. CREATE TABLE session_meta_new (跟原 schema 完全一致,新 CHECK)
+/// 2. INSERT INTO session_meta_new SELECT * FROM session_meta
+/// 3. DROP TABLE session_meta
+/// 4. ALTER TABLE session_meta_new RENAME TO session_meta
+/// 5. 重建所有索引
+///
+/// 幂等: 跑两遍(CHECK 已含 'kimi')→ bail,不重建。
+pub fn ensure_kimi_in_source_check(conn: &Connection) -> AppResult<()> {
+    // 1) 看 CHECK 现状 — 含 'kimi' 则跳过
+    let has_kimi_check: bool = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+            [],
+            |r| {
+                let sql: String = r.get(0)?;
+                Ok(sql.contains("'kimi'"))
+            },
+        )
+        .optional()
+        .unwrap_or(Some(false))
+        .unwrap_or(false);
+    if has_kimi_check {
+        return Ok(());
+    }
+
+    log::info!("v0.9.0 migration: rebuilding session_meta to add 'kimi' to source CHECK");
+
+    // 2) 取当前 session_meta 的全列定义(PRAGMA table_info)
+    let mut col_defs: Vec<String> = Vec::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(session_meta)")?;
+        let rows = stmt.query_map([], |r| {
+            let name: String = r.get(1)?;
+            let ty: String = r.get(2)?;
+            let notnull: i64 = r.get(3)?;
+            let default_val: Option<String> = r.get(4)?;
+            let pk: i64 = r.get(5)?;
+            let mut s = format!("{} {}", name, ty);
+            if pk > 0 {
+                s.push_str(" PRIMARY KEY");
+            }
+            if notnull != 0 && pk == 0 {
+                s.push_str(" NOT NULL");
+            }
+            if let Some(d) = default_val {
+                s.push_str(&format!(" DEFAULT {}", d));
+            }
+            Ok(s)
+        })?;
+        for row in rows {
+            col_defs.push(row?);
+        }
+    }
+
+    // 3) 拿当前所有索引的 SQL,rebuild 后逐条重建
+    let indexes: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='session_meta' AND sql IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let sql: String = r.get(0)?;
+            Ok(sql)
+        })?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // 4) 开启事务(rebuild 必须 atomic,失败回滚)
+    conn.execute_batch("BEGIN")?;
+
+    // 5) 建新表 — 保留 source 列原位置,只改 CHECK 约束(替换原 CREATE TABLE 文本)
+    //    从 sqlite_master 拿原 CREATE TABLE SQL,正则替换 CHECK 部分
+    let original_create_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+            [],
+            |r| r.get(0),
+        )
+        .ok()
+        .unwrap_or_default();
+    // 替换 CHECK 约束: 'claude','openclaw' → 'claude','openclaw','kimi'
+    let new_table_sql = original_create_sql
+        .replace(
+            "CHECK(source IN ('claude','openclaw'))",
+            "CHECK(source IN ('claude','openclaw','kimi'))",
+        )
+        .replace("session_meta", "session_meta_new");
+
+    conn.execute_batch(&new_table_sql)?;
+
+    // 6) 数据迁移
+    conn.execute_batch("INSERT INTO session_meta_new SELECT * FROM session_meta")?;
+
+    // 7) 删旧表
+    conn.execute_batch("DROP TABLE session_meta")?;
+
+    // 8) 改名
+    conn.execute_batch("ALTER TABLE session_meta_new RENAME TO session_meta")?;
+
+    // 9) 重建索引
+    for idx_sql in &indexes {
+        conn.execute_batch(idx_sql)?;
+    }
+
+    // 10) 提交
+    conn.execute_batch("COMMIT")?;
+
+    log::info!("v0.9.0 migration: session_meta rebuilt with 'kimi' source");
     Ok(())
 }
 
@@ -241,5 +354,84 @@ mod tests {
             )
             .unwrap();
         assert_eq!(g, 1);
+    }
+
+    // ===== v0.9.0: ensure_kimi_in_source_check =====
+
+    /// 建一个老 v0.8.x DB:source 列 CHECK 只含 claude/openclaw
+    fn fresh_v8_db() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            r#"CREATE TABLE session_meta (
+                session_id TEXT PRIMARY KEY,
+                project_key TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(source IN ('claude','openclaw')),
+                jsonl_path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                mtime_ms INTEGER NOT NULL DEFAULT 0,
+                line_count INTEGER NOT NULL DEFAULT 0,
+                first_timestamp TEXT,
+                last_timestamp TEXT,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                synced_at INTEGER NOT NULL DEFAULT 0
+            );"#,
+        )
+        .unwrap();
+        // 插入一条 claude 行 — 验证 rebuild 后数据不丢
+        c.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES (?, ?, ?, ?)",
+            rusqlite::params!["s1", "k1", "claude", "/p1"],
+        ).unwrap();
+        c
+    }
+
+    #[test]
+    fn ensure_kimi_in_source_check_rebuilds_table() {
+        let conn = fresh_v8_db();
+        ensure_kimi_in_source_check(&conn).unwrap();
+        // 现在 source CHECK 应含 'kimi'
+        let has_kimi: bool = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+                [],
+                |r| Ok(r.get::<_, String>(0)?.contains("'kimi'")),
+            )
+            .unwrap();
+        assert!(has_kimi, "after migration, CHECK should include 'kimi'");
+        // 旧数据保留
+        let sid: String = conn
+            .query_row(
+                "SELECT session_id FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sid, "s1");
+        // kimi INSERT 现在成功
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s2', 'k2', 'kimi', '/p2')",
+            [],
+        ).unwrap();
+    }
+
+    #[test]
+    fn ensure_kimi_in_source_check_idempotent() {
+        let conn = fresh_v8_db();
+        ensure_kimi_in_source_check(&conn).unwrap();
+        // 再跑一次不应该破坏(sid 还在,索引都在)
+        ensure_kimi_in_source_check(&conn).unwrap();
+        let sid: String = conn
+            .query_row(
+                "SELECT session_id FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sid, "s1");
+        // kimi 还能插入
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s3', 'k3', 'kimi', '/p3')",
+            [],
+        ).unwrap();
     }
 }

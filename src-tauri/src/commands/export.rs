@@ -4,8 +4,10 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::AppResult;
+use crate::fs::source::source_from_path;
 use crate::parser::claude::normalize;
 use crate::parser::jsonl;
+use crate::parser::kimi::normalize_kimi_record;
 use crate::parser::openclaw::normalize_entry;
 
 /// 导出为 Markdown
@@ -15,16 +17,16 @@ pub async fn export_markdown(path: String, out_path: String) -> AppResult<()> {
     if !jsonl_path.exists() {
         return Err(crate::error::AppError::NotFound(path));
     }
-    let is_openclaw = path.contains(".openclaw");
+    let src = source_from_path(&path);
 
     let mut md = String::new();
     md.push_str(&format!("# 会话导出\n\n**文件**: `{}`\n\n", path));
 
     jsonl::for_each_line(jsonl_path, |idx, _, v| {
-        let norm = if is_openclaw {
-            normalize_entry(v, idx)
-        } else {
-            normalize(v, idx)
+        let norm = match src {
+            "openclaw" => normalize_entry(v, idx),
+            "kimi" => normalize_kimi_record(v, idx),
+            _ => normalize(v, idx),
         };
         if let Some(n) = norm {
             append_message_md(&mut md, &n);
@@ -42,7 +44,7 @@ pub async fn export_html(path: String, out_path: String) -> AppResult<()> {
     if !jsonl_path.exists() {
         return Err(crate::error::AppError::NotFound(path));
     }
-    let is_openclaw = path.contains(".openclaw");
+    let src = source_from_path(&path);
 
     let mut body = String::new();
     body.push_str(&format!(
@@ -51,10 +53,10 @@ pub async fn export_html(path: String, out_path: String) -> AppResult<()> {
     ));
 
     jsonl::for_each_line(jsonl_path, |idx, _, v| {
-        let norm = if is_openclaw {
-            normalize_entry(v, idx)
-        } else {
-            normalize(v, idx)
+        let norm = match src {
+            "openclaw" => normalize_entry(v, idx),
+            "kimi" => normalize_kimi_record(v, idx),
+            _ => normalize(v, idx),
         };
         if let Some(n) = norm {
             append_message_html(&mut body, &n);

@@ -1,4 +1,4 @@
-//! 路径解析 — Claude Code 和 OpenClaw 目录布局
+//! 路径解析 — Claude Code / OpenClaw / Kimi Code 目录布局
 
 use std::path::{Path, PathBuf};
 
@@ -63,6 +63,37 @@ impl OpenClawPaths {
     }
 }
 
+/// v0.9.0: Kimi Code CLI (Moonshot) 路径解析
+///
+/// 目录布局:
+/// - `~/.kimi/sessions/wd_<workspace>_<hash>/session_<uuid>/agents/main/wire.jsonl`
+/// - `~/.kimi/session_index.jsonl` (best-effort 全局索引,本项目只做 cache lookup)
+/// - `~/.kimi/workspaces.json` (workspace 注册表,本项目暂不读)
+/// - `~/.kimi/user-history/` (文本片段,跟 session 无关 — 跳过)
+#[derive(Debug, Clone)]
+pub struct KimiPaths {
+    pub home: PathBuf,
+    pub sessions_root: PathBuf,
+    pub session_index_file: PathBuf,
+    pub workspaces_file: PathBuf,
+}
+
+impl KimiPaths {
+    pub fn new(home_dir: &Path) -> Self {
+        let home = home_dir.join(".kimi");
+        Self {
+            home: home.clone(),
+            sessions_root: home.join("sessions"),
+            session_index_file: home.join("session_index.jsonl"),
+            workspaces_file: home.join("workspaces.json"),
+        }
+    }
+
+    pub fn exists(&self) -> bool {
+        self.home.exists()
+    }
+}
+
 /// v0.2.5: 自定义根目录,自动探测含 Claude 和/或 OpenClaw 数据
 ///
 /// `path` 是用户在 settings 里填的绝对路径(可能是 `~/Downloads/.openclaw/` 这种)。
@@ -79,6 +110,8 @@ pub struct CustomRoot {
     pub claude_projects_dir: Option<PathBuf>,
     /// path/agents/<agentId>/sessions/* 路径(仅 kind 含 OpenClaw 时 Some)
     pub openclaw_agents_dir: Option<PathBuf>,
+    /// v0.9.0: path/sessions/wd_*/session_*/* 路径(仅 kind 含 Kimi 时 Some)
+    pub kimi_sessions_root: Option<PathBuf>,
 }
 
 /// 自动探测一个根目录含哪种数据
@@ -86,12 +119,17 @@ pub struct CustomRoot {
 /// 约定:
 /// - 含 `projects/` 子目录 → 视作 Claude
 /// - 含 `agents/` 子目录 → 视作 OpenClaw
-/// - 两者都含 → Both
+/// - 含 `sessions/` 子目录 → 视作 Kimi
+/// - 多源 → Both / All
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RootKind {
     Claude,
     OpenClaw,
+    Kimi,
+    /// Claude + OpenClaw (兼容老 case)
     Both,
+    /// Claude + OpenClaw + Kimi (v0.9.0 自定义根三源混用)
+    All,
 }
 
 impl CustomRoot {
@@ -102,14 +140,19 @@ impl CustomRoot {
         }
         let claude_projects = path.join("projects");
         let openclaw_agents = path.join("agents");
+        let kimi_sessions = path.join("sessions");
         let has_claude = claude_projects.exists() && claude_projects.is_dir();
         let has_openclaw = openclaw_agents.exists() && openclaw_agents.is_dir();
+        let has_kimi = kimi_sessions.exists() && kimi_sessions.is_dir();
 
-        let kind = match (has_claude, has_openclaw) {
-            (true, true) => RootKind::Both,
-            (true, false) => RootKind::Claude,
-            (false, true) => RootKind::OpenClaw,
-            (false, false) => return None,
+        let kind = match (has_claude, has_openclaw, has_kimi) {
+            (false, false, false) => return None,
+            (true, false, false) => RootKind::Claude,
+            (false, true, false) => RootKind::OpenClaw,
+            (false, false, true) => RootKind::Kimi,
+            // 多源混用: Claude+OpenClaw (兼容) vs All (含 Kimi)
+            (true, true, false) => RootKind::Both,
+            (true, false, true) | (false, true, true) | (true, true, true) => RootKind::All,
         };
 
         Some(Self {
@@ -121,6 +164,7 @@ impl CustomRoot {
             kind,
             claude_projects_dir: has_claude.then_some(claude_projects),
             openclaw_agents_dir: has_openclaw.then_some(openclaw_agents),
+            kimi_sessions_root: has_kimi.then_some(kimi_sessions),
         })
     }
 }
@@ -136,13 +180,14 @@ pub struct AppPaths {
     pub custom_roots: Vec<RootSource>,
 }
 
-/// 单个数据根来源(默认或自定义),含 Claude + OpenClaw 子目录
+/// 单个数据根来源(默认或自定义),含 Claude + OpenClaw + Kimi 子目录
 #[derive(Debug, Clone)]
 pub struct RootSource {
     pub label: String,
     pub path: PathBuf,
     pub claude: Option<ClaudePaths>,
     pub openclaw: Option<OpenClawPaths>,
+    pub kimi: Option<KimiPaths>,
 }
 
 impl AppPaths {
@@ -153,6 +198,11 @@ impl AppPaths {
             claude: Some(ClaudePaths::new(&home_dir)),
             openclaw: if OpenClawPaths::new(&home_dir).exists() {
                 Some(OpenClawPaths::new(&home_dir))
+            } else {
+                None
+            },
+            kimi: if KimiPaths::new(&home_dir).exists() {
+                Some(KimiPaths::new(&home_dir))
             } else {
                 None
             },
@@ -182,6 +232,12 @@ impl AppPaths {
                 openclaw: cr.openclaw_agents_dir.as_ref().map(|_| OpenClawPaths {
                     home: cr.path.clone(),
                     agents_dir: cr.openclaw_agents_dir.clone().unwrap(),
+                }),
+                kimi: cr.kimi_sessions_root.as_ref().map(|_| KimiPaths {
+                    home: cr.path.clone(),
+                    sessions_root: cr.kimi_sessions_root.clone().unwrap(),
+                    session_index_file: cr.path.join("session_index.jsonl"),
+                    workspaces_file: cr.path.join("workspaces.json"),
                 }),
             })
             .collect();
@@ -221,6 +277,20 @@ impl AppPaths {
         out
     }
 
+    /// v0.9.0: 列出所有 Kimi sessions 根目录(default + custom)
+    pub fn all_kimi_sessions_dirs(&self) -> Vec<&Path> {
+        let mut out = Vec::new();
+        if let Some(k) = &self.default_root.kimi {
+            out.push(k.sessions_root.as_path());
+        }
+        for cr in &self.custom_roots {
+            if let Some(k) = &cr.kimi {
+                out.push(k.sessions_root.as_path());
+            }
+        }
+        out
+    }
+
     /// 默认 Claude 路径(兼容老代码 — 主要供 lib.rs 启动 log 用)
     pub fn claude(&self) -> Option<&ClaudePaths> {
         self.default_root.claude.as_ref()
@@ -229,6 +299,11 @@ impl AppPaths {
     /// 默认 OpenClaw 路径
     pub fn openclaw(&self) -> Option<&OpenClawPaths> {
         self.default_root.openclaw.as_ref()
+    }
+
+    /// v0.9.0: 默认 Kimi 路径
+    pub fn kimi(&self) -> Option<&KimiPaths> {
+        self.default_root.kimi.as_ref()
     }
 }
 
@@ -301,6 +376,9 @@ fn collect_root_paths(paths: &AppPaths) -> Vec<&Path> {
     if let Some(o) = &paths.default_root.openclaw {
         out.push(o.home.as_path());
     }
+    if let Some(k) = &paths.default_root.kimi {
+        out.push(k.home.as_path());
+    }
     for cr in &paths.custom_roots {
         out.push(cr.path.as_path());
         if let Some(c) = &cr.claude {
@@ -308,6 +386,9 @@ fn collect_root_paths(paths: &AppPaths) -> Vec<&Path> {
         }
         if let Some(o) = &cr.openclaw {
             out.push(o.home.as_path());
+        }
+        if let Some(k) = &cr.kimi {
+            out.push(k.home.as_path());
         }
     }
     out
@@ -457,6 +538,7 @@ mod tests {
                 path: home.join(".claude"),
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: None,
+                kimi: None,
             },
             custom_roots: vec![],
         };
@@ -484,12 +566,14 @@ mod tests {
                 path: home.join(".claude"),
                 claude: None,
                 openclaw: None,
+                kimi: None,
             },
             custom_roots: vec![RootSource {
                 label: "my-root".to_string(),
                 path: custom_path.clone(),
                 claude: None,
                 openclaw: None,
+                kimi: None,
             }],
         };
         // 自定义 root 下任何路径都接受
@@ -603,6 +687,7 @@ mod tests {
                 path: home.clone(),
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: None,
+                kimi: None,
             },
             custom_roots: vec![],
         }

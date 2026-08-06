@@ -85,6 +85,18 @@ export interface OpenClawPaths {
   agentsDir: string;
 }
 
+/** v0.9.0: Kimi Code (Moonshot Kimi CLI) 路径布局 */
+export interface KimiPaths {
+  /** ~/.kimi */
+  home: string;
+  /** ~/.kimi/sessions (dir walk root) */
+  sessionsRoot: string;
+  /** ~/.kimi/session_index.jsonl (best-effort,本项目只读 cache) */
+  sessionIndexFile: string;
+  /** ~/.kimi/workspaces.json */
+  workspacesFile: string;
+}
+
 /** 解析 Claude Code 路径布局 */
 export function resolveClaudePaths(homeDir: string): ClaudePaths {
   const home = joinPath(homeDir, ".claude");
@@ -115,6 +127,17 @@ export function resolveOpenClawPaths(homeDir: string): OpenClawPaths {
   return {
     home: joinPath(homeDir, ".openclaw"),
     agentsDir: joinPath(homeDir, ".openclaw", "agents"),
+  };
+}
+
+/** v0.9.0: 解析 Kimi Code 路径布局 */
+export function resolveKimiPaths(homeDir: string): KimiPaths {
+  const home = joinPath(homeDir, ".kimi");
+  return {
+    home,
+    sessionsRoot: joinPath(home, "sessions"),
+    sessionIndexFile: joinPath(home, "session_index.jsonl"),
+    workspacesFile: joinPath(home, "workspaces.json"),
   };
 }
 

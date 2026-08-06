@@ -8,8 +8,10 @@ use tauri::{Emitter, State};
 use tokio::sync::mpsc;
 
 use crate::error::AppResult;
+use crate::fs::source::source_from_path;
 use crate::parser::claude::{normalize, NormalizedBlock, NormalizedMessage, TokenUsageOut};
 use crate::parser::jsonl;
+use crate::parser::kimi::normalize_kimi_record;
 use crate::parser::openclaw::normalize_entry;
 use crate::AppState;
 
@@ -38,12 +40,15 @@ pub async fn stream_transcript(
     // 路径安全:遍历所有 root 验证(支持 custom_root)
     crate::fs::paths::assert_within_any_root(&state.paths.read(), &p)?;
 
-    let is_openclaw = path.contains(".openclaw");
     let path_for_log = path.clone();
 
     // v0.8.14 item D: 跟踪 stream_batches 的错误,通过 done 事件的
     // `error` 字段传给前端。之前 spawn_blocking 用 `let _ = ...` 吞掉
     // error,前端只看到 `transcript-done` 不带任何错误信息,误以为成功。
+    // v0.9.0: source_from_path 单点推断 — 三源 claude/openclaw/kimi 各自走自己
+    // 的 normalize。kimi 走单条 fallback,完整 collapse 在 export/analyze 里跑
+    // normalize_session(若未来加)。
+    let src = source_from_path(&path);
     let (tx, mut rx) = mpsc::channel::<StreamBatch>(64);
     let (err_tx, mut err_rx) = mpsc::channel::<String>(4);
 
@@ -55,10 +60,10 @@ pub async fn stream_transcript(
                 .enumerate()
                 .filter_map(|(i, v)| {
                     let idx = batch.start_index + i;
-                    let norm = if is_openclaw {
-                        normalize_entry(v, idx)
-                    } else {
-                        normalize(v, idx)
+                    let norm = match src {
+                        "openclaw" => normalize_entry(v, idx),
+                        "kimi" => normalize_kimi_record(v, idx),
+                        _ => normalize(v, idx),
                     }?;
                     Some(TranscriptEntryOut {
                         index: idx,

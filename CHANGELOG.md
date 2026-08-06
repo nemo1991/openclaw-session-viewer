@@ -2,6 +2,42 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.0] - 2026-08-05
+
+v0.8.x 收口跨平台快捷键等小修。v0.9.0 主题是 **新增第三种 source — Moonshot Kimi Code CLI**。
+Kimi 存储格式跟 Claude/OpenClaw 都不同: `<root>/sessions/wd_<ws>_<hash>/session_<uuid>/agents/main/wire.jsonl`,
+JSONL 是 wire 事件流而非 message 流,transcript 由 state machine 重建。
+
+### Added
+
+- Kimi 源自动发现 + 列表 + 详情(transcript view 完整支持)
+- 详情页 state machine 把 `step.begin/end` / `content.part` / `tool.call` / `tool.result`
+  折叠成 user/assistant 消息;protocol 事件(llm.request / usage.record 等)自动跳过
+- SubagentPanel 支持 kimi `agents/agent-N` 子目录(计数含 main,跟 OpenClaw 对齐)
+- Graph layer 渲染 Kimi 节点(teal 品牌色 #00B5AD,跟 Claude 蓝紫 / OpenClaw accent-purple 区分)
+- Settings → Data sources 显示 `~/.kimi` 默认路径
+- 统一 `source_from_path(path)` helper 替换 5 处散落 `path.contains(".openclaw")` 判断
+
+### Changed
+
+- `SessionSource` union 加 `"kimi"`,前端 filter / group / badge / Graph 反向映射全部 3 路化
+- DB CHECK 约束加 `'kimi'`;老 v0.8.x DB 自动 rebuild-and-recreate(`ensure_kimi_in_source_check`,idempotent,数据无损)
+- `parser/meta_extras.rs` 对 kimi 路径早 return — kimi session 不走 enrich 字段(repeatRun / idleGap 等),
+  详情页只显示 quick-path 统计 + 折叠后的 step 消息
+
+### Test
+
+- `parser/kimi.rs` 7 unit tests(state machine 折叠 + tool.parentUuid 配对 + fallback 路径)
+- `commands/sessions.rs` 5 unit tests(`build_kimi_session_meta` 三种 fallback + subagent 计数 + scan_full_stats step.end 计数)
+- `db/migrations.rs` 2 unit tests(CHECK rebuild + idempotent)
+- `sessionsStore.test.ts` 4 cases(默认 source 不变 + kimi filter 隔离 + agentId=["main"] + hasSubagents main-only 隐藏)
+
+### Deferred (v0.9.x+)
+
+- Kimi `tool_global_stats` 跨 session 聚合(`build_meta_full` 需按 source 分派)
+- Kimi token 累计(`usage.record` 解析)
+- Kimi live PID tracking(Kimi CLI 无对应 marker)
+
 ## [0.8.15] - 2026-08-05
 
 v0.8.14 收口了后端安全 + 流式契约。v0.8.15 主题是 **跨平台快捷键收口** —

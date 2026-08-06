@@ -75,6 +75,13 @@ pub struct MetaExtras {
 
 /// 扫 jsonl 全量(或 5000 行上限), 提取派生指标
 pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
+    // v0.9.0: kimi wire.jsonl 是事件流而非 message 流,正则按 parentUuid 匹配
+    // 的 enrich 算法对 kimi 不适用。跳过,返回默认值 — 用户在详情页看到的是
+    // build_kimi_session_meta quick-path 拿到的 phaseHint/textMessageCount 等,
+    // repeatRun / idleGap / toolError 等 v0.9.x 再补 kimi 专属 enrich。
+    if path.to_string_lossy().contains(".kimi") {
+        return Ok(MetaExtras::default());
+    }
     let mut out = MetaExtras::default();
     let mut first_user_ts: Option<String> = None;
     let mut first_assistant_ts: Option<String> = None;

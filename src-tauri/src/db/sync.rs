@@ -225,6 +225,39 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
         }
     }
 
+    // 3) v0.9.0: Kimi Code sessions_root — dir walk 列出每个 session 的 main wire
+    for sessions_root in paths_snapshot.all_kimi_sessions_dirs() {
+        if !sessions_root.exists() {
+            continue;
+        }
+        let kimi_sessions = match walker::list_kimi_sessions(sessions_root) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("scan kimi {:?} failed: {e}", sessions_root);
+                continue;
+            }
+        };
+        for ks in kimi_sessions {
+            let Some(jsonl_path) = ks.main_wire.as_ref() else {
+                continue;
+            };
+            seen_paths.insert(jsonl_path.to_string_lossy().to_string());
+            total += 1;
+            // agent_id 固定 "main"(跟 SessionMeta.agent_id 对齐)
+            match sync_one_file(state, jsonl_path, "kimi", Some("main"), None, None, None).await {
+                Ok(_) => {
+                    done += 1;
+                    synced_paths.push(jsonl_path.to_string_lossy().to_string());
+                }
+                Err(e) => {
+                    failed += 1;
+                    log::warn!("sync kimi {:?} failed: {e:?}", jsonl_path);
+                }
+            }
+            emit_progress(sink, total, done, failed, Some(jsonl_path));
+        }
+    }
+
     // v0.8.1: orphan sweep — 删除已被磁盘删除的 session_meta 行。
     // 安全条件:该行不在 seen_paths 内,且 session_id 没有任何 override
     // (placeholder rows: 用户对未同步的 session 做 rename 时,INSERT 一行
@@ -472,21 +505,28 @@ async fn sync_one_file(
     }
 
     // 重新解析 + UPSERT
-    let sm = if source == "claude" {
-        let live_pids = if let Some(c) = state.paths.read().default_root.claude.as_ref() {
-            scan_live_pids(&c.sessions_dir).unwrap_or_default()
-        } else {
-            Default::default()
-        };
-        build_claude_session_meta(path, state, &live_pids)?
-    } else {
-        build_openclaw_session_meta(
+    let sm = match source {
+        "claude" => {
+            let live_pids = if let Some(c) = state.paths.read().default_root.claude.as_ref() {
+                scan_live_pids(&c.sessions_dir).unwrap_or_default()
+            } else {
+                Default::default()
+            };
+            build_claude_session_meta(path, state, &live_pids)?
+        }
+        "openclaw" => build_openclaw_session_meta(
             path,
             agent_id.unwrap_or(""),
             agent_label,
             agent_channel,
             agent_target,
-        )?
+        )?,
+        // v0.9.0: Kimi Code — 从 wire.jsonl 反查 state.json → build_kimi_session_meta
+        "kimi" => {
+            let ks = crate::commands::sessions::resolve_kimi_from_jsonl(path)?;
+            crate::commands::sessions::build_kimi_session_meta(&ks)?
+        }
+        _ => return Err(AppError::Invalid(format!("未知 source: {source}"))),
     };
 
     state.db.with(|c| {

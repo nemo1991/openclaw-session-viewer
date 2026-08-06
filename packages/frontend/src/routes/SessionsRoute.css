@@ -266,6 +266,12 @@
   color: var(--color-accent);
 }
 
+/* v0.9.0: Kimi Code — teal 品牌色,跟 primary(蓝紫)和 accent-purple(openclaw)区分 */
+.source-kimi {
+  background: rgba(0, 181, 173, 0.15);
+  color: #00b5ad;
+}
+
 .model-badge {
   background: var(--color-bg-hover);
   padding: 1px 6px;

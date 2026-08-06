@@ -45,16 +45,28 @@ export default function SettingsRoute() {
   const handleAddCustomRoot = async () => {
     const dir = await apiPickExportDir();
     if (!dir) return;
-    // 自动探测 kind:从路径最后一段看是不是 .openclaw/.claude
+    // 自动探测 kind:从路径最后一段看是不是 .openclaw/.claude/.kimi
     // (更精确的探测在后端 probe,这里只是 UI 初值)
     const lastSeg = dir.split(/[/\\]/).filter(Boolean).pop() ?? dir;
     const looksLikeOpenclaw = lastSeg.toLowerCase().includes("openclaw");
     const looksLikeClaude = lastSeg.toLowerCase().includes("claude");
+    const looksLikeKimi = lastSeg.toLowerCase().includes("kimi");
     let kind: CustomRootKind;
-    if (looksLikeOpenclaw && looksLikeClaude) kind = "Both";
-    else if (looksLikeOpenclaw) kind = "OpenClaw";
-    else if (looksLikeClaude) kind = "Claude";
-    else kind = "OpenClaw"; // 默认猜 OpenClaw(用户最常见场景)
+    if (looksLikeKimi && (looksLikeClaude || looksLikeOpenclaw)) {
+      // 混用 — 落到最宽松,实际 probe 在后端再 refine
+      kind = "Both"; // 包含 Kimi 时 UI 没有 "All",最接近是 Both(后端接受)
+    } else if (looksLikeOpenclaw && looksLikeClaude) {
+      kind = "Both";
+    } else if (looksLikeOpenclaw) {
+      kind = "OpenClaw";
+    } else if (looksLikeClaude) {
+      kind = "Claude";
+    } else if (looksLikeKimi) {
+      // v0.9.0: CustomRootKind union 不含 "Kimi"(用 Both 兜底 — 后端 probe 识别)
+      kind = "Both";
+    } else {
+      kind = "OpenClaw"; // 默认猜 OpenClaw(用户最常见场景)
+    }
 
     const newRoot: CustomRootConfig = {
       label: lastSeg,
@@ -252,6 +264,8 @@ export default function SettingsRoute() {
               <div className="data-source-paths">
                 <code>~/.claude</code>
                 <code>~/.openclaw</code>
+                {/* v0.9.0: Kimi Code */}
+                <code>~/.kimi</code>
               </div>
             </div>
           </div>

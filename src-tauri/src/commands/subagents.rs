@@ -456,6 +456,7 @@ mod tests {
                 path: home.clone(),
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: Some(OpenClawPaths::new(&home)),
+                kimi: None,
             },
             custom_roots: vec![],
         }

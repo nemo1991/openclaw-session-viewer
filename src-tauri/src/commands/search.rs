@@ -11,6 +11,7 @@ use tauri::State;
 use tokio::sync::mpsc;
 
 use crate::error::AppResult;
+use crate::fs::source::source_from_path;
 use crate::fs::walker;
 use crate::parser::jsonl;
 use crate::AppState;
@@ -167,11 +168,7 @@ pub async fn search_all(
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
-                let source = if path_str.contains(".openclaw") {
-                    "openclaw"
-                } else {
-                    "claude"
-                };
+                let source = source_from_path(&path_str);
 
                 let _ = jsonl::for_each_line(&path, |idx, byte, v| {
                     let s = v.to_string().to_lowercase();

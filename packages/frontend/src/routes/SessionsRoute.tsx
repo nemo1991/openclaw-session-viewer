@@ -301,6 +301,16 @@ export default function SessionsRoute() {
               />
               {t("sessions.source.openclaw")}
             </label>
+            {/* v0.9.0: 第三种 source — Kimi Code */}
+            <label>
+              <input
+                type="radio"
+                name="source"
+                checked={filter.source === "kimi"}
+                onChange={() => setFilter({ source: "kimi" })}
+              />
+              {t("sessions.source.kimi")}
+            </label>
 
             {agents.length > 1 && (
               <>
@@ -511,7 +521,7 @@ function SessionCard({
           </span>
         )}
         <span className={`source-badge source-${s.source}`}>
-          {s.source === "claude" ? "Claude" : "OpenClaw"}
+          {s.source === "claude" ? "Claude" : s.source === "openclaw" ? "OpenClaw" : "Kimi"}
         </span>
         <span className="override-badges">
           {isPinned && <span className="badge-pinned">📌</span>}

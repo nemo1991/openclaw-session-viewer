@@ -30,7 +30,7 @@ use crate::AppState;
 #[serde(rename_all = "snake_case")]
 pub struct GraphNodeFE {
     pub node_id: String,
-    pub source: String, // "Claude" | "OpenClaw"
+    pub source: String, // "Claude" | "OpenClaw" | "Kimi" (v0.9.0)
     pub session_id: String,
     pub workspace: Option<String>,
     pub jsonl_path: String,
@@ -214,10 +214,11 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
         .query_map([], |r| {
             let session_id: String = r.get("session_id")?;
             let source_raw: String = r.get("source")?;
-            let source = if source_raw == "claude" {
-                "Claude"
-            } else {
-                "OpenClaw"
+            let source = match source_raw.as_str() {
+                "claude" => "Claude",
+                // v0.9.0: kimi 节点用 "Kimi" 显示标签 (跟 GraphDetailPanel.tsx:189 反向映射对齐)
+                "kimi" => "Kimi",
+                _ => "OpenClaw",
             };
 
             let first_ts: Option<String> = r.get("first_ts")?;

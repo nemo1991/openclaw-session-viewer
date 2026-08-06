@@ -2,7 +2,7 @@
  * 前端类型 — 镜像 ingest crate 输出
  */
 
-export type Source = "Claude" | "OpenClaw";
+export type Source = "Claude" | "OpenClaw" | "Kimi";
 
 export interface SessionNode {
   node_id: string;
