@@ -31,7 +31,7 @@ import type { SessionMeta } from "@ocsv/shared";
 // ===== fixture =====
 
 function makeSession(
-  overrides: Partial<SessionMeta> & { sessionId: string; source: "claude" | "openclaw" }
+  overrides: Partial<SessionMeta> & { sessionId: string; source: "claude" | "openclaw" | "kimi" }
 ): SessionMeta {
   const base: SessionMeta = {
     sessionId: overrides.sessionId,
@@ -297,5 +297,72 @@ describe("sessionsStore.setFilter", () => {
     expect(after.query).toBe("search");
     expect(after.source).toBe("openclaw");
     expect(after.liveOnly).toBe(false);
+  });
+});
+
+// ===== v0.9.0: Kimi Code 第三种 source =====
+
+describe("sessionsStore.v0.9.0 Kimi", () => {
+  it("默认 filter.source 保持 'openclaw' (回归保护 — 不要因为 kimi 加入而改默认值)", () => {
+    // beforeEach 已重置 filter — 直接验证
+    expect(useSessionsStore.getState().filter.source).toBe("openclaw");
+  });
+
+  it("setFilter source='kimi' 后只显示 kimi sessions,隐藏 claude/openclaw", () => {
+    useSessionsStore.setState({
+      sessions: [
+        makeSession({ sessionId: "k1", source: "kimi", agentId: "main" }),
+        makeSession({ sessionId: "k2", source: "kimi", agentId: "main" }),
+        makeSession({ sessionId: "c1", source: "claude" }),
+        makeSession({ sessionId: "o1", source: "openclaw", agentId: "main" }),
+      ],
+    });
+
+    useSessionsStore.getState().setFilter({ source: "kimi" });
+    const filtered = useSessionsStore.getState().filteredSessions();
+    expect(filtered).toHaveLength(2);
+    expect(filtered.every((s) => s.source === "kimi")).toBe(true);
+    expect(filtered.map((s) => s.sessionId).sort()).toEqual(["k1", "k2"]);
+  });
+
+  it("availableAgentIds for source='kimi' 返回 ['main'] (kimi 每 session 1:1 main agent)", () => {
+    useSessionsStore.setState({
+      sessions: [
+        makeSession({ sessionId: "k1", source: "kimi", agentId: "main" }),
+        makeSession({ sessionId: "k2", source: "kimi", agentId: "main" }),
+        makeSession({ sessionId: "c1", source: "claude" }),
+        makeSession({ sessionId: "o1", source: "openclaw", agentId: "work" }),
+      ],
+    });
+
+    useSessionsStore.getState().setFilter({ source: "kimi" });
+    const ids = useSessionsStore.getState().availableAgentIds();
+    expect(ids).toEqual(["main"]);
+  });
+
+  it("hasSubagents on kimi source 隐藏 main-only sessions (subagentDir 缺失)", () => {
+    useSessionsStore.setState({
+      sessions: [
+        // kimi session 无子代理目录 (main-only)
+        makeSession({
+          sessionId: "k-main-only",
+          source: "kimi",
+          agentId: "main",
+          subagentDir: undefined,
+        }),
+        // kimi session 有 agent-* 子目录
+        makeSession({
+          sessionId: "k-with-subs",
+          source: "kimi",
+          agentId: "main",
+          subagentDir: "/home/.kimi/sessions/wd_x/session_y/agents",
+        }),
+      ],
+    });
+
+    useSessionsStore.getState().setFilter({ source: "kimi", hasSubagents: true });
+    const filtered = useSessionsStore.getState().filteredSessions();
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0]?.sessionId).toBe("k-with-subs");
   });
 });

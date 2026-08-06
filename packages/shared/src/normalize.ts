@@ -4,9 +4,11 @@
 
 import type { ClaudeRecord, ContentBlock, ToolResultItem } from "./claude-types.js";
 import type { OpenClawEntry } from "./openclaw-types.js";
+import type { KimiRecord } from "./kimi-types.js";
 import { decodeClaudeProjectKey } from "./paths.js";
 
-export type SessionSource = "claude" | "openclaw";
+/** v0.9.0: 加 Kimi Code (Moonshot Kimi CLI) 作为第三种 source */
+export type SessionSource = "claude" | "openclaw" | "kimi";
 
 /** 单个会话的元数据 */
 export interface SessionMeta {
@@ -187,7 +189,8 @@ export interface SubagentSummary {
 export interface TranscriptEntry {
   index: number;
   byteOffset: number;
-  raw: ClaudeRecord | OpenClawEntry;
+  /** v0.9.0: 加 kimi 联合 — 前端 replay / search hit 场景需要 */
+  raw: ClaudeRecord | OpenClawEntry | KimiRecord;
   normalized: NormalizedMessage;
 }
 
@@ -533,6 +536,111 @@ function stringifyUnknown(v: unknown): string {
     return JSON.stringify(v, null, 2);
   } catch {
     return String(v);
+  }
+}
+
+// === v0.9.0: Kimi Code wire.jsonl normalize ===
+
+/**
+ * Kimi 单条 wire event → NormalizedMessage (前端 replay 路径)
+ *
+ * 跟后端 `parser/kimi.rs::normalize_kimi_record` 行为对齐:
+ * - `turn.prompt` → role=user
+ * - `context.append_message` → role=message.role
+ * - `metadata` / `config.update` / `permission.set_mode` / `tools.set_active_tools` →
+ *   role=meta,block.label=type
+ * - `step.begin` / `step.end` / `content.part` / `tool.call` / `tool.result` →
+ *   role=meta(loop event 在 streaming replay 路径无法 collapse;前端显示为元信息)
+ * - 协议层(llm.request / usage.record / permission.record_approval_result 等) → null 跳过
+ * - 未知 event type → role=meta,不 panic
+ */
+export function normalizeKimiRecord(
+  record: KimiRecord | null | undefined,
+  index: number
+): NormalizedMessage | null {
+  if (!record || typeof record !== "object") return null;
+  const obj = record as Record<string, unknown>;
+  const type = typeof obj.type === "string" ? obj.type : "";
+  if (!type) return null;
+
+  const id = `kimi-${type}-${index}`;
+  const timestamp = typeof obj.time === "number"
+    ? new Date(obj.time).toISOString()
+    : typeof obj.timestamp === "string"
+      ? obj.timestamp
+      : undefined;
+
+  switch (type) {
+    case "turn.prompt": {
+      const input = Array.isArray(obj.input) ? obj.input : [];
+      const text = input
+        .map((b) => (b && typeof b === "object" && "text" in b && typeof (b as { text: unknown }).text === "string"
+          ? (b as { text: string }).text
+          : ""))
+        .join("");
+      return {
+        id,
+        role: "user",
+        timestamp,
+        blocks: [{ kind: "text", text }],
+        rawType: "turn.prompt",
+      };
+    }
+    case "context.append_message": {
+      const msg = (obj.message ?? {}) as { role?: string; content?: unknown };
+      const rawRole = typeof msg.role === "string" ? msg.role : "user";
+      // NormalizedMessage.role 只接受 user|assistant|system|tool|meta — kimi 可能给任意字符串,降级到 "user"
+      const role: NormalizedMessage["role"] =
+        rawRole === "user" || rawRole === "assistant" || rawRole === "system" || rawRole === "tool"
+          ? rawRole
+          : "user";
+      return {
+        id,
+        role,
+        timestamp,
+        blocks: [{ kind: "text", text: stringifyUnknown(msg.content) }],
+        rawType: "context.append_message",
+      };
+    }
+    case "metadata":
+    case "config.update":
+    case "permission.set_mode":
+    case "tools.set_active_tools":
+    case "step.begin":
+    case "step.end":
+    case "content.part":
+    case "tool.call":
+    case "tool.result":
+      return {
+        id,
+        role: "meta",
+        timestamp,
+        blocks: [{ kind: "meta", label: `kimi.${type}`, payload: obj }],
+        rawType: type,
+      };
+    // 协议层 — 跳过
+    case "llm.request":
+    case "llm.tools_snapshot":
+    case "usage.record":
+    case "permission.record_approval_result":
+    case "tools.update_store":
+    case "turn.steer":
+    case "turn.cancel":
+    case "full_compaction.begin":
+    case "full_compaction.complete":
+    case "context.apply_compaction":
+    case "plan_mode.enter":
+    case "plan_mode.cancel":
+      return null;
+    default:
+      // 未知 event — emit meta 不 panic
+      return {
+        id,
+        role: "meta",
+        timestamp,
+        blocks: [{ kind: "meta", label: `kimi.${type}`, payload: obj }],
+        rawType: type,
+      };
   }
 }
 

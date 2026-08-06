@@ -1,5 +1,6 @@
 /**
  * 会话列表 store
+ * v0.9.0: 加 "kimi" 作为第三种 source
  */
 
 import { create } from "zustand";
@@ -11,8 +12,9 @@ interface SessionsFilter {
   liveOnly: boolean;
   hasSubagents: boolean;
   last7Days: boolean;
-  source: "claude" | "openclaw";
-  /** 按 OpenClaw agentId 过滤;undefined / "all" 不过滤 */
+  /** v0.9.0: 加 "kimi" 联合,跟 SessionSource union 对齐 */
+  source: "claude" | "openclaw" | "kimi";
+  /** 按 agentId 过滤(openclaw 多 agent / kimi 仅 "main");undefined 不过滤 */
   agentId?: string;
 }
 
@@ -65,7 +67,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     return sessions.filter((s) => {
       if (s.source !== filter.source) return false;
-      if (filter.agentId && s.source === "openclaw" && s.agentId !== filter.agentId) return false;
+      // v0.9.0: agentId 过滤仍只对 openclaw 生效 (claude 无 agentId,kimi 永远 "main")。
+      // 之前条件 `s.source === filter.source` 在 source=claude 时也命中,会拿 undefined 比 "main"
+      // 把所有 claude session 过滤掉 — 回归到 "agentId 过滤只对 openclaw 生效" 旧契约。
+      if (filter.agentId && filter.source === "openclaw" && s.agentId !== filter.agentId) return false;
       if (filter.liveOnly && !s.livePid) return false;
       if (filter.hasSubagents && !s.subagentDir) return false;
       if (filter.last7Days && s.mtimeMs < cutoff) return false;
@@ -88,8 +93,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   },
   availableAgentIds: () => {
     const seen = new Set<string>();
+    const { filter } = get();
+    // v0.9.0: 跟随当前 filter.source — openclaw 多 agent / kimi 永远 "main" / claude 无 agentId
+    // SessionsRoute 用 agents.length > 1 决定是否渲染 agent 选择器,kimi 单 agent 自动隐藏。
     for (const s of get().sessions) {
-      if (s.source === "openclaw" && s.agentId) seen.add(s.agentId);
+      if (s.source === filter.source && s.agentId) seen.add(s.agentId);
     }
     return Array.from(seen).sort();
   },

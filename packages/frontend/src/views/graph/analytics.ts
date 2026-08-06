@@ -76,7 +76,7 @@ export interface TokenTopRow {
   label: string;
   workspace: string | null;
   tokens: number;
-  source: "Claude" | "OpenClaw";
+  source: "Claude" | "OpenClaw" | "Kimi";
   primary_model: string | null;
   when_ms: number;
 }

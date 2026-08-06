@@ -10,10 +10,12 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 
 use crate::error::{AppError, AppResult};
+use crate::fs::source::source_from_path;
 use crate::llm::anthropic::{stream_anthropic, AnthropicRequest};
 use crate::llm::context::build_context;
 use crate::parser::claude::normalize;
 use crate::parser::jsonl;
+use crate::parser::kimi::normalize_kimi_record;
 use crate::parser::openclaw::normalize_entry;
 use crate::AppState;
 
@@ -67,15 +69,15 @@ pub async fn analyze_session(
     if !path.exists() {
         return Err(AppError::NotFound(args.path));
     }
-    let is_openclaw = args.path.contains(".openclaw");
+    let src = source_from_path(&args.path);
 
     // 1) 解析整个文件
     let mut entries = Vec::new();
     jsonl::for_each_line(path, |idx, _, v| {
-        let norm = if is_openclaw {
-            normalize_entry(v, idx)
-        } else {
-            normalize(v, idx)
+        let norm = match src {
+            "openclaw" => normalize_entry(v, idx),
+            "kimi" => normalize_kimi_record(v, idx),
+            _ => normalize(v, idx),
         };
         if let Some(n) = norm {
             entries.push(n);

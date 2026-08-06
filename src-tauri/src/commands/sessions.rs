@@ -4,10 +4,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::Value;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::fs::paths;
+use crate::fs::source::source_from_path;
 use crate::model::{LivePidMeta, SessionMeta, TokenUsage};
 use crate::parser::jsonl;
 use crate::parser::openclaw_index::SessionsIndexEntry;
@@ -174,7 +176,12 @@ pub(crate) fn get_session_meta_inner(path: &str, state: &Arc<AppState>) -> AppRe
         let (agent_label, agent_channel, agent_target) = agent_info_from_index(&sessions_index);
         build_openclaw_session_meta(p, &agent_id, agent_label, agent_channel, agent_target)
     } else {
-        build_claude_session_meta(p, state, &live_pids)
+        // v0.9.0: kimi 在 fallback 走 build_kimi_session_meta;
+        //       claude 仍是兜底
+        match source_from_path(path) {
+            "kimi" => build_kimi_session_meta_from_path(p, state),
+            _ => build_claude_session_meta(p, state, &live_pids),
+        }
     }
 }
 
@@ -216,16 +223,34 @@ pub(crate) fn scan_full_stats(
             Some(o) => o,
             None => return,
         };
-        if let Some(ts) = obj.get("timestamp").and_then(|x| x.as_str()) {
+        // v0.9.0: kimi 用 `time`(epoch ms);claude/openclaw 用 `timestamp` 字符串
+        let ts_str = if source == "kimi" {
+            kimi_timestamp(obj)
+        } else {
+            obj.get("timestamp")
+                .and_then(|x| x.as_str())
+                .map(String::from)
+        };
+        if let Some(ts) = ts_str {
             if first.is_none() {
-                first = Some(ts.to_string());
+                first = Some(ts.clone());
             }
-            last = Some(ts.to_string());
+            last = Some(ts);
         }
         let ty = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
         let is_msg = match source {
             "claude" => ty == "user" || ty == "assistant",
             "openclaw" => ty == "message",
+            // v0.9.0: kimi 一条 turn = 一个 step.end 事件,或 context.append_message
+            "kimi" => {
+                ty == "context.append_message"
+                    || (ty == "context.append_loop_event"
+                        && obj
+                            .get("event")
+                            .and_then(|e| e.get("type"))
+                            .and_then(|t| t.as_str())
+                            == Some("step.end"))
+            }
             _ => false,
         };
         if is_msg {
@@ -668,6 +693,292 @@ pub(crate) fn build_openclaw_session_meta(
     })
 }
 
+// === v0.9.0: Kimi Code source — build_kimi_session_meta ===
+
+/// v0.9.0: Kimi state.json 子集 — 用于 build_kimi_session_meta 输入
+#[derive(serde::Deserialize, Default, Debug)]
+struct KimiStateForMeta {
+    #[serde(default)]
+    title: Option<String>,
+    // kimi state.json 用 camelCase (`workDir` / `lastPrompt`)
+    #[serde(default, rename = "workDir")]
+    work_dir: Option<String>,
+    #[serde(default, rename = "lastPrompt")]
+    last_prompt: Option<String>,
+    #[serde(default)]
+    agents: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// v0.9.0: 从 jsonl_path 反查 Kimi session 上下文
+///
+/// `sync_one_file` 只拿到 jsonl_path,但 build_kimi_session_meta 需要
+/// state.json(标题/workDir/agents 列表)。wire.jsonl 在 `<session>/agents/main/wire.jsonl`,
+/// state.json 在 `<session>/state.json`,session_dir 在 wire.jsonl 往上 3 级。
+pub(crate) fn resolve_kimi_from_jsonl(
+    jsonl_path: &Path,
+) -> AppResult<crate::fs::walker::KimiSession> {
+    // wire.jsonl → agents/main → agents → session_dir
+    let session_dir = jsonl_path
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .ok_or_else(|| AppError::Invalid(format!("kimi path 层级不对: {:?}", jsonl_path)))?
+        .to_path_buf();
+    let state_json = session_dir.join("state.json");
+    let wd_name = session_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let session_id = session_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|s| s.strip_prefix("session_"))
+        .unwrap_or("")
+        .to_string();
+    if session_id.is_empty() {
+        return Err(AppError::Invalid(format!(
+            "无法解析 kimi sessionId from {:?}",
+            session_dir
+        )));
+    }
+
+    let state: KimiStateForMeta = std::fs::File::open(&state_json)
+        .ok()
+        .and_then(|f| serde_json::from_reader(f).ok())
+        .unwrap_or_default();
+
+    let agents_dir = session_dir.join("agents");
+    let mut agent_ids: Vec<String> = if agents_dir.exists() {
+        std::fs::read_dir(&agents_dir)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .filter_map(|e| e.file_name().to_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if agent_ids.is_empty() {
+        // fallback: 用 state.json 解析的 keys(如果 agents_dir 不存在或读不到)
+        agent_ids = state.agents.keys().cloned().collect();
+    }
+    agent_ids.sort();
+
+    Ok(crate::fs::walker::KimiSession {
+        session_dir,
+        session_id,
+        wd_name,
+        main_wire: Some(jsonl_path.to_path_buf()),
+        state_json,
+        work_dir: state.work_dir,
+        title: state.title,
+        agent_ids,
+    })
+}
+
+/// v0.9.0: kimi quick-path fallback — get_session_meta 拿不到 DB 行时,
+/// 从 jsonl_path 反查 build。
+pub(crate) fn build_kimi_session_meta_from_path(
+    jsonl_path: &Path,
+    _state: &AppState,
+) -> AppResult<SessionMeta> {
+    let ks = resolve_kimi_from_jsonl(jsonl_path)?;
+    build_kimi_session_meta(&ks)
+}
+
+/// v0.9.0: kimi wire.jsonl → SessionMeta
+///
+/// 字段映射见 v0.9.0 plan §B.2。subagent 计数含 main(跟 OpenClaw 对齐)。
+pub(crate) fn build_kimi_session_meta(
+    ks: &crate::fs::walker::KimiSession,
+) -> AppResult<SessionMeta> {
+    let jsonl_path = ks.main_wire.as_ref().ok_or_else(|| {
+        AppError::Invalid(format!("kimi session 缺 main wire: {:?}", ks.session_dir))
+    })?;
+    let meta = std::fs::metadata(jsonl_path)?;
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // 流式扫全文件 — first_ts/last_ts/message_count
+    let (first_ts, last_ts, message_count) = scan_full_stats(jsonl_path, "kimi")?;
+
+    // quick path 50 行: title / first_prompt / primary_model / thinking/tool_use
+    let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
+    let mut primary_model: Option<String> = None;
+    let mut tool_use_count: u32 = 0;
+    let mut tool_name_count: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
+    let mut first_prompt: Option<String> = None;
+
+    for v in &head {
+        let obj = match v.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+        let ty = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        match ty {
+            "llm.request" => {
+                if primary_model.is_none() {
+                    primary_model = obj.get("model").and_then(|x| x.as_str()).map(String::from);
+                }
+            }
+            "config.update" => {
+                if primary_model.is_none() {
+                    primary_model = obj
+                        .get("modelAlias")
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+            }
+            "turn.prompt" => {
+                if first_prompt.is_none() {
+                    let text = obj
+                        .get("input")
+                        .and_then(|i| i.as_array())
+                        .and_then(|arr| {
+                            arr.iter()
+                                .find_map(|b| b.get("text").and_then(|t| t.as_str()))
+                        })
+                        .unwrap_or("");
+                    if !text.is_empty() {
+                        first_prompt = Some(truncate(text, 80));
+                    }
+                }
+            }
+            "context.append_loop_event" => {
+                if let Some(ev) = obj.get("event") {
+                    if ev.get("type").and_then(|x| x.as_str()) == Some("tool.call") {
+                        tool_use_count += 1;
+                        if let Some(name) = ev.get("name").and_then(|x| x.as_str()) {
+                            *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut tool_pairs: Vec<(String, u32)> = tool_name_count.into_iter().collect();
+    tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
+
+    // title: state.json.title → fallback state.json.lastPrompt → fallback first_prompt
+    let state_json_raw: KimiStateForMeta = std::fs::File::open(&ks.state_json)
+        .ok()
+        .and_then(|f| serde_json::from_reader(f).ok())
+        .unwrap_or_default();
+    let title = state_json_raw
+        .title
+        .or(state_json_raw.last_prompt)
+        .or_else(|| first_prompt.clone());
+
+    let subagent_dir = if ks.agent_ids.len() > 1 {
+        // 含 main + agent-N → 有 subagent
+        Some(ks.session_dir.join("agents").to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let subagent_count = if subagent_dir.is_some() {
+        Some(ks.agent_ids.len() as u32)
+    } else {
+        None
+    };
+    let subagent_ids = if ks.agent_ids.is_empty() {
+        None
+    } else {
+        Some(ks.agent_ids.clone())
+    };
+
+    Ok(SessionMeta {
+        session_id: format!("session_{}", ks.session_id),
+        project_key: format!("kimi:{}", ks.wd_name),
+        workspace_guess: ks.work_dir.clone(),
+        source: "kimi".to_string(),
+        jsonl_path: jsonl_path.to_string_lossy().to_string(),
+        size_bytes: meta.len(),
+        mtime_ms,
+        first_timestamp: first_ts.clone(),
+        last_timestamp: last_ts.clone(),
+        message_count,
+        title,
+        live_pid: None,
+        subagent_dir,
+        total_tokens: None, // v0.9.0 不聚合 usage.record
+        primary_model,
+        agent_id: Some("main".to_string()),
+        agent_label: None,
+        agent_channel: None,
+        agent_target: None,
+        first_prompt: first_prompt.clone(),
+        last_message_at: last_ts.clone(),
+        thinking_count: None, // quick path 不数 content.part thinking
+        tool_use_count: Some(tool_use_count),
+        top_tools: if top_tools.is_empty() {
+            None
+        } else {
+            Some(top_tools)
+        },
+        has_trajectory: None,
+        trajectory_size_bytes: None,
+        subagent_count,
+        subagent_ids,
+        display_title: None,
+        hidden: false,
+        pinned: false,
+        archived: false,
+        notes: None,
+        tags: None,
+        // enrich 阶段全 None (meta_extras 早 return for kimi)
+        error_count: None,
+        user_message_count: None,
+        assistant_message_count: None,
+        duration_seconds: None,
+        first_response_latency_ms: None,
+        agent_name: None,
+        invoked_skills_count: None,
+        plan_file_ref_count: None,
+        compact_file_ref_count: None,
+        queued_command_count: None,
+        attached_file_count: None,
+        text_message_count: None,
+        tool_usage: None,
+        phase_hint: None,
+        phase_detail: None,
+        repeat_run_count: None,
+        repeat_run_max_tool: None,
+        repeat_run_max_count: None,
+        idle_gap_count: None,
+        idle_gap_max_ms: None,
+        available_models: None,
+        tool_error: None,
+        parent_uuids_text: None,
+    })
+}
+
+/// v0.9.0: scan_full_stats 第三路 — kimi message count
+///
+/// 一条 turn = 一个 `step.end` 事件;或一条 `context.append_message`(非 loop)。
+/// `timestamp` 来自 `time` (epoch ms) 转 rfc3339;回退 `timestamp` 字符串。
+fn kimi_timestamp(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    obj.get("time")
+        .and_then(|v| v.as_i64())
+        .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms).map(|dt| dt.to_rfc3339()))
+        .or_else(|| {
+            obj.get("timestamp")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
+}
+
 /// 检测 session 是否有关联 trajectory 文件
 /// 优先查 .trajectory-path.json, fallback 同目录 .trajectory.jsonl
 fn detect_trajectory(session_path: &Path) -> Option<bool> {
@@ -814,6 +1125,7 @@ mod tests {
     use super::*;
     use crate::parser::openclaw_index::SessionsIndexOrigin;
     use std::io::Write;
+    use std::path::PathBuf;
     use tempfile::NamedTempFile;
 
     /// 写入指定内容到临时文件
@@ -1174,5 +1486,148 @@ mod tests {
         assert_eq!(out[0].session_id, "sess-1");
         // notify_waiters 是即时唤醒;这里没阻塞 awaiter,所以无需 await。
         // 我们只验证 API 路径 + 结果契约,notify 副作用由 sync_loop 测试覆盖。
+    }
+
+    // ===== v0.9.0: Kimi build/scan tests =====
+
+    /// 临时建一个 kimi session 目录:state.json + agents/main/wire.jsonl + agents/agent-N
+    fn make_kimi_session(
+        tmp: &tempfile::TempDir,
+        wd_name: &str,
+        session_id: &str,
+        with_subagents: bool,
+    ) -> (PathBuf, PathBuf) {
+        let sess_dir = tmp
+            .path()
+            .join(wd_name)
+            .join(format!("session_{session_id}"));
+        std::fs::create_dir_all(sess_dir.join("agents").join("main")).unwrap();
+        std::fs::create_dir_all(sess_dir.join("agents").join("agent-0")).unwrap();
+        std::fs::write(
+            sess_dir.join("state.json"),
+            r#"{"createdAt":"2026-07-21T09:16:40.225Z","updatedAt":"2026-07-21T09:16:51.196Z","title":"kimi test session","isCustomTitle":false,"agents":{"main":{"type":"main","parentAgentId":null}},"workDir":"C:/Users/dc/test","lastPrompt":"hello"}"#,
+        ).unwrap();
+        // 主 agent wire.jsonl (5 行事件,跟 wire-short fixture 形状一致)
+        let wire = sess_dir.join("agents").join("main").join("wire.jsonl");
+        // 模拟真实 kimi wire.jsonl 形状:loop event 包裹在 context.append_loop_event
+        std::fs::write(
+            &wire,
+            "{}\n{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"time\":1}}\n{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"text\":\"hi\",\"time\":2}}\n{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"time\":3}}\n{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\",\"content\":\"y\"},\"time\":4}\n{\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"next\"}],\"time\":5}\n",
+        ).unwrap();
+        if with_subagents {
+            std::fs::create_dir_all(sess_dir.join("agents").join("agent-1")).unwrap();
+        }
+        (sess_dir, wire)
+    }
+
+    #[test]
+    fn build_kimi_session_meta_populates_title_from_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_sess_dir, wire) = make_kimi_session(&tmp, "wd_alpha", "abc-123", false);
+        let ks = crate::fs::walker::KimiSession {
+            session_dir: tmp.path().join("wd_alpha").join("session_abc-123"),
+            session_id: "abc-123".to_string(),
+            wd_name: "wd_alpha".to_string(),
+            main_wire: Some(wire.clone()),
+            state_json: tmp
+                .path()
+                .join("wd_alpha")
+                .join("session_abc-123")
+                .join("state.json"),
+            work_dir: Some("C:/Users/dc/test".to_string()),
+            title: Some("kimi test session".to_string()),
+            agent_ids: vec!["main".to_string()],
+        };
+        let sm = build_kimi_session_meta(&ks).expect("build kimi");
+        assert_eq!(sm.source, "kimi");
+        assert_eq!(sm.title.as_deref(), Some("kimi test session"));
+        assert_eq!(sm.workspace_guess.as_deref(), Some("C:/Users/dc/test"));
+        assert_eq!(sm.session_id, "session_abc-123");
+        assert_eq!(sm.project_key, "kimi:wd_alpha");
+        assert_eq!(sm.agent_id.as_deref(), Some("main"));
+        // 无 subagent → subagent_count/ids 都 None
+        assert!(sm.subagent_count.is_none());
+        assert!(sm.subagent_dir.is_none());
+    }
+
+    #[test]
+    fn build_kimi_session_meta_records_subagent_count_including_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_sess_dir, wire) = make_kimi_session(&tmp, "wd_alpha", "abc-123", true);
+        let ks = crate::fs::walker::KimiSession {
+            session_dir: tmp.path().join("wd_alpha").join("session_abc-123"),
+            session_id: "abc-123".to_string(),
+            wd_name: "wd_alpha".to_string(),
+            main_wire: Some(wire),
+            state_json: tmp
+                .path()
+                .join("wd_alpha")
+                .join("session_abc-123")
+                .join("state.json"),
+            work_dir: Some("C:/Users/dc/test".to_string()),
+            title: Some("kimi test session".to_string()),
+            agent_ids: vec![
+                "agent-0".to_string(),
+                "agent-1".to_string(),
+                "main".to_string(),
+            ],
+        };
+        let sm = build_kimi_session_meta(&ks).expect("build kimi");
+        // subagent_count = 总数(含 main) = 3,跟 OpenClaw :401-424 对齐
+        assert_eq!(sm.subagent_count, Some(3));
+        assert!(sm.subagent_dir.is_some());
+        assert_eq!(
+            sm.subagent_ids,
+            Some(vec![
+                "agent-0".to_string(),
+                "agent-1".to_string(),
+                "main".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn build_kimi_session_meta_skips_sessions_without_main_wire() {
+        let ks = crate::fs::walker::KimiSession {
+            session_dir: PathBuf::from("/tmp/nonexistent"),
+            session_id: "abc-123".to_string(),
+            wd_name: "wd_alpha".to_string(),
+            main_wire: None,
+            state_json: PathBuf::from("/tmp/nonexistent/state.json"),
+            work_dir: None,
+            title: None,
+            agent_ids: vec![],
+        };
+        let err = build_kimi_session_meta(&ks).unwrap_err();
+        assert!(err.to_string().contains("缺 main wire"), "got: {err}");
+    }
+
+    #[test]
+    fn scan_full_stats_kimi_counts_step_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let wire = tmp.path().join("wire.jsonl");
+        // 写: 真实 kimi 形状 — step.* 包裹在 context.append_loop_event.event
+        std::fs::write(
+            &wire,
+            "{\"type\":\"metadata\",\"protocol_version\":\"1.4\",\"created_at\":1,\"time\":1700000000000}\n{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"time\":1700000001000}}\n{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"text\":\"x\",\"time\":1700000002000}}\n{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"time\":1700000003000}}\n{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\",\"content\":\"y\"},\"time\":1700000004000}\n{\"type\":\"turn.prompt\",\"input\":[{\"text\":\"z\"}],\"time\":1700000005000}\n",
+        ).unwrap();
+        let (first, last, count) = scan_full_stats(&wire, "kimi").unwrap();
+        // first/last 应来自 epoch ms → rfc3339
+        assert!(first.is_some());
+        assert!(last.is_some());
+        // step.end(在 loop event 里)+ context.append_message = 2 turns
+        assert_eq!(count, 2, "step.end + context.append_message = 2 turns");
+    }
+
+    #[test]
+    fn resolve_kimi_from_jsonl_finds_state_json_4_levels_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_sess_dir, wire) = make_kimi_session(&tmp, "wd_alpha", "deadbeef", false);
+        let ks = resolve_kimi_from_jsonl(&wire).expect("resolve");
+        assert_eq!(ks.session_id, "deadbeef");
+        assert_eq!(ks.wd_name, "wd_alpha");
+        assert!(ks.main_wire.is_some());
+        assert!(ks.state_json.exists());
+        assert_eq!(ks.work_dir.as_deref(), Some("C:/Users/dc/test"));
     }
 }

@@ -20,6 +20,8 @@ const zhCN = {
     source: {
       claude: "Claude Code",
       openclaw: "OpenClaw",
+      // v0.9.0: Kimi Code (Moonshot Kimi CLI)
+      kimi: "Kimi Code",
     },
     sort: {
       recent: "最近活跃",
@@ -168,7 +170,7 @@ const zhCN = {
     timezoneAuto: "自动 ({{tz}})",
     dataSources: {
       title: "数据源",
-      hint: "默认读取 ~/.claude 和 ~/.openclaw。添加自定义根目录扫描其它位置(如 ~/Downloads/.openclaw)。保存后立即生效,无需重启。",
+      hint: "默认读取 ~/.claude、~/.openclaw 和 ~/.kimi。添加自定义根目录扫描其它位置(如 ~/Downloads/.openclaw)。保存后立即生效,无需重启。",
       default: "默认",
       add: "添加自定义根目录",
     },
@@ -199,6 +201,8 @@ const zhCN = {
   errors: {
     noHome: "找不到 HOME 目录",
     noClaudeDir: "找不到 ~/.claude 目录",
+    // v0.9.0: Kimi Code
+    noKimiDir: "找不到 ~/.kimi 目录",
     network: "网络错误",
     unknown: "未知错误",
   },
