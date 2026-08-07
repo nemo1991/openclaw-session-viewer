@@ -2,6 +2,33 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.3] - 2026-08-07
+
+v0.9.2 收口历史 e2e fail。v0.9.3 把 v0.9.0 deferred 列表里"kimi token 累计"做掉:
+Kimi `wire.jsonl` 里有 `usage.record` 事件记录每个 turn 的 input/output/cache 字段,
+之前 build_kimi_session_meta 留 `total_tokens: None`。v0.9.3 加 `scan_kimi_usage`
+聚合 turn-scope,跳过 session-scope (cache pool snapshot,sum 全部会重复计算)。
+
+### Added
+
+- `commands/sessions.rs::scan_kimi_usage(jsonl_path)` — 流式扫 wire.jsonl 累加
+  `usage.record` (turn-scope only) 的 input/output/cache_read/cache_write
+- `build_kimi_session_meta` 注入 `total_tokens` (TokenUsage 类型);fallback
+  `primary_model` 走 `usage.record.model`
+- 真实 dcwin11 sample 验证: 124 turn-scope 总 6.74M tokens,session-scope 3 条 (253K cache pool) 跳过
+
+### Test
+
+- 4 unit tests: turn-scope sum / session-scope skip / 0 records → None / first-model 取首个
+- `fixtures/kimi/wire-with-usage.jsonl` (82 行,7 turn + 1 session)
+
+### Notes
+
+- 决策依据: `usageScope=='session'` 字段 `inputCacheRead` ~80K 全 session 不变,
+  是 cache 池当前 size 的 snapshot,sum 全部会让 token 数字虚高 3 倍
+- DB schema 不变 (total_tokens 字段已存在,nullable)
+- 其他 source (claude/openclaw) 路径不变
+
 ## [0.9.1] - 2026-08-06
 
 v0.9.0 引入 Kimi Code 作为第三种 source 时用了 `~/.kimi` 作为默认 home 路径,
