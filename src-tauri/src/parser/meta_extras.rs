@@ -16,6 +16,7 @@
 use std::path::Path;
 
 use crate::error::AppResult;
+use crate::fs::source::source_from_path;
 use crate::parser::blocks::tool_use::TOOL_USE_ALIASES;
 use crate::parser::jsonl;
 
@@ -79,8 +80,15 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
     // 的 enrich 算法对 kimi 不适用。跳过,返回默认值 — 用户在详情页看到的是
     // build_kimi_session_meta quick-path 拿到的 phaseHint/textMessageCount 等,
     // repeatRun / idleGap / toolError 等 v0.9.x 再补 kimi 专属 enrich。
-    if path.to_string_lossy().contains(".kimi") {
-        return Ok(MetaExtras::default());
+    // v0.9.4: 但 tool_usage 聚合(`context.append_loop_event.event.type=='tool.call'`
+    // event.name)对 kimi 也适用,够简单,直接算。tool_error 留空 (kimi 无 is_error 事件信号)。
+    // v0.9.4: 用 source_from_path 替代 path.contains(".kimi") — 测试 fixture 文件名
+    // 可能不含 ".kimi" (e.g. /tmp/kimi_tools.jsonl),但 sync_one_file 传过来时已
+    // 经 source= kimi 验证过;这里改用 path substring 是兜底。
+    if path.to_string_lossy().contains(".kimi")
+        || source_from_path(&path.to_string_lossy()) == "kimi"
+    {
+        return build_meta_full_kimi(path);
     }
     let mut out = MetaExtras::default();
     let mut first_user_ts: Option<String> = None;
@@ -440,6 +448,47 @@ fn compute_ms_between(first: &str, last: &str) -> Option<u64> {
     }
 }
 
+/// v0.9.4: kimi wire.jsonl 的轻量 enrich — 只算 tool_usage 跨 session 聚合。
+///
+/// Kimi wire.jsonl 形状跟 claude/openclaw 不同 (`context.append_loop_event.event.type=='tool.call'`),
+/// 复杂 enrich 算法 (repeat_run / idle_gap / parent_uuid 等) 不适用。
+/// tool_usage 是简单的 per-tool 计数, 直接扫 event.name 累加 — 跟 `build_kimi_session_meta`
+/// quick-path 同逻辑, 不依赖 state machine。
+///
+/// 其他字段 (error_count / phase_hint / text_message_count 等) 在
+/// `build_kimi_session_meta` quick-path 已写, 不重复算。
+fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
+    use std::collections::HashMap;
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    crate::parser::jsonl::for_each_line(path, |_idx, _raw, v| {
+        let obj = match v.as_object() {
+            Some(o) => o,
+            None => return,
+        };
+        // kimi tool.call 形状:
+        // {"type":"context.append_loop_event","event":{"type":"tool.call","name":"Bash",...}}
+        if obj.get("type").and_then(|x| x.as_str()) != Some("context.append_loop_event") {
+            return;
+        }
+        let ev = match obj.get("event") {
+            Some(e) => e,
+            None => return,
+        };
+        if ev.get("type").and_then(|x| x.as_str()) != Some("tool.call") {
+            return;
+        }
+        if let Some(name) = ev.get("name").and_then(|x| x.as_str()) {
+            *counts.entry(name.to_string()).or_insert(0) += 1;
+        }
+    })?;
+    let mut pairs: Vec<(String, u32)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(MetaExtras {
+        tool_usage: pairs,
+        ..MetaExtras::default()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,5 +779,45 @@ mod tests {
         );
         // 两个必须不同 (OpenClaw 用 oc: prefix 区分)
         assert_ne!(CLAUDE_PARENT_KEY, OPENCLAW_PARENT_KEY);
+    }
+
+    // ===== v0.9.4: kimi tool_usage 跨 session 聚合 =====
+
+    #[test]
+    fn build_meta_full_kimi_aggregates_tool_usage() {
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Bash\"},\"time\":1}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Bash\"},\"time\":2}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Read\"},\"time\":3}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Read\"},\"time\":4}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Read\"},\"time\":5}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\"},\"time\":6}\n\
+{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":7}\n\
+";
+        let p = write_tmp(".kimi_tools.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        // tool_usage 按 count desc 排序: Read=3, Bash=2
+        assert_eq!(
+            extras.tool_usage,
+            vec![("Read".to_string(), 3), ("Bash".to_string(), 2),]
+        );
+        // tool_error 留空 (kimi 无 is_error 信号)
+        assert!(extras.tool_error.is_empty());
+        // 其他 enrich 字段保持 default
+        assert_eq!(extras.error_count, 0);
+        assert_eq!(extras.repeat_run_count, 0);
+    }
+
+    #[test]
+    fn build_meta_full_kimi_ignores_non_tool_call_loop_events() {
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\"},\"time\":1}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"text\":\"x\"},\"time\":2}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\"},\"time\":3}\n\
+{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"},\"time\":4}\n";
+        let p = write_tmp(".kimi_no_tools.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        // 只有 step/append_message 事件,tool_usage 空
+        assert!(extras.tool_usage.is_empty());
     }
 }
