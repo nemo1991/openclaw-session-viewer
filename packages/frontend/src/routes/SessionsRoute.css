@@ -217,6 +217,27 @@
   color: rgb(59, 130, 246);
 }
 
+/* v0.9.7: 4 个新 MetaExtras chip — 跨 source 跟 thinking/tools chip 并列 */
+.stat-duration {
+  background: rgba(34, 197, 94, 0.15);
+  color: rgb(34, 197, 94);
+}
+
+.stat-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: rgb(239, 68, 68);
+}
+
+.stat-repeat {
+  background: rgba(245, 158, 11, 0.15);
+  color: rgb(245, 158, 11);
+}
+
+.stat-idle {
+  background: rgba(107, 114, 128, 0.15);
+  color: rgb(107, 114, 128);
+}
+
 .tool-chip {
   display: inline-block;
   padding: 1px 6px;
