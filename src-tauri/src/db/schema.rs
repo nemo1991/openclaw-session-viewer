@@ -566,6 +566,9 @@ pub fn enrich_session_meta(
     tool_error_json: Option<&str>,
     // --- v0.8.7 A: parent_uuids_text (newline-separated) — GraphView ParentUuid edges 用 ---
     parent_uuids_text: Option<&str>,
+    // --- v0.9.5: thinking_count (kimi wire event content.part.part.type=="think" 计数,
+    //     claude/openclaw 路径暂填 0)
+    thinking_count: u32,
 ) -> AppResult<()> {
     conn.execute(
         r#"
@@ -596,7 +599,9 @@ pub fn enrich_session_meta(
           -- v0.8.5 A: per-tool 失败计数
           tool_error_json           = ?23,
           -- v0.8.7 A: parent_uuids (newline-separated) GraphView ParentUuid edges
-          parent_uuids_text         = ?24
+          parent_uuids_text         = ?24,
+          -- v0.9.5: thinking_count (kimi content.part.part.type=="think" 计数)
+          thinking_count            = ?25
         WHERE session_id = ?1
         "#,
         params![
@@ -628,6 +633,8 @@ pub fn enrich_session_meta(
             tool_error_json,
             // v0.8.7 A
             parent_uuids_text,
+            // v0.9.5: thinking_count
+            thinking_count as i64,
         ],
     )?;
     Ok(())
@@ -895,6 +902,7 @@ mod round_trip_tests {
             Some("[\"opus\",\"sonnet\"]"),
             Some("[[\"Bash\",3]]"), // tool_error
             Some("uuid-a\nuuid-b"), // v0.8.7 A: parent_uuids
+            7,                      // v0.9.5: thinking_count
         )
         .unwrap();
         // 读回验证
@@ -947,7 +955,7 @@ mod round_trip_tests {
         .unwrap();
         enrich_session_meta(
             &conn, "s1", 0, 0, 0, None, None, None, 0, 0, 0, 0, 0, 0, None, None, None, 0, None,
-            None, 0, None, None, None, None, // v0.8.7 A: parent_uuids
+            None, 0, None, None, None, None, 0, // v0.9.5: thinking_count = 0
         )
         .unwrap();
         // 写完后所有列应为 default 0 / None
