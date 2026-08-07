@@ -72,6 +72,11 @@ pub struct MetaExtras {
     pub tool_error: Vec<(String, u32)>,
     // --- v0.8.7 A: parent_uuids 列表 (去重) — 给 GraphView ParentUuid edges 用 ---
     pub parent_uuids: Vec<String>,
+    // --- v0.9.5: thinking_count — kimi content.part.part.type=="think" 计数
+    // 跟 claude/openclaw path 算 user/assistant.text_message_count 互补:
+    // claude/openclaw 暂未拆 thinking/text,统一算 text_message_count;
+    // kimi 因为 wire 事件显式区分 `think`/`text` 两个 part,直接统计 think 数。
+    pub thinking_count: u32,
 }
 
 /// 扫 jsonl 全量(或 5000 行上限), 提取派生指标
@@ -448,45 +453,212 @@ fn compute_ms_between(first: &str, last: &str) -> Option<u64> {
     }
 }
 
-/// v0.9.4: kimi wire.jsonl 的轻量 enrich — 只算 tool_usage 跨 session 聚合。
+/// v0.9.5: kimi wire.jsonl 的全量 enrich — 跨 source 跟 claude/openclaw 对齐
+/// `MetaExtras` 字段子集。覆盖:
+/// - C: `available_models` via `usage.record.model`
+/// - D: `thinking_count` via `content.part.part.type=="think"`
+/// - E: `duration_seconds` (last - first step.end.time) + `first_response_latency_ms`
+///   (first step.end.time - first turn.prompt.time)
+/// - A: `error_count` (step.end.finishReason=="error") + `tool_error`
+///   (per-tool 计数: step 配 stepUuid → 该 step 内所有 tool.call.uuid → tool name)
+/// - B: `repeat_run_count/max_tool/max_count` (consecutive tool.call 同名 ≥ 3,
+///   flush 在 step.end 切换) + `idle_gap_count/max_ms` (相邻 step.end.time gap ≥ 5min)
 ///
-/// Kimi wire.jsonl 形状跟 claude/openclaw 不同 (`context.append_loop_event.event.type=='tool.call'`),
-/// 复杂 enrich 算法 (repeat_run / idle_gap / parent_uuid 等) 不适用。
-/// tool_usage 是简单的 per-tool 计数, 直接扫 event.name 累加 — 跟 `build_kimi_session_meta`
-/// quick-path 同逻辑, 不依赖 state machine。
+/// v0.9.4: 之前只算 tool_usage;其余 enrich 字段 (parent_uuids 等) 暂仍 default。
+/// 不依赖 state machine — kimi wire event stream 字段名直接读,不依赖 normalize_kimi_record。
 ///
-/// 其他字段 (error_count / phase_hint / text_message_count 等) 在
-/// `build_kimi_session_meta` quick-path 已写, 不重复算。
+/// 注: content.part.part.type 字段值是 "think" (不是 "thinking") — 见
+/// fixtures/kimi/wire-with-usage.jsonl 验证。finishReason 在真实 kimi 还有
+/// "stop"/"length"/"tool_use" 等,这里只对 "error" 累加,其他当作成功。
 fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
-    use std::collections::HashMap;
-    let mut counts: HashMap<String, u32> = HashMap::new();
+    use std::collections::{BTreeSet, HashMap};
+    let mut out = MetaExtras::default();
+    // v0.9.4 + v0.9.5: tool_usage via tool.call.name (per-tool count)
+    let mut tool_counts: HashMap<String, u32> = HashMap::new();
+    // C: available_models via usage.record.model
+    let mut model_set: BTreeSet<String> = BTreeSet::new();
+    // E: first/last step.end.time (ms epoch)
+    let mut first_step_end_time: Option<i64> = None;
+    let mut last_step_end_time: Option<i64> = None;
+    // E: first_response_latency = first_step_end.time - first_turn_prompt.time
+    let mut first_turn_prompt_time: Option<i64> = None;
+    // A: stepUuid -> 该 step 内所有 tool.call.uuid (按 wire 顺序), 用于 step.error → tool.error 反查
+    let mut step_to_tool_uuids: HashMap<String, Vec<String>> = HashMap::new();
+    let mut tool_uuid_to_name: HashMap<String, String> = HashMap::new();
+    let mut tool_error_counts: HashMap<String, u32> = HashMap::new();
+    // B: repeat_run 跟踪 (current_tool / current_count, step.end 切时 flush)
+    let mut current_tool: Option<String> = None;
+    let mut current_count: u32 = 0;
+    // B: idle_gap 跟踪 (相邻 step.end.time gap)
+    let mut prev_step_end_time: Option<i64> = None;
+
     crate::parser::jsonl::for_each_line(path, |_idx, _raw, v| {
         let obj = match v.as_object() {
             Some(o) => o,
             None => return,
         };
-        // kimi tool.call 形状:
-        // {"type":"context.append_loop_event","event":{"type":"tool.call","name":"Bash",...}}
-        if obj.get("type").and_then(|x| x.as_str()) != Some("context.append_loop_event") {
-            return;
-        }
-        let ev = match obj.get("event") {
-            Some(e) => e,
+        let top_type = match obj.get("type").and_then(|x| x.as_str()) {
+            Some(t) => t,
             None => return,
         };
-        if ev.get("type").and_then(|x| x.as_str()) != Some("tool.call") {
-            return;
-        }
-        if let Some(name) = ev.get("name").and_then(|x| x.as_str()) {
-            *counts.entry(name.to_string()).or_insert(0) += 1;
+        let time = obj.get("time").and_then(|x| x.as_i64());
+
+        match top_type {
+            "turn.prompt" => {
+                if first_turn_prompt_time.is_none() {
+                    first_turn_prompt_time = time;
+                }
+            }
+            "usage.record" => {
+                if let Some(m) = obj.get("model").and_then(|x| x.as_str()) {
+                    model_set.insert(m.to_string());
+                }
+            }
+            "context.append_loop_event" => {
+                let ev = match obj.get("event") {
+                    Some(e) => e,
+                    None => return,
+                };
+                let ev_type = ev.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                // kimi 把 time 字段放在嵌套 ev 内 (dcwin11 fixture 验证),
+                // 跟 turn.prompt/usage.record 不同 — 重新从 ev 顶层读。
+                let ev_time = ev.get("time").and_then(|x| x.as_i64());
+                match ev_type {
+                    "content.part" => {
+                        // D: thinking_count — part.type=="think" 累加 (kimi 字段名是 "think" 非 "thinking")
+                        if let Some(part) = ev.get("part") {
+                            if part.get("type").and_then(|x| x.as_str()) == Some("think") {
+                                out.thinking_count += 1;
+                            }
+                        }
+                    }
+                    "tool.call" => {
+                        let uuid = ev.get("uuid").and_then(|x| x.as_str());
+                        let step_uuid = ev.get("stepUuid").and_then(|x| x.as_str());
+                        let name = ev.get("name").and_then(|x| x.as_str());
+                        if let Some(name) = name {
+                            // v0.9.4: tool_usage 累加不依赖 stepUuid/uuid (轻量,只数 name)
+                            *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                            // uuid + stepUuid 用于 A: error_count → tool_error 反查 (best-effort,缺则跳过该 tool)
+                            if let (Some(uuid), Some(step_uuid)) = (uuid, step_uuid) {
+                                step_to_tool_uuids
+                                    .entry(step_uuid.to_string())
+                                    .or_default()
+                                    .push(uuid.to_string());
+                                tool_uuid_to_name.insert(uuid.to_string(), name.to_string());
+                            }
+                            // B: repeat_run tracking — 同一 step 内连续同名累加
+                            if Some(name) == current_tool.as_deref() {
+                                current_count += 1;
+                            } else {
+                                flush_repeat_run_kimi(
+                                    &mut out,
+                                    &mut current_tool,
+                                    &mut current_count,
+                                );
+                                current_tool = Some(name.to_string());
+                                current_count = 1;
+                            }
+                        }
+                    }
+                    "step.end" => {
+                        let step_uuid = ev.get("uuid").and_then(|x| x.as_str()).map(String::from);
+                        let finish_reason = ev
+                            .get("finishReason")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("");
+                        if finish_reason == "error" {
+                            out.error_count += 1;
+                            if let Some(su) = &step_uuid {
+                                if let Some(tool_uuids) = step_to_tool_uuids.get(su) {
+                                    for tu in tool_uuids {
+                                        if let Some(name) = tool_uuid_to_name.get(tu) {
+                                            *tool_error_counts.entry(name.clone()).or_insert(0) +=
+                                                1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // B + E: step.end.time → idle_gap + first/last
+                        if let Some(t) = ev_time {
+                            if first_step_end_time.is_none() {
+                                first_step_end_time = Some(t);
+                            }
+                            last_step_end_time = Some(t);
+                            if let Some(prev) = prev_step_end_time {
+                                let delta = t - prev;
+                                if delta >= IDLE_GAP_THRESHOLD_MS {
+                                    out.idle_gap_count += 1;
+                                    out.idle_gap_max_ms = Some(match out.idle_gap_max_ms {
+                                        Some(p) => p.max(delta as u64),
+                                        None => delta as u64,
+                                    });
+                                }
+                            }
+                            prev_step_end_time = Some(t);
+                        }
+                        // step.end flushes repeat_run (跨 step 不算连续)
+                        flush_repeat_run_kimi(&mut out, &mut current_tool, &mut current_count);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
     })?;
-    let mut pairs: Vec<(String, u32)> = counts.into_iter().collect();
-    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    Ok(MetaExtras {
-        tool_usage: pairs,
-        ..MetaExtras::default()
-    })
+
+    // 末尾 flush
+    flush_repeat_run_kimi(&mut out, &mut current_tool, &mut current_count);
+
+    // E: duration_seconds
+    if let (Some(f), Some(l)) = (first_step_end_time, last_step_end_time) {
+        let dur_ms = (l - f).max(0) as u64;
+        out.duration_seconds = Some(dur_ms / 1000);
+    }
+    // E: first_response_latency_ms
+    if let (Some(ut), Some(st)) = (first_turn_prompt_time, first_step_end_time) {
+        let delta = st - ut;
+        if delta > 0 {
+            out.first_response_latency_ms = Some(delta as u64);
+        }
+    }
+    // A: tool_error sort desc
+    let mut tool_err_vec: Vec<(String, u32)> = tool_error_counts.into_iter().collect();
+    tool_err_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.tool_error = tool_err_vec;
+    // tool_usage sort desc (跟 claude 路径同 pattern)
+    let mut tool_vec: Vec<(String, u32)> = tool_counts.into_iter().collect();
+    tool_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.tool_usage = tool_vec;
+    // C: available_models BTreeSet → Vec (字典序)
+    out.available_models = model_set.into_iter().collect();
+
+    Ok(out)
+}
+
+/// v0.9.5: kimi 专属 repeat_run flush — 跟 claude 路径的 flush_repeat_run 同算法,
+/// 但通过 current_tool 切位 (Option<String>) 隔离命名, 不污染 claude 路径。
+fn flush_repeat_run_kimi(
+    out: &mut MetaExtras,
+    current_tool: &mut Option<String>,
+    current_count: &mut u32,
+) {
+    if let Some(tool) = current_tool.take() {
+        if *current_count as usize >= REPEAT_RUN_MIN {
+            out.repeat_run_count += 1;
+            let should_update = match (out.repeat_run_max_tool.as_ref(), out.repeat_run_max_count) {
+                (None, _) => true,
+                (Some(_), Some(prev)) if *current_count > prev => true,
+                _ => false,
+            };
+            if should_update {
+                out.repeat_run_max_tool = Some(tool);
+                out.repeat_run_max_count = Some(*current_count);
+            }
+        }
+        *current_count = 0;
+    }
 }
 
 #[cfg(test)]
@@ -801,11 +973,14 @@ mod tests {
             extras.tool_usage,
             vec![("Read".to_string(), 3), ("Bash".to_string(), 2),]
         );
-        // tool_error 留空 (kimi 无 is_error 信号)
+        // tool_error 留空 (fixture 没 finishReason=error)
         assert!(extras.tool_error.is_empty());
-        // 其他 enrich 字段保持 default
+        // v0.9.5: 同一 step 内 Read × 3 连续 → repeat_run_count=1
+        assert_eq!(extras.repeat_run_count, 1);
+        assert_eq!(extras.repeat_run_max_tool.as_deref(), Some("Read"));
+        assert_eq!(extras.repeat_run_max_count, Some(3));
+        // error_count=0 (fixture 没 error)
         assert_eq!(extras.error_count, 0);
-        assert_eq!(extras.repeat_run_count, 0);
     }
 
     #[test]
@@ -819,5 +994,149 @@ mod tests {
         let extras = build_meta_full(&p).expect("build_meta_full");
         // 只有 step/append_message 事件,tool_usage 空
         assert!(extras.tool_usage.is_empty());
+    }
+
+    // ===== v0.9.5: kimi MetaExtras 5 字段跨 source 对齐 =====
+
+    /// C: usage.record.model 去重 → available_models
+    #[test]
+    fn build_meta_full_kimi_v095_collects_available_models() {
+        let jsonl = "\
+{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":1}\n\
+{\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":50,\"output\":30,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
+{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":80,\"output\":40,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":3}\n\
+{\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":60,\"output\":35,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":4}\n";
+        let p = write_tmp(".kimi_models.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        // BTreeSet 字典序: "deepseek-v4-flash" < "kimi-k2" (d < k)
+        assert_eq!(
+            extras.available_models,
+            vec!["deepseek-v4-flash".to_string(), "kimi-k2".to_string()]
+        );
+    }
+
+    /// D: content.part.part.type=="think" 累加 → thinking_count
+    /// (同时验证 part.type=="text" 不计入)
+    #[test]
+    fn build_meta_full_kimi_v095_counts_thinking_parts() {
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"think\":\"thinking 1\"}},\"time\":1}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"text 1\"}},\"time\":2}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"think\":\"thinking 2\"}},\"time\":3}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"think\":\"thinking 3\"}},\"time\":4}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"text 2\"}},\"time\":5}\n";
+        let p = write_tmp(".kimi_thinking.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        // 3 个 think + 2 个 text → thinking_count = 3
+        assert_eq!(extras.thinking_count, 3);
+    }
+
+    /// E: duration_seconds (last - first step.end.time) + first_response_latency_ms
+    /// (first step.end.time - first turn.prompt.time)
+    #[test]
+    fn build_meta_full_kimi_v095_computes_duration_and_latency() {
+        // first turn.prompt.time = 1000
+        // first step.end.time = 1500 (latency = 500ms)
+        // second step.end.time = 2000
+        // last step.end.time = 7000 (duration = (7000-1500)/1000 = 5s)
+        let jsonl = "\
+{\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"hi\"}],\"time\":1000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-1\",\"finishReason\":\"tool_use\",\"time\":1500}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-2\",\"finishReason\":\"tool_use\",\"time\":2000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-3\",\"finishReason\":\"stop\",\"time\":7000}}\n";
+        let p = write_tmp(".kimi_timing.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(extras.first_response_latency_ms, Some(500));
+        assert_eq!(extras.duration_seconds, Some(5));
+    }
+
+    /// A: step.end.finishReason=="error" → error_count + 配对 tool.call → tool_error
+    #[test]
+    fn build_meta_full_kimi_v095_aggregates_tool_error_from_finish_reason() {
+        // step-1: 1 个 Bash tool.call, finishReason=tool_use → ok
+        // step-2: 1 个 Read tool.call, finishReason=error → Read 累计 +1
+        // step-3: 1 个 Bash tool.call, finishReason=tool_use → ok
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"step-1\",\"time\":1}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"call-1\",\"toolCallId\":\"call-1\",\"name\":\"Bash\",\"stepUuid\":\"step-1\",\"time\":2}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-1\",\"finishReason\":\"tool_use\",\"time\":3}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"step-2\",\"time\":4}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"call-2\",\"toolCallId\":\"call-2\",\"name\":\"Read\",\"stepUuid\":\"step-2\",\"time\":5}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-2\",\"finishReason\":\"error\",\"time\":6}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"step-3\",\"time\":7}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"call-3\",\"toolCallId\":\"call-3\",\"name\":\"Bash\",\"stepUuid\":\"step-3\",\"time\":8}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-3\",\"finishReason\":\"tool_use\",\"time\":9}}\n";
+        let p = write_tmp(".kimi_errors.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(extras.error_count, 1, "1 个 step.finishReason=error");
+        assert_eq!(
+            extras.tool_error,
+            vec![("Read".to_string(), 1)],
+            "tool_error 仅 Read 计 1"
+        );
+        // 验证 Bash 不在 tool_error 里 (tool_use 成功的 step 不入 error)
+        assert!(!extras.tool_error.iter().any(|(n, _)| n == "Bash"));
+    }
+
+    /// A 边界: 1 个 step 含 2 个 tool, error → 2 个 tool 都入 error count
+    #[test]
+    fn build_meta_full_kimi_v095_error_step_with_multiple_tools() {
+        // step-1 含 Bash + Read → error 时两个 tool name 都 +1
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"step-1\",\"time\":1}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"step-1\",\"time\":2}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Read\",\"stepUuid\":\"step-1\",\"time\":3}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-1\",\"finishReason\":\"error\",\"time\":4}}\n";
+        let p = write_tmp(".kimi_error_multi.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(extras.error_count, 1);
+        // 字典序: Bash < Read
+        assert_eq!(
+            extras.tool_error,
+            vec![("Bash".to_string(), 1), ("Read".to_string(), 1)]
+        );
+    }
+
+    /// B: repeat_run (consecutive tool.call 同名 ≥3) + idle_gap (相邻 step.end.time gap ≥ 5min)
+    #[test]
+    fn build_meta_full_kimi_v095_detects_repeat_run_and_idle_gap() {
+        // step-1: Bash × 3 (repeat) + Read × 1 → repeat_run_count = 1, max_tool = Bash, max_count = 3
+        // step-2: Bash × 2 (跨 step,不连续) → 不重复计
+        // step-3: 跟 step-2 间隔 10 分钟 (> 5min) → idle_gap_count = 1
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s1\",\"time\":1000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1100}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1200}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c3\",\"toolCallId\":\"c3\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1300}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c4\",\"toolCallId\":\"c4\",\"name\":\"Read\",\"stepUuid\":\"s1\",\"time\":1400}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\",\"time\":1500}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s2\",\"time\":2000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c5\",\"toolCallId\":\"c5\",\"name\":\"Bash\",\"stepUuid\":\"s2\",\"time\":2100}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c6\",\"toolCallId\":\"c6\",\"name\":\"Bash\",\"stepUuid\":\"s2\",\"time\":2200}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s2\",\"finishReason\":\"tool_use\",\"time\":2300}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s3\",\"time\":601000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"stop\",\"time\":601500}}\n";
+        let p = write_tmp(".kimi_repeat_idle.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        // repeat_run: s1 里 Bash × 3, s2 里 Bash × 2 不连续(被 step.end flush) → repeat_run_count = 1
+        assert_eq!(extras.repeat_run_count, 1);
+        assert_eq!(extras.repeat_run_max_tool.as_deref(), Some("Bash"));
+        assert_eq!(extras.repeat_run_max_count, Some(3));
+        // idle_gap: s2.time=2300, s3.time=601500, gap=599200ms ≈ 9.99min > 5min
+        assert_eq!(extras.idle_gap_count, 1);
+        assert_eq!(extras.idle_gap_max_ms, Some(599200));
+    }
+
+    /// B 边界: 不足 REPEAT_RUN_MIN=3 不计 repeat run
+    #[test]
+    fn build_meta_full_kimi_v095_repeat_run_below_threshold() {
+        // Bash × 2 → < 3,不计入 repeat
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":2}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\",\"time\":3}}\n";
+        let p = write_tmp(".kimi_no_repeat.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(extras.repeat_run_count, 0);
     }
 }

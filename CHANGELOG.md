@@ -2,6 +2,46 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.5] - 2026-08-07
+
+v0.9.4 让 kimi session 写 `tool_usage`,但其他 enrich 字段 (error_count /
+thinking_count / duration / latency / repeat_run / idle_gap) 仍是 default。v0.9.5
+补齐 kimi 跟 claude/openclaw 在 `MetaExtras` 上的对齐 — 5 个新字段都从 kimi wire
+事件流派生,不再依赖 state machine。
+
+### Added
+
+- `MetaExtras.thinking_count: u32` — 全 `MetaExtras` 共用,kimi 路径填
+  (`content.part.part.type=="think"` 累加);claude/openclaw 路径暂填 0
+- `build_meta_full_kimi` 全量 enrich,5 字段:
+  - **C** `available_models` via `usage.record.model` (BTreeSet 字典序)
+  - **D** `thinking_count` via `content.part.part.type=="think"` (kimi 字段名是
+    `"think"` 不是 `"thinking"`,dcwin11 fixture 验证)
+  - **E** `duration_seconds` (last - first `step.end.time`) + `first_response_latency_ms`
+    (first `step.end.time` - first `turn.prompt.time`)
+  - **A** `error_count` (`step.end.finishReason=="error"`) + `tool_error`
+    (per-tool 计数: step_uuid → 该 step 内 `tool.call.uuid` → name)
+  - **B** `repeat_run_count/max_tool/max_count` (consecutive `tool.call.name` ≥ 3,
+    `step.end` 切时 flush) + `idle_gap_count/max_ms` (相邻 `step.end.time` gap ≥ 5min)
+
+### Changed
+
+- `tool.call` 累加 `tool_usage` 改成不依赖 `uuid`/`stepUuid`(v0.9.4 fixture 没
+  `uuid` 也能跑);uuid + stepUuid 仅 best-effort 用于 error 配对
+- `kimi` wire event 的 `time` 字段实际在嵌套 `event` 内 (跟 `turn.prompt` /
+  `usage.record` 在顶层不同),enrich 改为从 `ev.time` 读
+- v0.9.4 旧测试 `build_meta_full_kimi_aggregates_tool_usage` 调整: 同一 step 内
+  `Read × 3` 现在触发 `repeat_run_count = 1`(v0.9.4 时代 enrich 全 default)
+
+### Notes
+
+- DB schema 不变 (新增 `thinking_count` 字段在 `MetaExtras` Rust struct,持久化走
+  既有 `tool_usage_json` 等列;需检查 sync_loop 写入路径,如缺则下次 sync 自动加上)
+- `parent_uuids` 仍 default (kimi 暂无 graph view 用例)
+- `phase_hint`/`phase_detail` 仍 default (kimi tool name 集合不稳定,
+  explore/implement 启发式不适用)
+- live PID tracking 显式 defer (kimi CLI 无对应 marker)
+
 ## [0.9.4] - 2026-08-07
 
 v0.9.0 引入 Kimi 时 `build_meta_full` 对 `.kimi` 路径早 return → kimi session

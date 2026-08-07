@@ -398,6 +398,8 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
                     tool_error_json.as_deref(),
                     // v0.8.7 A: parent_uuids
                     parent_uuids_text.as_deref(),
+                    // v0.9.5: thinking_count (kimi 走 build_meta_full_kimi 填)
+                    extras.thinking_count,
                 )?;
                 Ok::<_, AppError>(())
             });
