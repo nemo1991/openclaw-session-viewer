@@ -258,6 +258,13 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
                     for item in content {
                         if let Some(item_obj) = item.as_object() {
                             let t = item_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                            // v0.9.6: thinking_count 跨 source 全填 — claude message.content[].type=="thinking"
+                            // 累加;openclaw 路径同 pattern 但 OpenClaw wire 没 content[] thinking block
+                            // (OpenClaw 走独立 thinking_level_change event, docs/OPENCLAW_SESSION_FORMAT.md:108),
+                            // 同循环 0 命中,thinking_count 保持 0,符合预期
+                            if t == "thinking" {
+                                out.thinking_count += 1;
+                            }
                             if TOOL_USE_ALIASES.contains(&t) {
                                 if let Some(name) = item_obj.get("name").and_then(|v| v.as_str()) {
                                     let name = name.to_string();
@@ -1138,5 +1145,46 @@ mod tests {
         let p = write_tmp(".kimi_no_repeat.jsonl", jsonl);
         let extras = build_meta_full(&p).expect("build_meta_full");
         assert_eq!(extras.repeat_run_count, 0);
+    }
+
+    // ===== v0.9.6: thinking_count 跨 source 全填 =====
+
+    /// claude path: message.content[].type=="thinking" 累加
+    #[test]
+    fn claude_path_counts_thinking_blocks() {
+        // 3 个 assistant, content[] 各含 1 个 thinking + 1 个 text → thinking_count = 3
+        let jsonl = "\
+{\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"t1\"},{\"type\":\"text\",\"text\":\"x\"}]}}\n\
+{\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:01:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"t2\"},{\"type\":\"text\",\"text\":\"y\"}]}}\n\
+{\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:02:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"t3\"},{\"type\":\"text\",\"text\":\"z\"}]}}\n";
+        let p = write_tmp("claude_thinking.jsonl", jsonl);
+        let m = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(m.thinking_count, 3);
+        assert_eq!(m.assistant_message_count, 3);
+    }
+
+    /// claude path: 同 message 内多 thinking blocks 全部累加
+    #[test]
+    fn claude_path_multiple_thinking_per_message() {
+        let jsonl = "\
+{\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"a\"},{\"type\":\"thinking\",\"thinking\":\"b\"},{\"type\":\"text\",\"text\":\"x\"}]}}\n\
+{\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:01:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"c\"},{\"type\":\"text\",\"text\":\"y\"}]}}\n";
+        let p = write_tmp("claude_multi_thinking.jsonl", jsonl);
+        let m = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(m.thinking_count, 3);
+    }
+
+    /// openclaw path: 同样走 content[] 循环,但 OpenClaw wire 实际不含 type=="thinking"
+    /// (OpenClaw thinking 是独立 event, docs/OPENCLAW_SESSION_FORMAT.md:108)
+    /// 验证 default 0,不 panic
+    #[test]
+    fn openclaw_path_thinking_count_default_zero() {
+        // OpenClaw 风格: assistant message.content[] = [text, toolUse] (无 thinking)
+        let jsonl = "\
+{\"type\":\"message\",\"id\":\"m1\",\"timestamp\":\"2026-07-08T10:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"},{\"type\":\"toolUse\",\"id\":\"tu1\",\"name\":\"Read\",\"input\":{}}]}}\n\
+{\"type\":\"message\",\"id\":\"m2\",\"timestamp\":\"2026-07-08T10:01:00Z\",\"message\":{\"role\":\"user\",\"content\":\"ok\"}}\n";
+        let p = write_tmp("openclaw_no_thinking.jsonl", jsonl);
+        let m = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(m.thinking_count, 0);
     }
 }
