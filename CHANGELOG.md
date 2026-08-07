@@ -2,6 +2,38 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.6] - 2026-08-07
+
+v0.9.5 让 kimi 路径填 `MetaExtras.thinking_count`,但 claude/openclaw 路径仍填 0
+— kimi 的 `thinking_count` 数字跟另外两种 source 不可比。v0.9.6 跨 source 把
+`thinking_count` 全填,UI 上 `SessionSummaryStrip` "思考" chip 显示所有 session 真实数字。
+
+### Added
+
+- claude 路径 `build_meta_full` 在 assistant `message.content[]` 循环里加
+  `t == "thinking"` 累加 — 跟现有 TOOL_USE_ALIASES 检查同循环,无新增 loop pass
+- openclaw 路径同 pattern,但 OpenClaw wire 实际不含 `content[].type=="thinking"`
+  (OpenClaw thinking 是独立 `thinking_level_change` event,
+  docs/OPENCLAW_SESSION_FORMAT.md:108) — 0 命中时 `thinking_count=0` 正确
+
+### Test
+
+- 3 个单测: claude single thinking / claude multi thinking per message /
+  openclaw default zero
+
+### Notes
+
+- DB schema 不变 — `thinking_count` 列已在 v0.9.5 写库链路里
+- kimi 路径不动 (v0.9.5 已填)
+- 跨 source 比较: claude "thinking" ≈ kimi "think part", openclaw 暂无 inline
+  thinking 概念(只是 mode-change event)
+
+### Deferred
+
+- Kimi parent_uuids (kimi wire event `parentUuid` 语义是 tool.result→tool.call 配对,
+  不是 message 父子边;累积进 `parent_uuids_text` 会误导 graph view 显示无意义的
+  edges — 跟 claude/openclaw 的 "跨 session 共享 message uuid" 语义不一致。)
+
 ## [0.9.5] - 2026-08-07
 
 v0.9.4 让 kimi session 写 `tool_usage`,但其他 enrich 字段 (error_count /
