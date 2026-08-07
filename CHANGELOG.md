@@ -2,6 +2,29 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.4] - 2026-08-07
+
+v0.9.0 引入 Kimi 时 `build_meta_full` 对 `.kimi` 路径早 return → kimi session
+不写 `tool_usage_json`,导致 `rebuild_tool_global_stats` 聚合时 kimi 工具缺席
+(`tool_global_stats` / `tool_session` 表里没 kimi 数据)。v0.9.4 让 kimi 走专属
+enrich,只算 tool_usage (其他复杂 enrich 暂仍 default)。
+
+### Changed
+
+- `parser/meta_extras.rs::build_meta_full` kimi 早 return 改走 `build_meta_full_kimi`
+- 新 helper `build_meta_full_kimi`: 扫 `context.append_loop_event.event.type=='tool.call'` 累加 event.name
+- 触发判定: `path.contains(".kimi") || source_from_path(path) == "kimi"` (后者让测试 fixture 不必伪装成 `.kimi` 路径)
+
+### Test
+
+- 2 unit tests (tool_usage 聚合 + 非 tool.call 事件忽略)
+
+### Notes
+
+- `tool_error` 留空 (kimi 无 `tool_result.is_error` 事件信号,后续 enrich 再补)
+- 其他 enrich 字段 (error_count / repeat_run / idle_gap / parent_uuids) 仍 default
+- sync_loop / rebuild_tool_global_stats / DB schema 不变 — 数据流自动覆盖 kimi
+
 ## [0.9.3] - 2026-08-07
 
 v0.9.2 收口历史 e2e fail。v0.9.3 把 v0.9.0 deferred 列表里"kimi token 累计"做掉:
