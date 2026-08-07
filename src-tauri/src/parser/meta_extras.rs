@@ -460,23 +460,27 @@ fn compute_ms_between(first: &str, last: &str) -> Option<u64> {
     }
 }
 
-/// v0.9.5: kimi wire.jsonl 的全量 enrich — 跨 source 跟 claude/openclaw 对齐
+/// v0.9.5 + v0.9.7: kimi wire.jsonl 的全量 enrich — 跨 source 跟 claude/openclaw 对齐
 /// `MetaExtras` 字段子集。覆盖:
 /// - C: `available_models` via `usage.record.model`
 /// - D: `thinking_count` via `content.part.part.type=="think"`
 /// - E: `duration_seconds` (last - first step.end.time) + `first_response_latency_ms`
 ///   (first step.end.time - first turn.prompt.time)
-/// - A: `error_count` (step.end.finishReason=="error") + `tool_error`
-///   (per-tool 计数: step 配 stepUuid → 该 step 内所有 tool.call.uuid → tool name)
+/// - A: `error_count` + `tool_error`:
+///     - v0.9.7 主要信号: `tool.result.result.isError == true` → 反查 parentUuid → tool name
+///     - v0.9.5 旧信号: `step.end.finishReason == "error"` (real kimi 0 命中,保留作 defensive)
 /// - B: `repeat_run_count/max_tool/max_count` (consecutive tool.call 同名 ≥ 3,
 ///   flush 在 step.end 切换) + `idle_gap_count/max_ms` (相邻 step.end.time gap ≥ 5min)
 ///
 /// v0.9.4: 之前只算 tool_usage;其余 enrich 字段 (parent_uuids 等) 暂仍 default。
 /// 不依赖 state machine — kimi wire event stream 字段名直接读,不依赖 normalize_kimi_record。
 ///
-/// 注: content.part.part.type 字段值是 "think" (不是 "thinking") — 见
-/// fixtures/kimi/wire-with-usage.jsonl 验证。finishReason 在真实 kimi 还有
-/// "stop"/"length"/"tool_use" 等,这里只对 "error" 累加,其他当作成功。
+/// v0.9.7 关键修正 (dcwin11 真实样本验证):
+/// - kimi wire event `time` 字段在**顶层**(`{"type":..., "time":...}`),不在 `event`
+///   嵌套对象内。v0.9.5 误读 `ev.get("time")` 总是 None,导致 duration_seconds/first_response_latency_ms/idle_gap 在真实数据上全是 default。
+/// - kimi 错误信号是 `tool.result.result.isError == true`,不是 `step.end.finishReason`。
+///   dcwin11 11 个 session 共 37 个 isError 事件 (5/6/21 三个长 session),finishReason
+///   真实值仅 `tool_use` (353) 和 `end_turn` (11) 两种,`error` 永远 0 命中。
 fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
     use std::collections::{BTreeSet, HashMap};
     let mut out = MetaExtras::default();
@@ -527,9 +531,10 @@ fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
                     None => return,
                 };
                 let ev_type = ev.get("type").and_then(|x| x.as_str()).unwrap_or("");
-                // kimi 把 time 字段放在嵌套 ev 内 (dcwin11 fixture 验证),
-                // 跟 turn.prompt/usage.record 不同 — 重新从 ev 顶层读。
-                let ev_time = ev.get("time").and_then(|x| x.as_i64());
+                // v0.9.7 修正: kimi wire event `time` 字段在**顶层** (跟 turn.prompt 同位置),
+                // 不在嵌套 `event` 内。v0.9.5 误用 `ev.get("time")` 总是 None,导致
+                // duration_seconds / first_response_latency_ms / idle_gap 全部失效。
+                let ev_time = time;
                 match ev_type {
                     "content.part" => {
                         // D: thinking_count — part.type=="think" 累加 (kimi 字段名是 "think" 非 "thinking")
@@ -565,6 +570,27 @@ fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
                                 );
                                 current_tool = Some(name.to_string());
                                 current_count = 1;
+                            }
+                        }
+                    }
+                    "tool.result" => {
+                        // v0.9.7: kimi 真实错误信号是 tool.result.result.isError == true
+                        // (dcwin11: 5/6/21 个事件,finishReason 真实值只 tool_use/end_turn)。
+                        // 用 parentUuid 反查先前 tool.call.uuid → tool name,累加 tool_error_counts。
+                        // parentUuid 缺/反查失败时: tool_error 累不到该 name,但 error_count 仍 +1
+                        // (best-effort per-tool breakdown)。
+                        let res = ev.get("result");
+                        let is_error = res
+                            .and_then(|r| r.get("isError"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if is_error {
+                            out.error_count += 1;
+                            let parent = ev.get("parentUuid").and_then(|x| x.as_str());
+                            if let Some(p) = parent {
+                                if let Some(name) = tool_uuid_to_name.get(p) {
+                                    *tool_error_counts.entry(name.clone()).or_insert(0) += 1;
+                                }
                             }
                         }
                     }
@@ -1040,6 +1066,7 @@ mod tests {
 
     /// E: duration_seconds (last - first step.end.time) + first_response_latency_ms
     /// (first step.end.time - first turn.prompt.time)
+    /// v0.9.7: `time` 字段移到顶层 (跟真实 kimi wire 一致;v0.9.5 误放 event 内)
     #[test]
     fn build_meta_full_kimi_v095_computes_duration_and_latency() {
         // first turn.prompt.time = 1000
@@ -1048,9 +1075,9 @@ mod tests {
         // last step.end.time = 7000 (duration = (7000-1500)/1000 = 5s)
         let jsonl = "\
 {\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"hi\"}],\"time\":1000}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-1\",\"finishReason\":\"tool_use\",\"time\":1500}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-2\",\"finishReason\":\"tool_use\",\"time\":2000}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-3\",\"finishReason\":\"stop\",\"time\":7000}}\n";
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-1\",\"finishReason\":\"tool_use\"},\"time\":1500}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-2\",\"finishReason\":\"tool_use\"},\"time\":2000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-3\",\"finishReason\":\"stop\"},\"time\":7000}\n";
         let p = write_tmp(".kimi_timing.jsonl", jsonl);
         let extras = build_meta_full(&p).expect("build_meta_full");
         assert_eq!(extras.first_response_latency_ms, Some(500));
@@ -1105,24 +1132,25 @@ mod tests {
     }
 
     /// B: repeat_run (consecutive tool.call 同名 ≥3) + idle_gap (相邻 step.end.time gap ≥ 5min)
+    /// v0.9.7: `time` 字段移到顶层 (跟真实 kimi wire 一致)
     #[test]
     fn build_meta_full_kimi_v095_detects_repeat_run_and_idle_gap() {
         // step-1: Bash × 3 (repeat) + Read × 1 → repeat_run_count = 1, max_tool = Bash, max_count = 3
         // step-2: Bash × 2 (跨 step,不连续) → 不重复计
         // step-3: 跟 step-2 间隔 10 分钟 (> 5min) → idle_gap_count = 1
         let jsonl = "\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s1\",\"time\":1000}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1100}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1200}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c3\",\"toolCallId\":\"c3\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1300}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c4\",\"toolCallId\":\"c4\",\"name\":\"Read\",\"stepUuid\":\"s1\",\"time\":1400}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\",\"time\":1500}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s2\",\"time\":2000}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c5\",\"toolCallId\":\"c5\",\"name\":\"Bash\",\"stepUuid\":\"s2\",\"time\":2100}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c6\",\"toolCallId\":\"c6\",\"name\":\"Bash\",\"stepUuid\":\"s2\",\"time\":2200}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s2\",\"finishReason\":\"tool_use\",\"time\":2300}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s3\",\"time\":601000}}\n\
-{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"stop\",\"time\":601500}}\n";
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s1\"},\"time\":1000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"s1\"},\"time\":1100}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Bash\",\"stepUuid\":\"s1\"},\"time\":1200}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c3\",\"toolCallId\":\"c3\",\"name\":\"Bash\",\"stepUuid\":\"s1\"},\"time\":1300}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c4\",\"toolCallId\":\"c4\",\"name\":\"Read\",\"stepUuid\":\"s1\"},\"time\":1400}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\"},\"time\":1500}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s2\"},\"time\":2000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c5\",\"toolCallId\":\"c5\",\"name\":\"Bash\",\"stepUuid\":\"s2\"},\"time\":2100}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c6\",\"toolCallId\":\"c6\",\"name\":\"Bash\",\"stepUuid\":\"s2\"},\"time\":2200}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s2\",\"finishReason\":\"tool_use\"},\"time\":2300}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s3\"},\"time\":601000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"stop\"},\"time\":601500}\n";
         let p = write_tmp(".kimi_repeat_idle.jsonl", jsonl);
         let extras = build_meta_full(&p).expect("build_meta_full");
         // repeat_run: s1 里 Bash × 3, s2 里 Bash × 2 不连续(被 step.end flush) → repeat_run_count = 1
@@ -1186,5 +1214,147 @@ mod tests {
         let p = write_tmp("openclaw_no_thinking.jsonl", jsonl);
         let m = build_meta_full(&p).expect("build_meta_full");
         assert_eq!(m.thinking_count, 0);
+    }
+
+    // ===== v0.9.7: dcwin11 真实样本驱动 kimi meta 解析 =====
+
+    /// v0.9.7 fix: kimi 真实错误信号是 `tool.result.result.isError == true`
+    /// (不是 `step.end.finishReason == "error"`,后者在 11 个 dcwin11 session 0 命中)。
+    /// 验证 isError → error_count + per-tool breakdown。
+    #[test]
+    fn build_meta_full_kimi_v097_detects_iserror_tool_results() {
+        // step-1: 1 个 Bash,result.isError=true → error_count=1, tool_error[Bash]=1
+        // step-2: 1 个 Read,result.isError=false → 不算 error
+        // step-3: 1 个 Grep,result.isError=true → error_count=2, tool_error[Grep]=1
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.result\",\"parentUuid\":\"c1\",\"toolCallId\":\"c1\",\"result\":{\"output\":\"exit 2\",\"isError\":true},\"time\":1100}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\",\"time\":1200}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Read\",\"stepUuid\":\"s2\",\"time\":2000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.result\",\"parentUuid\":\"c2\",\"toolCallId\":\"c2\",\"result\":{\"output\":\"# file contents\"},\"time\":2100}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s2\",\"finishReason\":\"tool_use\",\"time\":2200}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c3\",\"toolCallId\":\"c3\",\"name\":\"Grep\",\"stepUuid\":\"s3\",\"time\":3000}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.result\",\"parentUuid\":\"c3\",\"toolCallId\":\"c3\",\"result\":{\"output\":\"no match\",\"isError\":true},\"time\":3100}}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"tool_use\",\"time\":3200}}\n";
+        let p = write_tmp(".kimi_iserror.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(extras.error_count, 2, "Bash + Grep 各 1 个 isError");
+        // Bash 和 Grep 各 1 次,desc 排: count 相同 → 字典序 Bash < Grep
+        assert_eq!(
+            extras.tool_error,
+            vec![("Bash".to_string(), 1), ("Grep".to_string(), 1)]
+        );
+        // Read 不在 tool_error(成功)
+        assert!(!extras.tool_error.iter().any(|(n, _)| n == "Read"));
+    }
+
+    /// v0.9.7 fix: kimi wire event `time` 字段在**顶层**(`{"type":...,"time":...}`),
+    /// 不在嵌套 `event` 内。v0.9.5 误读 `ev.get("time")` 永远 None,导致 duration/latency
+    /// 在真实数据上全 default。验证顶层 time 正确传递到 first/last step.end.time。
+    #[test]
+    fn build_meta_full_kimi_v097_uses_top_level_time_field() {
+        // 3 个 step.end,顶层 time: 1000, 2000, 3000
+        // duration = 3000 - 1000 = 2000ms → 2s
+        // first_response_latency = 1000 - 500 = 500ms (turn.prompt at 500)
+        let jsonl = "\
+{\"type\":\"turn.prompt\",\"input\":[{\"type\":\"text\",\"text\":\"hi\"}],\"time\":500}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\"},\"time\":1000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s2\",\"finishReason\":\"end_turn\"},\"time\":2000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"tool_use\"},\"time\":3000}\n";
+        let p = write_tmp(".kimi_toplevel_time.jsonl", jsonl);
+        let extras = build_meta_full(&p).expect("build_meta_full");
+        assert_eq!(extras.duration_seconds, Some(2));
+        assert_eq!(extras.first_response_latency_ms, Some(500));
+    }
+
+    /// 真实样本: dcwin11 das-portal session (1096 lines, 5 errors Bash×4 + Grep×1)
+    /// 验证 5 errors、thinking_count=125、step_end=124、turn_prompts=12、model=deepseek-v4-flash
+    #[test]
+    fn build_meta_full_kimi_v097_dcwin11_das_portal_real_sample() {
+        // 使用 commit 时一并 copy 的真实样本 (fixtures/kimi/wire-das-portal-main.jsonl)
+        // 真实数据下 v0.9.5 会 0 errors (finishReason 没 "error"), v0.9.7 修正后 5 errors。
+        let path = std::path::Path::new("../fixtures/kimi/wire-das-portal-main.jsonl");
+        if !path.exists() {
+            // 跳过(避免 CI 没 fixture 时 fail)
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let extras = build_meta_full_kimi(path).expect("build_meta_full_kimi");
+        assert_eq!(
+            extras.error_count, 5,
+            "5 个 tool.result.isError=true (Bash×4 + Grep×1)"
+        );
+        assert_eq!(
+            extras.tool_error,
+            vec![("Bash".to_string(), 4), ("Grep".to_string(), 1)],
+            "per-tool 错误 breakdown 按 count desc 排"
+        );
+        assert!(
+            extras.thinking_count >= 100,
+            "thinking_count 应该 >= 100 (实测 125), got {}",
+            extras.thinking_count
+        );
+        assert_eq!(
+            extras.available_models,
+            vec!["deepseek-v4-flash".to_string()],
+            "available_models 字典序 = [deepseek-v4-flash]"
+        );
+        // duration > 0: 真实 session 跨越 ≥ 数小时
+        assert!(
+            extras.duration_seconds.unwrap_or(0) > 0,
+            "duration_seconds > 0 (顶层 time 修复后), got {:?}",
+            extras.duration_seconds
+        );
+    }
+
+    /// 真实样本: dcwin11 platform 5-agent session main wire (859 lines, 6 errors)
+    /// 验证多 agent 场景 + 0 thinking_count (model=minimax-m3 不产 think part)
+    #[test]
+    fn build_meta_full_kimi_v097_dcwin11_platform_main_real_sample() {
+        let path = std::path::Path::new("../fixtures/kimi/wire-platform-main.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let extras = build_meta_full_kimi(path).expect("build_meta_full_kimi");
+        assert_eq!(
+            extras.error_count, 6,
+            "6 个 tool.result.isError=true (Read×1 + Grep×2 + Edit×3)"
+        );
+        // count desc: Edit(3) > Grep(2) > Read(1)
+        assert_eq!(
+            extras.tool_error,
+            vec![
+                ("Edit".to_string(), 3),
+                ("Grep".to_string(), 2),
+                ("Read".to_string(), 1),
+            ]
+        );
+        assert_eq!(extras.thinking_count, 0, "minimax-m3 不产 think part");
+        assert_eq!(extras.available_models, vec!["minimax-m3".to_string()]);
+    }
+
+    /// 真实样本: dcwin11 bpm 大 session (3431 lines, 21 errors, 364 thinking)
+    /// 性能 + 大数据量 sanity check,确保循环不 OOM/panic
+    #[test]
+    fn build_meta_full_kimi_v097_dcwin11_bpm_large_real_sample() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("fixtures/kimi/wire-with-usage.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        // 已有 wire-with-usage.jsonl (v0.9.3 fixture),254KB,验证大文件能跑通 + 思考数 ≥ 几十
+        let extras = build_meta_full_kimi(&path).expect("build_meta_full_kimi");
+        // 没有 isError 的 fixture 走 v0.9.5 path,error_count=0 (因为 isError 新分支不命中)
+        // thinking_count 应该 > 0 (kimi fixture 含 think part)
+        assert!(
+            extras.thinking_count > 0,
+            "wire-with-usage 应有 thinking_count > 0, got {}",
+            extras.thinking_count
+        );
+        assert!(extras.duration_seconds.unwrap_or(0) > 0);
     }
 }

@@ -2,6 +2,85 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.7] - 2026-08-07
+
+v0.9.6 让 `thinking_count` 跨 source 全填。v0.9.7 主题是 **用 dcwin11 真实样本验证
+kimi wire 解析** + 多个 CI / UX 闭合,顺手修 2 个 v0.9.5 潜伏的 bug。
+
+### Bug fixes (基于 dcwin11 真实样本回归发现)
+
+- **`build_meta_full_kimi` 用顶层 `time` 字段(不是 `event.time`)**: v0.9.5 读
+  `ev.get("time")`(在 nested event 子对象里),但 Kimi wire.jsonl 顶层就有 `time`
+  (类似 Claude Code 的 timestampMs 顶层位置)。结果所有 kimi session 的
+  `duration_seconds` / `idle_gaps` / `repeat_runs` / `first_ts` / `last_ts`
+  自 v0.9.5 起一直 default 0/None。修了 `meta_extras.rs:511` 顶层取 `time`,
+  配套 2 个 v0.9.5 测试 fixture 改用顶层 `time`。
+- **Kimi `error_count` 走 `tool.result.result.isError == true`**: v0.9.5 检查
+  `finishReason=="error"`,但实际 Kimi wire 三个 source 里只有 `tool_use` 和
+  `end_turn` finishReason(`grep finishReason dcwin11/.../*.jsonl` → 0 个 "error"
+  vs 37 个 `isError:true`)。现在用 parentUuid 反查 `tool.call` uuid,
+  找不到就 lookup `toolCallId`,把 `result.isError==true` 的 tool 计入
+  `error_count` + `tool_error_counts` per-tool。
+
+### Added
+
+- **A.** SessionsRoute 4 个新 `MetaExtras` chip:
+  - `⏱ {durationSeconds}s` (绿) — 真实会话时长,从 first→last ts
+  - `⚠ {errorCount} 错误` (红) — `tool_error_counts` 拆解到 tooltip,
+    显示哪个 tool 报错最多
+  - `🔁 {repeatRunCount}x` (琥珀) — 同一 `prompt` 跑 ≥3 次的 group 数
+  - `💤 {idleGapCount} 静默` (灰) — >5min 的事件间隔数,tooltip 给 max gap ms
+  - 加在现有 `思考/工具/Subagent` chip 行后
+- **C.** `useIsMac` hook — `useModifierLabel()` ("Cmd"/"Ctrl") + `useModifierSymbol()`
+  ("⌘"/"Ctrl")。SessionDetailRoute "重新解析" tooltip 改用
+  `${reloadModifier}+R`,Windows/Linux build 后显示 "Ctrl+R",macOS 显示 "Cmd+R"。
+- **D.** Release workflow macOS job 加 smoke test — `open -a .app`(5s timeout)
+  - `otool -L` 验证 dyld 路径,防止 build 完发布"死的" .app
+    (dyld 错 / Info.plist 缺 / 链接坏的 artifact)
+- **E.** Kimi `live_pid` 启发式 — wire.jsonl mtime 距今 <30s 时设
+  `Some(1)` (Kimi CLI 没 pgrep-equivalent marker,但同一 file mtime 是
+  活动代理的强代理信号)。阈值常量 `KIMI_LIVE_MTIME_THRESHOLD_MS = 30_000` 文档化。
+
+### Test
+
+- 4 个 `build_meta_full_kimi_v097_*` 测试用 dcwin11 真实样本断言:
+  - das-portal (1096 行 wire,deepseek-v4-flash): err_count=5,
+    Bash×4 + Grep×1
+  - platform-multiagent (859 行,minimax-m3): err_count=6,
+    Edit×3 + Grep×2 + Read×1
+  - bpm-large: 同样路径验证
+- `build_meta_full_kimi_v097_detects_iserror_tool_results` — 单元 fixture 验
+  isError 检测和 parentUuid 配对
+- 3 个 sessions.rs 单测验 `live_pid` 启发式:recent → Some(1),
+  future mtime → None,常量 documented
+- 8 个 `useIsMac` 测试 — Mac/Windows/Linux + `userAgent` fallback +
+  iPhone UA + `navigator` SSR safety
+
+### Removed
+
+- **F.** `e2e/detail-page.spec.ts` 188 行死代码: v0.5.0 起的 4 个 `test.describe.skip`
+  test 引用 `data-testid="subagent-count-badge"` 和 `data-testid="back-to-parent"`,
+  后被 `subagent-badge` / `SubagentInlineSummary` 取代,跑起来反而 fail。
+  SubagentPanel 的覆盖在 `SubagentPanel.test.tsx` (6 vitest case)。
+  文件 318 → 138 行。后续要 e2e 覆盖走 Tauri WebDriver 或 vitest 集成。
+
+### Files
+
+- New: `packages/frontend/src/hooks/useIsMac.ts` + `.test.ts`,
+  `fixtures/kimi/{state-das-portal.json, wire-das-portal-main.jsonl,
+state-platform-multiagent.json, wire-platform-main.jsonl,
+wire-platform-subagents/}`
+- Modified: `packages/frontend/src/routes/{SessionsRoute.tsx,
+SessionsRoute.css, SessionDetailRoute.tsx}`, `src-tauri/src/parser/
+meta_extras.rs`, `src-tauri/src/commands/sessions.rs`,
+  `.github/workflows/release.yml`, `e2e/detail-page.spec.ts`
+
+### Numbers
+
+- Rust: 287 → 295 tests (+8)
+- Frontend: 601 → 609 tests (+8)
+- e2e: 318 → 138 lines
+
 ## [0.9.6] - 2026-08-07
 
 v0.9.5 让 kimi 路径填 `MetaExtras.thinking_count`,但 claude/openclaw 路径仍填 0

@@ -20,7 +20,7 @@ import { useSessionsStore } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
 import { useOverrides } from "../state/overridesStore";
 import { useKey } from "../lib/keymap";
-import { formatBytes, formatTime } from "../lib/format";
+import { formatBytes, formatDuration, formatTime } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { SearchPalette } from "../views/SearchPalette";
 import { HomeStatusBar } from "../components/HomeStatusBar"; // v0.8.4 item 1
@@ -563,7 +563,13 @@ function SessionCard({
           ))}
         </div>
       )}
-      {(s.thinkingCount || s.toolUseCount || (s.topTools && s.topTools.length > 0)) && (
+      {(s.thinkingCount ||
+        s.toolUseCount ||
+        (s.topTools && s.topTools.length > 0) ||
+        s.durationSeconds != null ||
+        (s.errorCount != null && s.errorCount > 0) ||
+        (s.repeatRunCount != null && s.repeatRunCount > 0) ||
+        (s.idleGapCount != null && s.idleGapCount > 0)) && (
         <div className="session-stats">
           {s.thinkingCount && s.thinkingCount > 0 && (
             <span className="stat-chip stat-thinking" title="思考块">
@@ -573,6 +579,48 @@ function SessionCard({
           {s.toolUseCount && s.toolUseCount > 0 && (
             <span className="stat-chip stat-tools" title="工具调用">
               🔧 {s.toolUseCount}
+            </span>
+          )}
+          {/* v0.9.7: 派生指标 chip — 闭合 v0.9.5 enrich 数据的 UI 表面 */}
+          {s.durationSeconds != null && s.durationSeconds > 0 && (
+            <span className="stat-chip stat-duration" title="会话跨度 (last - first ts)">
+              ⏱ {formatDuration(s.durationSeconds)}
+            </span>
+          )}
+          {s.errorCount != null && s.errorCount > 0 && (
+            <span
+              className="stat-chip stat-error"
+              title={
+                s.toolError && s.toolError.length > 0
+                  ? `失败: ${s.toolError.map(([n, c]) => `${n}×${c}`).join(", ")}`
+                  : "失败消息数"
+              }
+            >
+              ⚠ {s.errorCount}
+            </span>
+          )}
+          {s.repeatRunCount != null && s.repeatRunCount > 0 && (
+            <span
+              className="stat-chip stat-repeat"
+              title={
+                s.repeatRunMaxTool && s.repeatRunMaxCount
+                  ? `连续 ${s.repeatRunMaxTool} × ${s.repeatRunMaxCount}`
+                  : "连续同工具调用"
+              }
+            >
+              🔁 {s.repeatRunCount}
+            </span>
+          )}
+          {s.idleGapCount != null && s.idleGapCount > 0 && (
+            <span
+              className="stat-chip stat-idle"
+              title={
+                s.idleGapMaxMs
+                  ? `相邻 entry gap ≥ 5min, 最长 ${(s.idleGapMaxMs / 60000).toFixed(1)}min`
+                  : "相邻 entry 间隔 ≥ 5min"
+              }
+            >
+              💤 {s.idleGapCount}
             </span>
           )}
           {s.topTools?.map((t) => (

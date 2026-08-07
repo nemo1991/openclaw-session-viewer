@@ -1,0 +1,16 @@
+{
+  "createdAt": "2026-07-30T07:47:17.063Z",
+  "updatedAt": "2026-07-31T03:08:58.045Z",
+  "title": "修复 DACHKJ.Portal.Web/Login/Page/LoginUserInfo.aspx页面 攻击者可以猜解获得系统上的用户列表，获得用户列表后可以用来进一步口令爆破。 建议校验当前userCode对应的用户认证信息，防止越权访问进行账户密码爆破",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_das-portal_f881a52f8264/session_57d64c0b-5dc3-4b48-bf8e-37fb385afe23/agents/main",
+      "type": "main",
+      "parentAgentId": null
+    }
+  },
+  "custom": {},
+  "workDir": "D:/workspace/tsingtao/BPM_V8-Devops/das-portal",
+  "lastPrompt": "我找到原因了"
+}

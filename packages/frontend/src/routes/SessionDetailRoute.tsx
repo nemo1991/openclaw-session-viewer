@@ -50,6 +50,7 @@ import {
   formatLatency,
 } from "../lib/format"; // v0.8.4 item 2/5
 import { useFormatOpts } from "../hooks/useFormatOpts";
+import { useModifierLabel } from "../hooks/useIsMac"; // v0.9.7: ⌘R / Ctrl+R 平台特定 label
 import { apiRevealInFinder } from "../lib/api";
 // v0.8.4 item 2': SessionSummaryStrip 全部从 meta.* 读, 不再调 summarizeSession / findRepeatRuns / findIdleGaps
 // 纯函数仍保留给 TrajectoryRoute / AnalyzeRoute / 未来 v0.8.5+ 复用, 不再 import
@@ -177,6 +178,7 @@ export default function SessionDetailRoute() {
   // 为什么要 reset transcript: transcriptStore.start 第一行有 `if (path === current) return`
   // 短路,reload 同 path 不重 reset 不会重解析
   const [reloading, setReloading] = useState(false);
+  const reloadModifier = useModifierLabel(); // v0.9.7: "Cmd" (mac) / "Ctrl" (其他)
   const handleReload = useCallback(async () => {
     if (!meta || reloading) return;
     setReloading(true);
@@ -521,7 +523,7 @@ export default function SessionDetailRoute() {
             disabled={reloading}
             className={reloading ? "reloading" : ""}
             data-testid="reload-btn"
-            title="重新解析 jsonl + 触发后端 sync (Cmd/Ctrl+R)"
+            title={`重新解析 jsonl + 触发后端 sync (${reloadModifier}+R)`}
           >
             <RefreshCw size={14} className={reloading ? "spin" : ""} />
           </button>

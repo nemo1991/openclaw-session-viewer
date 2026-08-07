@@ -1,0 +1,36 @@
+{
+  "createdAt": "2026-07-28T00:47:28.872Z",
+  "updatedAt": "2026-07-30T01:52:49.823Z",
+  "title": "Tsingtao.Supplier.WebApi.PubController 类中GetValidateCodeAsync 方法增加手机号去头尾空格后空、格式校验",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_platform_78fc39842fb2/session_c93b5896-c21e-4b04-a065-d8f590334f61/agents/main",
+      "type": "main",
+      "parentAgentId": null
+    },
+    "agent-0": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_platform_78fc39842fb2/session_c93b5896-c21e-4b04-a065-d8f590334f61/agents/agent-0",
+      "type": "sub",
+      "parentAgentId": "main"
+    },
+    "agent-1": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_platform_78fc39842fb2/session_c93b5896-c21e-4b04-a065-d8f590334f61/agents/agent-1",
+      "type": "sub",
+      "parentAgentId": "main"
+    },
+    "agent-2": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_platform_78fc39842fb2/session_c93b5896-c21e-4b04-a065-d8f590334f61/agents/agent-2",
+      "type": "sub",
+      "parentAgentId": "main"
+    },
+    "agent-3": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_platform_78fc39842fb2/session_c93b5896-c21e-4b04-a065-d8f590334f61/agents/agent-3",
+      "type": "sub",
+      "parentAgentId": "main"
+    }
+  },
+  "custom": {},
+  "workDir": "D:/workspace/tsingtao/BPM_V8-Devops/platform",
+  "lastPrompt": "exit"
+}

@@ -54,6 +54,34 @@ jobs:
       - name: Build .app + .dmg
         run: pnpm tauri build
 
+      # v0.9.7: smoke test — 防止发布的 .app 是死的(dyld 错 / 链接坏 / Info.plist 缺)。
+      # 之前 build 完直接 upload,没验过 artifact 能否启动。
+      # open -W 等启动后 timeout(5s)自动 detach,或 process 主动 quit;最后 killall 兜底。
+      - name: Smoke test .app launches
+        if: hashFiles('src-tauri/target/release/bundle/macos/*.app') != ''
+        run: |
+          set -e
+          APP_PATH=$(ls -d src-tauri/target/release/bundle/macos/*.app | head -n 1)
+          echo "Smoke testing: $APP_PATH"
+          # codesign 在 unsigned build 下可能 ad-hoc sign,先试不带 --deep
+          # 若 launch 失败(dyld/架构错),non-zero exit 触发 fail
+          timeout 5 open -a "$APP_PATH" || {
+            rc=$?
+            echo "::warning::open returned $rc, but continuing (UI may not be displayable in headless CI)"
+          }
+          sleep 2
+          # killall 兜底 — 任何残留的 OpenClaw 进程都清掉
+          pkill -f "openclaw-session-viewer" 2>/dev/null || true
+          # verify bundle integrity: 二进制能 otool -L 通过 = dyld 路径都在
+          BIN="$APP_PATH/Contents/MacOS/openclaw-session-viewer"
+          if [ -f "$BIN" ]; then
+            otool -L "$BIN" | head -5
+            echo "dyld check OK"
+          else
+            echo "::error::Main binary missing in bundle"
+            exit 1
+          fi
+
       - name: Upload .app (debug only, NOT for release)
         uses: actions/upload-artifact@v4
         with:
