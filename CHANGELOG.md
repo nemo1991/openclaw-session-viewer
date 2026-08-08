@@ -2,6 +2,81 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.9] - 2026-08-08
+
+v0.9.8 让 `normalize_session` 收齐 17 个 top-level wire event type。v0.9.9 揭示
+v0.9.0~v0.9.8 一直藏着的一个**重大 transcript 失真 bug** — 所有 6 个 dcwin11 活跃
+session 的 `step.begin` / `content.part` / `tool.call` / `tool.result` 全部包在
+`context.append_loop_event` envelope 里,state machine 看不见,导致详情页:
+
+- bpm-large: **602 assistant message + 1040 tool_use + 601 thinking + 449 text
+  全部丢失**(只显示 ~171 个 meta block)
+- das-portal (1096 行): 127 assistant + ~700 tool 全部丢失
+- platform-multiagent (859 行): 123 assistant + ~600 tool 全部丢失
+- cust-portal-server (334 行): 46 assistant + ~250 tool 全部丢失
+- cust-portal-mobi (223 行): 26 assistant + ~150 tool 全部丢失
+- dc (57 行): 5 assistant + ~25 tool 全部丢失
+
+v0.9.8 之前的 streaming 路径(`normalize_kimi_record`)也错把 envelope 视为 meta
+emit,详情页对 kimi session 长期 0 个 assistant message。**这是 P0 级 bugfix**。
+
+### Bug fixes
+
+- **A. `normalize_session` 顶部 unwrap `context.append_loop_event`** —
+  循环起始检测到 envelope 时,extract `obj.event` 内层 event,merge envelope
+  顶层 `time` 字段(inner event 一般没 `time`),再用 inner event 的 `type`
+  作为 dispatch key 进入 match arm。函数 `unwrap_loop_envelope_owned` 返回
+  owned `serde_json::Map` 避免 borrow 跨迭代边界。
+
+- **B. `append_content_part` part 字段解析修正** — dcwin11 揭示两个串联 bug:
+  1. `obj.part` 是 object `{type, text|think}`,不是 string。之前
+     `obj.get("part").as_str()` 永远 None → part*type 落空 → 全部走
+     `* => "text"` 兜底,**thinking 块全部错误归类为 text**。
+  2. 实际 `part.type` 值是 `"think"`,不是 `"thinking"`。代码匹配 `"thinking"`
+     永远 miss。
+
+  修正: 先 `obj.get("part").as_object().get("type")`,匹配 `"think" | "thinking"`
+  两种值,text 走 `obj.part.text`,think 走 `obj.part.think`。
+
+### Test
+
+- **`normalize_session_v099_bpm_large_unwraps_loop_envelopes`** — 完整跑 5834 行
+  `wire-bpm-large.jsonl` fixture,断言 (实测值):
+  - user=75 (19 turn.prompt + 57 context.append_message{role:user},差 1 是某
+    append_message 在 step 中合并)
+  - assistant=602 (624 nested step.begin - 22 没 step.end 配对 + 1 EOF flush)
+  - meta=171 (compaction + config + permission + tools.update_store 等)
+  - text=1050,thinking=601,tool_use=1040,tool_result=1040 (v0.9.8 之前全是 0)
+- **`normalize_session_v099_unwraps_loop_envelope_in_memory`** — 内存构造 6 个
+  envelope 包裹的 loop event,断言 state machine 正确生成 1 metadata + 1
+  assistant message 含 text/tool_use/tool_result 三种 block。
+
+### Notes
+
+- 旧 DB 不受影响 — schema 不变,只是 transcript 渲染层修复,已显示的 session
+  点 reload 即可拿到正确数据。
+- 兼容未来 schema — `unwrap_loop_envelope_owned` 对 envelope 缺 inner event
+  的情况 `continue`,不会 panic。
+- dcwin11 还有 4 个 session (5 行只 config) 无 envelope,这部分 v0.9.8 已正确。
+
+### Deferred (P1)
+
+- 22 个 unmatched step.begin (bpm-large 末尾) — step.end 缺失,后续 content.part
+  / tool.call 仍写入同一 accumulator,导致 tool_result.parentUuid lookup 偶尔
+  miss (~33/1073)。需修 state machine 增量 close unmatched begin 或在 step.begin
+  时显式 close 上一个。
+- 4 个 kimi wire event type (turn.steer / plan_mode.enter / plan_mode.cancel /
+  turn.cancel) 在 bpm-large 各 1~2 个,目前 streaming 路径 skip,batch 路径透传
+  为 None (loop catch-all)。尚未在 transcript 显示 — 加 meta block 可行。
+
+### Numbers
+
+- Rust: 300 → 302 tests (+2)
+
+### Files
+
+- Modified: `src-tauri/src/parser/kimi.rs`
+
 ## [0.9.8] - 2026-08-08
 
 v0.9.7 用 dcwin11 真实样本回归验证 kimi wire 解析。v0.9.8 主题是 **把 dcwin11
@@ -32,8 +107,8 @@ compaction 次数 / config/perm 变更全部隐没在没显示的事件流里。
     `tools.set_active_tools` / `permission.record_approval_result` /
     `full_compaction.begin` / `full_compaction.complete` 聚合:
     `protocolVersion, profileName, modelAlias, thinkingEffort, permissionMode,
- activeToolCount, configChangeCount, approvalCount, compactionCount,
- lastCompactionDurationMs`。
+activeToolCount, configChangeCount, approvalCount, compactionCount,
+lastCompactionDurationMs`。
 - **C. DB schema 3 新列 + idempotent ALTER** — `todo_summary_json`,
   `kimi_token_usage_json`, `meta_banner_json` 加到 `SCHEMA_SQL` + `NEW_COLUMNS`,
   旧 DB 自动 `ensure_columns` ALTER TABLE 同步。`JOIN_SELECT_BASE` /
@@ -91,7 +166,7 @@ compactionCount / lastCompactionDurationMs`。Cluade/openclaw session
   `src-tauri/src/db/{schema.rs, migrations.rs, sync.rs}`,
   `packages/shared/src/normalize.ts`,
   `packages/frontend/src/routes/{SessionDetailRoute.tsx, SessionDetailRoute.css,
-  SessionsRoute.tsx, SessionsRoute.css}`,
+SessionsRoute.tsx, SessionsRoute.css}`,
   `packages/frontend/src/routes/SessionDetailRoute.test.tsx`
 - New: `fixtures/kimi/{state-bpm-large.json, wire-bpm-large.jsonl}` (5834 行,
   dcwin11 bpm session copy)
