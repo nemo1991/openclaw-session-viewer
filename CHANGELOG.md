@@ -2,6 +2,65 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.11] - 2026-08-08
+
+v0.9.10 把 4 个 kimi 用户可观察事件 (`turn.steer` / `turn.cancel` / `plan_mode.enter` /
+`plan_mode.cancel`) 显式 emit 为 meta block。v0.9.11 继续看 dcwin11 全部 16 个
+wire.jsonl (跨 7 个 workspace),发现 kimi wire 1.4 协议内部还有 **schema drift** —
+同一语义事件在不同 kimi 版本/构建用了不同名字。
+
+### 发现
+
+逐 session tally 全部 16 个 dcwin11 wire.jsonl (bpm-large / das-portal / platform /
+cust-portal-server / cust-portal-mobi / dc / 还有 platform 5 个 subagent):
+
+| 事件               | dcwin11 出现 session 数                             | schema                                           |
+| ------------------ | --------------------------------------------------- | ------------------------------------------------ |
+| `turn.steer`       | 2 (bpm-large 4, das-portal 4)                       | 一致                                             |
+| `turn.cancel`      | 3 (bpm-large 1, das-portal 3, dc 1)                 | 一致                                             |
+| `plan_mode.enter`  | 3 (bpm-large 2, das-portal 2, platform 2)           | 一致                                             |
+| `plan_mode.cancel` | 3 (bpm-large 2, das-portal 2, cust-portal-server 2) | **bpm-large/das-portal/cust-portal-server 风格** |
+| `plan_mode.exit`   | 1 (platform 2)                                      | **platform 风格** — schema drift                 |
+
+`plan_mode.exit` 在 wire 流里的位置紧跟 `permission.record_approval_result{
+toolName:"ExitPlanMode",action:"Presenting plan and exiting plan mode"}`,语义跟
+`plan_mode.cancel` 完全相同: 用户批准 plan → 退出 plan mode → LLM 继续执行。
+不同 kimi 版本用了不同名字 (platform 用 `exit`,其他用 `cancel`)。
+
+### Bug fix
+
+- 把 `plan_mode.exit` 加进 `normalize_kimi_record` 和 `normalize_session` 的
+  plan*mode 显式 arm,跟 `plan_mode.cancel` 同处理。之前 `plan_mode.exit` 走
+  catch-all `* => meta`,raw_type 写成 "plan_mode.exit" — 不丢数据但**显式
+  标注**这是用户可观察事件 (之前被错误归类为 "未知 event type")。
+- wire 原 raw_type 在 meta block 里保留 ("plan_mode.exit" vs "plan_mode.cancel"),
+  让 UI 后续如果想区分 kimi 版本 / 给特定名字上色都有依据。
+
+### Notes
+
+- 没有发现其他 schema-divergent 事件类型 — 16 个 dcwin11 wire.jsonl 总共用了
+  20 个 top-level event type,全部已 explicit handle。
+- `llm.tools_snapshot` (3 个 session 各 1 条) 仍 skip — 是 hash + 完整工具 schema
+  dump,无 user-facing value。
+- `usage.record` 的 turn-scope 聚合已在 v0.9.3 + v0.9.8 完整实现 (kimi_token_usage
+  - total_tokens 双写)。本版不动。
+
+### Numbers
+
+- Rust: 306 → 306 tests (回归测 +1 case 在 `user_observable_events_emit_meta_block_in_streaming_path`,
+  含 plan_mode.exit — 5 个 event type 同一 loop assert)
+- Files: 1 (`src-tauri/src/parser/kimi.rs`)
+- Lines: +6 / -1 (两个 arm 各 +1 行, comment +5 行)
+
+### Deferred (P1)
+
+- 22 个 unmatched step.begin (bpm-large 末尾) — step.end 缺失 → tool_result.parentUuid
+  lookup miss (~33/1073)。修 state machine 让 step.begin 隐式 close 上一个 step。
+- 跨 kimi wire schema drift 的 schema-version 探测: 当前 binary 不能区分
+  `plan_mode.cancel` 来自 bpm/das-portal 风格还是 `plan_mode.exit` 来自 platform
+  风格 — wire 1.4 metadata.protocol_version 字段不携带 build/kimi-cli 版本号。
+  建议未来 metadata 加 `kimi_cli_version` 字段。
+
 ## [0.9.10] - 2026-08-08
 
 v0.9.9 修了 envelope unwrap + content.part thinking parser。dcwin11 bpm-large 真实

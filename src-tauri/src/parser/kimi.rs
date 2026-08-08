@@ -99,6 +99,12 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         //  进入/退出 plan 模式)。permission.record_approval_result /
         // tools.update_store / full_compaction.* / context.apply_compaction 已在
         // v0.9.8 batch path 显式 emit,streaming path 也加进来保持一致。
+        //
+        // v0.9.11: `plan_mode.exit` 是 kimi dcwin11 platform fixture 用的别名 —
+        // wire 1.4 schema 出现 schema drift (bpm-large 用 `plan_mode.cancel`,
+        // platform 用 `plan_mode.exit`,两者语义完全相同: 都是用户批准 plan 后
+        // 退出 plan mode)。统一进 plan_mode arm,保留 wire 原 raw_type
+        // (build_meta_from_event 用 r#type 作 raw_type,不变)。
         "permission.record_approval_result"
         | "tools.update_store"
         | "turn.steer"
@@ -107,7 +113,8 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         | "full_compaction.complete"
         | "context.apply_compaction"
         | "plan_mode.enter"
-        | "plan_mode.cancel" => Some(build_meta_from_event(obj, r#type, index, timestamp)),
+        | "plan_mode.cancel"
+        | "plan_mode.exit" => Some(build_meta_from_event(obj, r#type, index, timestamp)),
         // 未知 event type — emit 为 meta,不 panic
         _ => Some(build_meta_from_event(obj, r#type, index, timestamp)),
     }
@@ -269,7 +276,8 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
             | "turn.steer"
             | "turn.cancel"
             | "plan_mode.enter"
-            | "plan_mode.cancel" => {
+            | "plan_mode.cancel"
+            | "plan_mode.exit" => {
                 out.push(build_meta_from_event(obj, r#type, idx, extract_time(obj)));
             }
             _ => {
@@ -594,11 +602,14 @@ mod tests {
     fn user_observable_events_emit_meta_block_in_streaming_path() {
         // v0.9.10: turn.steer / turn.cancel / plan_mode.enter / plan_mode.cancel
         // 在 streaming normalize_kimi_record 路径下也 emit meta block (不再 skip)。
+        // v0.9.11: `plan_mode.exit` (dcwin11 platform fixture schema drift,语义同
+        // plan_mode.cancel — 用户批准 plan 退出) 同样显式 emit,不再走 catch-all。
         for ty in [
             "turn.steer",
             "turn.cancel",
             "plan_mode.enter",
             "plan_mode.cancel",
+            "plan_mode.exit",
         ] {
             let rec = json!({"type": ty, "time": 1_u64});
             let n =
