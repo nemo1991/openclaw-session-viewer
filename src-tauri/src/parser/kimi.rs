@@ -33,6 +33,31 @@ use super::claude::{NormalizedBlock, NormalizedMessage};
 /// Kimi `tool.result.parentUuid` 的 JSON key 名(对应 tool.call.uuid)
 pub const KIMI_PARENT_KEY: &str = "parentUuid";
 
+/// v0.9.9: dcwin11 真实样本揭示 — `context.append_loop_event` 是 envelope,
+/// 内部 `event.type` 才是真正的 loop event (step.begin/content.part/tool.call/
+/// tool.result)。所有 6 个 dcwin11 活跃 session 都把 step.begin 包在这里
+/// (bpm-large 624/624, das-portal 127/127, platform-multiagent 123/123)。
+///
+/// 此函数: 从 envelope 取 inner event,merge 进 envelope 顶层字段(`time` /
+/// `turnId` 等)以便后续 arm 用 `obj.get("type")` / `obj.get("time")` 路径走
+/// 通。返回 owned Map 避免 borrow 跨迭代边界。
+///
+/// 返回 `None` 表示 envelope 缺 inner event / type — skip。
+fn unwrap_loop_envelope_owned(
+    envelope: &Value,
+) -> Option<(serde_json::Map<String, Value>, String)> {
+    let env_obj = envelope.as_object()?;
+    let inner = env_obj.get("event")?.as_object()?.clone();
+    // clone inner event fields, overlay envelope's top-level `time` (canonical)
+    let mut merged = inner;
+    if let Some(time) = env_obj.get("time") {
+        merged.insert("time".to_string(), time.clone());
+    }
+    // inner event type 是 dispatch key
+    let inner_type = merged.get("type").and_then(|v| v.as_str())?.to_string();
+    Some((merged, inner_type))
+}
+
 /// v0.9.0: 单条 wire event 归一化 — 用于 streaming 路径。
 ///
 /// 不跑 state machine;loop event 各自 emit 成 meta block。
@@ -100,9 +125,26 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     let mut pending_tool_calls: HashMap<String, usize> = HashMap::new();
 
     for (idx, record) in records.into_iter().enumerate() {
-        let Some(obj) = record.as_object() else {
-            continue;
-        };
+        // v0.9.9: dcwin11 真实样本揭示 — `context.append_loop_event` 是 envelope,
+        // 内部 `event.type` 才是真正的 loop event (step.begin/content.part/
+        // tool.call/tool.result)。之前 fall-through 到 catch-all arm emit 成 meta
+        // block,导致所有 assistant message + tool_use 全部丢失。
+        // 解法: 顶部 unwrap — 把 inner event 提升为 effective obj,overlay envelope
+        // 的 time 字段(inner event 一般没有顶层 time)。
+        let obj_owned;
+        let obj =
+            if record.get("type").and_then(|v| v.as_str()) == Some("context.append_loop_event") {
+                let Some((inner_map, _)) = unwrap_loop_envelope_owned(&record) else {
+                    continue;
+                };
+                obj_owned = Value::Object(inner_map);
+                obj_owned.as_object().expect("just constructed")
+            } else {
+                let Some(o) = record.as_object() else {
+                    continue;
+                };
+                o
+            };
         let r#type = match obj.get("type").and_then(|v| v.as_str()) {
             Some(t) => t,
             None => continue,
@@ -252,32 +294,53 @@ impl StepAccumulator {
     }
 
     fn append_content_part(&mut self, obj: &serde_json::Map<String, Value>) {
-        let part_type = obj.get("part").and_then(|v| v.as_str()).unwrap_or("");
+        // v0.9.9: dcwin11 揭示 — `obj.part` 是 object `{type, text|think}`,不是
+        // 字符串。之前 `obj.get("part").as_str()` 永远 None,part_type 落空 → 全部
+        // 走 `_ => "text"` 兜底,thinking 块全部错误归类为 text。同时实际 part.type
+        // 值是 "think"(不是 "thinking")。
+        let part = obj.get("part").and_then(|v| v.as_object());
+        let part_type = part
+            .and_then(|p| p.get("type"))
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
         let role = obj
             .get("role")
             .and_then(|v| v.as_str())
             .unwrap_or("assistant");
         let mut data = serde_json::Map::new();
-        if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
-            data.insert("text".to_string(), Value::String(text.to_string()));
-        } else if let Some(content) = obj.get("content") {
-            data.insert("content".to_string(), content.clone());
-        }
         let kind = match part_type {
-            "thinking" => {
-                data.insert(
-                    "thinking".to_string(),
-                    Value::String(
-                        obj.get("text")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                    ),
-                );
+            // 真实 dcwin11 wire 用 "think" — 保留 "thinking" 兼容未来 schema
+            "think" | "thinking" => {
+                // thinking content 在 obj.part.think (wire v1.4 验证)
+                let think_text = part
+                    .and_then(|p| p.get("think"))
+                    .and_then(|t| t.as_str())
+                    .or_else(|| obj.get("text").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                data.insert("thinking".to_string(), Value::String(think_text));
                 "thinking"
             }
-            "text" => "text",
-            _ => "text", // 未知 part → 当 text 兜底
+            "text" => {
+                // text content 在 obj.part.text
+                let text_content = part
+                    .and_then(|p| p.get("text"))
+                    .and_then(|t| t.as_str())
+                    .or_else(|| obj.get("text").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                data.insert("text".to_string(), Value::String(text_content));
+                "text"
+            }
+            _ => {
+                // 未知 part.type → 兜底从 obj.text 或 obj.content 取
+                if let Some(text) = obj.get("text").and_then(|v| v.as_str()) {
+                    data.insert("text".to_string(), Value::String(text.to_string()));
+                } else if let Some(content) = obj.get("content") {
+                    data.insert("content".to_string(), content.clone());
+                }
+                "text"
+            }
         };
         if self.started_at.is_none() {
             self.started_at = extract_time_from_obj(obj);
@@ -462,6 +525,7 @@ fn build_meta_from_object(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::jsonl;
     use serde_json::json;
 
     #[test]
@@ -718,5 +782,208 @@ mod tests {
                 == Some("todo"),
             "todo payload preserved in meta block"
         );
+    }
+
+    /// v0.9.9: regression — dcwin11 bpm-large fixture (5834 lines) 所有 step.begin
+    /// /content.part/tool.call/tool.result 都包在 `context.append_loop_event`
+    /// envelope 里。normalize_session 必须 unwrap,否则所有 assistant message +
+    /// tool_use 全部丢失 (返回 ~173 个 meta blocks 但 0 个 assistant message)。
+    ///
+    /// 期望:
+    /// - assistant message 数 ≈ 602 (624 nested step.begin - 22 未 flush +
+    ///   1 末 step flush。23 个 step.begin 之后没 step.end,会在 EOF flush)
+    /// - 大量 tool_use + tool_result block (1073 个 tool.call,1073 个 tool.result)
+    /// - 大量 text + thinking block (1094 个 content.part → ~552 text + ~623 think)
+    /// - user prompt ≈ 75 (19 turn.prompt + 57 context.append_message.role=user;
+    ///   偶尔有 1 个 context.append_message 在 step 中被合并所以 76 而非 76)
+    #[test]
+    fn normalize_session_v099_bpm_large_unwraps_loop_envelopes() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("fixtures/kimi/wire-bpm-large.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        // 一次性 read 5834 行 wire → 跑 normalize_session
+        let mut records: Vec<serde_json::Value> = Vec::new();
+        jsonl::for_each_line(&path, |_idx, _byte, v| {
+            records.push(v.clone());
+        })
+        .expect("for_each_line bpm-large");
+        let out = normalize_session(records);
+
+        // user / assistant / meta 计数
+        let user_count = out.iter().filter(|n| n.role == "user").count();
+        let assistant_count = out.iter().filter(|n| n.role == "assistant").count();
+        let meta_count = out.iter().filter(|n| n.role == "meta").count();
+
+        println!(
+            "bpm-large normalize_session: user={} assistant={} meta={}",
+            user_count, assistant_count, meta_count
+        );
+
+        // 19 turn.prompt + 57 context.append_message{role:user} + 1 turn.cancel flush = ~76 user
+        // (实测 75,差 1 是某 append_message 在 step 中合并)
+        assert!(
+            (70..=85).contains(&user_count),
+            "user prompt count 应 ≈ 75 (19 turn.prompt + 57 append_message), got {}",
+            user_count
+        );
+        // 624 step.begin - 22 没有 step.end 配对 (EOF 时 flush) + 1 末 step flush = 602
+        assert!(
+            (590..=620).contains(&assistant_count),
+            "assistant message count 应 ≈ 602 (dcwin11 bpm 实测), got {}",
+            assistant_count
+        );
+        // meta: ~176 (1 metadata + 24 config + 4 perm.set + 1 tools.set +
+        //         55 tools.update + 20 approval + 22+22 compaction + 22 apply
+        //         + 4 plan_mode + 1 turn.cancel)
+        assert!(
+            meta_count >= 150,
+            "meta block count 应 ≥ 150, got {}",
+            meta_count
+        );
+
+        // 累积 block kind — 必须出现 tool_use + tool_result + text + thinking
+        let mut text_count = 0usize;
+        let mut thinking_count = 0usize;
+        let mut tool_use_count = 0usize;
+        let mut tool_result_count = 0usize;
+        for n in &out {
+            if n.role != "assistant" {
+                continue;
+            }
+            for b in &n.blocks {
+                match b.kind.as_str() {
+                    "text" => text_count += 1,
+                    "thinking" => thinking_count += 1,
+                    "tool_use" => tool_use_count += 1,
+                    "tool_result" => tool_result_count += 1,
+                    _ => {}
+                }
+            }
+        }
+        println!(
+            "blocks: text={} thinking={} tool_use={} tool_result={}",
+            text_count, thinking_count, tool_use_count, tool_result_count
+        );
+
+        // v0.9.8 前: text=thinking=tool_use=tool_result=0 (envelope 没 unwrap)
+        assert!(
+            text_count > 100,
+            "text block 应 > 100 (dcwin11 bpm ~552), got {}",
+            text_count
+        );
+        assert!(
+            thinking_count > 100,
+            "thinking block 应 > 100 (dcwin11 bpm ~623), got {}",
+            thinking_count
+        );
+        assert!(
+            tool_use_count > 100,
+            "tool_use block 应 > 100 (dcwin11 bpm ~1073), got {}",
+            tool_use_count
+        );
+        assert!(
+            tool_result_count > 100,
+            "tool_result block 应 > 100 (dcwin11 bpm ~1073), got {}",
+            tool_result_count
+        );
+    }
+
+    /// v0.9.9: 小规模测试 envelope unwrap 行为 — 直接构造 envelope 结构
+    /// 不依赖 fixture。
+    #[test]
+    fn normalize_session_v099_unwraps_loop_envelope_in_memory() {
+        let records = vec![
+            json!({"type":"metadata","protocol_version":"1.4","created_at":1_u64}),
+            json!({
+                "type":"context.append_loop_event",
+                "event":{
+                    "type":"step.begin",
+                    "uuid":"s1",
+                    "turnId":"0",
+                    "step":1
+                },
+                "time":1000_u64
+            }),
+            json!({
+                "type":"context.append_loop_event",
+                "event":{
+                    "type":"content.part",
+                    "role":"assistant",
+                    "part":"text",
+                    "text":"hello from envelope",
+                    "uuid":"cp1",
+                    "turnId":"0",
+                    "step":1,
+                    "stepUuid":"s1"
+                },
+                "time":1010_u64
+            }),
+            json!({
+                "type":"context.append_loop_event",
+                "event":{
+                    "type":"tool.call",
+                    "uuid":"tc1",
+                    "name":"Read",
+                    "args":{"path":"/x"},
+                    "description":"read x",
+                    "turnId":"0",
+                    "step":1,
+                    "stepUuid":"s1"
+                },
+                "time":1020_u64
+            }),
+            json!({
+                "type":"context.append_loop_event",
+                "event":{
+                    "type":"tool.result",
+                    "parentUuid":"tc1",
+                    "toolCallId":"tc1",
+                    "result":{"output":"file contents"},
+                    "turnId":"0",
+                    "step":1,
+                    "stepUuid":"s1"
+                },
+                "time":1030_u64
+            }),
+            json!({
+                "type":"context.append_loop_event",
+                "event":{"type":"step.end","turnId":"0","step":1,"stepUuid":"s1"},
+                "time":1040_u64
+            }),
+        ];
+        let out = normalize_session(records);
+        // 1 metadata (meta) + 1 step (assistant: text + tool_use + tool_result) = 2
+        assert_eq!(
+            out.len(),
+            2,
+            "expected 2 messages (1 metadata meta + 1 assistant step), got {} ({:?})",
+            out.len(),
+            out
+        );
+        // assistant 含 text + tool_use + tool_result
+        let assistant = out
+            .iter()
+            .find(|n| n.role == "assistant")
+            .expect("assistant present (envelope unwrap 应让 step.begin 触发 accumulator)");
+        assert!(assistant.blocks.iter().any(|b| b.kind == "text"));
+        assert!(assistant.blocks.iter().any(|b| b.kind == "tool_use"));
+        assert!(assistant.blocks.iter().any(|b| b.kind == "tool_result"));
+        // text 内容从 inner event 提取 (text:"hello from envelope")
+        let text_block = assistant
+            .blocks
+            .iter()
+            .find(|b| b.kind == "text")
+            .expect("text block");
+        assert_eq!(
+            text_block.data.get("text").unwrap().as_str().unwrap(),
+            "hello from envelope"
+        );
+        // 时间戳来自 envelope (1000~1040) → assistant.timestamp 透传 step.begin 的 envelope.time
+        assert!(assistant.timestamp.is_some());
     }
 }
