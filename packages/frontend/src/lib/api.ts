@@ -110,6 +110,7 @@ export const apiGetSubagentSummary = (
  */
 export const apiListSubagentsByMeta = (meta: {
   subagentDir?: string | null;
+  source?: string | null;
 }): Promise<
   Array<{
     agentId: string;
@@ -125,10 +126,11 @@ export const apiListSubagentsByMeta = (meta: {
 > => {
   if (!meta.subagentDir) return Promise.resolve([]);
   // 把 ".../<sessionId>/subagents" 变回 ".../<sessionId>"
+  // kimi (v0.9.10): ".../<sessionId>/agents" → ".../<sessionId>"
   // (path 风格分隔,Windows 上前端的 path.sep 是 "/",Tauri 传来的是 "/")
-  const parent = meta.subagentDir.replace(/\/subagents\/?$/, "");
-  if (!parent || parent === meta.subagentDir) return Promise.resolve([]);
-  return apiListSubagents(parent);
+  const stripped = meta.subagentDir.replace(/\/(subagents|agents)\/?$/, "");
+  if (!stripped || stripped === meta.subagentDir) return Promise.resolve([]);
+  return apiListSubagents(stripped);
 };
 
 // ===== 工具溢出 =====

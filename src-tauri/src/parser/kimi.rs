@@ -92,11 +92,14 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         "step.begin" | "step.end" | "content.part" | "tool.call" | "tool.result" => {
             Some(build_loop_event_meta(obj, r#type, index, timestamp))
         }
-        // 协议层 — 跳过
-        "llm.request"
-        | "llm.tools_snapshot"
-        | "usage.record"
-        | "permission.record_approval_result"
+        // 协议层 — 跳过 (wire 协议层细节,无 user value)
+        "llm.request" | "llm.tools_snapshot" | "usage.record" => None,
+        // v0.9.10: 用户可观察事件 — emit 为 meta block 让详情页可见
+        // (turn.steer 用户 mid-turn 改方向, turn.cancel 用户取消, plan_mode
+        //  进入/退出 plan 模式)。permission.record_approval_result /
+        // tools.update_store / full_compaction.* / context.apply_compaction 已在
+        // v0.9.8 batch path 显式 emit,streaming path 也加进来保持一致。
+        "permission.record_approval_result"
         | "tools.update_store"
         | "turn.steer"
         | "turn.cancel"
@@ -104,7 +107,7 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         | "full_compaction.complete"
         | "context.apply_compaction"
         | "plan_mode.enter"
-        | "plan_mode.cancel" => None,
+        | "plan_mode.cancel" => Some(build_meta_from_event(obj, r#type, index, timestamp)),
         // 未知 event type — emit 为 meta,不 panic
         _ => Some(build_meta_from_event(obj, r#type, index, timestamp)),
     }
@@ -262,7 +265,11 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
             | "permission.record_approval_result"
             | "full_compaction.begin"
             | "full_compaction.complete"
-            | "context.apply_compaction" => {
+            | "context.apply_compaction"
+            | "turn.steer"
+            | "turn.cancel"
+            | "plan_mode.enter"
+            | "plan_mode.cancel" => {
                 out.push(build_meta_from_event(obj, r#type, idx, extract_time(obj)));
             }
             _ => {
@@ -569,18 +576,35 @@ mod tests {
 
     #[test]
     fn protocol_layer_events_return_none() {
-        for ty in [
-            "llm.request",
-            "llm.tools_snapshot",
-            "usage.record",
-            "permission.record_approval_result",
-        ] {
+        // v0.9.10: 真正"协议层"(无 user value) — llm.request / llm.tools_snapshot
+        // / usage.record。其余 v0.9.8 之前 skip 的事件 (turn.steer / cancel /
+        // plan_mode.* / permission.record_approval_result / tools.update_store /
+        // compaction.*) 现在都 emit 为 meta block。
+        for ty in ["llm.request", "llm.tools_snapshot", "usage.record"] {
             let rec = json!({"type": ty, "time": 1_u64});
             assert!(
                 normalize_kimi_record(&rec, 0).is_none(),
                 "{} should skip",
                 ty
             );
+        }
+    }
+
+    #[test]
+    fn user_observable_events_emit_meta_block_in_streaming_path() {
+        // v0.9.10: turn.steer / turn.cancel / plan_mode.enter / plan_mode.cancel
+        // 在 streaming normalize_kimi_record 路径下也 emit meta block (不再 skip)。
+        for ty in [
+            "turn.steer",
+            "turn.cancel",
+            "plan_mode.enter",
+            "plan_mode.cancel",
+        ] {
+            let rec = json!({"type": ty, "time": 1_u64});
+            let n =
+                normalize_kimi_record(&rec, 0).unwrap_or_else(|| panic!("{} should emit meta", ty));
+            assert_eq!(n.role, "meta", "{} role", ty);
+            assert_eq!(n.raw_type, ty, "{} raw_type", ty);
         }
     }
 
