@@ -13,6 +13,48 @@ pub struct TokenUsage {
     pub cache_write: u64,
 }
 
+/// v0.9.8: Kimi TodoWrite 状态 — 来自 `tools.update_store{key:"todo"}` 末次 value
+///
+/// `current` 是 status=="in_progress" 的 title(若有);`done`/`total` 给 chip "📋 N/M 任务"
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TodoSummary {
+    pub total: u32,
+    pub done: u32,
+    pub current: Option<String>,
+    pub updated_at_ms: Option<i64>,
+}
+
+/// v0.9.8: 顶部 Session Meta Banner 折叠面板 — 配置 + 权限 + 压缩快照
+///
+/// 设计:不存全文 systemPrompt(太大),存 hash + 长度 + 关键字段。详情页 banner
+/// 折叠后显示完整 systemPrompt(从 wire.jsonl 重读)。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MetaBanner {
+    /// 协议版本 "1.4" / "1.5"
+    pub protocol_version: Option<String>,
+    /// profile 名("agent" / "plan" 等)
+    pub profile_name: Option<String>,
+    /// 当前 modelAlias
+    pub model_alias: Option<String>,
+    /// thinking effort
+    pub thinking_effort: Option<String>,
+    /// 当前 permission mode
+    pub permission_mode: Option<String>,
+    /// active tools 数
+    pub active_tool_count: Option<u32>,
+    /// config.update 次数(系统提示/profile/model 演化)
+    pub config_change_count: u32,
+    /// permission.record_approval_result 次数
+    pub approval_count: u32,
+    /// full_compaction 对数
+    pub compaction_count: u32,
+    /// 末次压缩的 duration_ms — 给 chip "🗜 22 压缩 / 末次 73s" 用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_compaction_duration_ms: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionMeta {
@@ -169,6 +211,19 @@ pub struct SessionMeta {
     /// v0.8.7 A: parent_uuids (newline-separated UUIDs), GraphView ParentUuid edges 用
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_uuids_text: Option<String>,
+    // --- v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner) ---
+    /// Kimi TodoWrite 末次状态 — 来自 `tools.update_store{key:"todo"}`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_summary: Option<TodoSummary>,
+    /// Kimi session 自身 token 聚合 — 来自 `usage.record{usageScope:"turn"}`
+    /// 跟 `total_tokens` 互补:total_tokens 给前端通用 chip,kimi 兼容
+    /// (chip 文案 "🪙 2.3M input · 716k output · 30.9M cache hit")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kimi_token_usage: Option<TokenUsage>,
+    /// Meta Banner 折叠快照 — protocol_version/profile/model/mode/tool_count
+    /// + config_change/approval/compaction 计数
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_banner: Option<MetaBanner>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -83,7 +83,11 @@ CREATE TABLE IF NOT EXISTS session_meta (
   tool_error_json             TEXT,
   -- v0.8.7 A: 该 session 出现过的全部 parent_uuid(去重), 新行分隔字符串
   -- 给 GraphView 派生 ParentUuid edges 用 (跨 session 关联可视化)
-  parent_uuids_text           TEXT
+  parent_uuids_text           TEXT,
+  -- v0.9.8: Kimi 专属聚合列 — 详情页折叠面板 + chip 数据来源
+  todo_summary_json           TEXT,
+  kimi_token_usage_json       TEXT,
+  meta_banner_json            TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
@@ -401,7 +405,11 @@ SELECT
   -- v0.8.5 A: per-tool 失败计数
   m.tool_error_json,
   -- v0.8.7 A: parent_uuids (GraphView ParentUuid edges)
-  m.parent_uuids_text
+  m.parent_uuids_text,
+  -- v0.9.8: kimi 专属聚合列 (TodoWrite + token + MetaBanner)
+  m.todo_summary_json,
+  m.kimi_token_usage_json,
+  m.meta_banner_json
 FROM session_meta m
 LEFT JOIN session_override o ON m.session_id = o.session_id
 LEFT JOIN session_tag st     ON m.session_id = st.session_id
@@ -510,6 +518,16 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
             .and_then(|s| serde_json::from_str::<Vec<(String, u32)>>(&s).ok()),
         // v0.8.7 A: parent_uuids (newline-separated text)
         parent_uuids_text: row.get::<_, Option<String>>(48)?,
+        // v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner)
+        todo_summary: row
+            .get::<_, Option<String>>(49)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        kimi_token_usage: row
+            .get::<_, Option<String>>(50)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
+        meta_banner: row
+            .get::<_, Option<String>>(51)?
+            .and_then(|s| serde_json::from_str(&s).ok()),
     };
 
     Ok(JoinedRow {
@@ -569,6 +587,10 @@ pub fn enrich_session_meta(
     // --- v0.9.5: thinking_count (kimi wire event content.part.part.type=="think" 计数,
     //     claude/openclaw 路径暂填 0)
     thinking_count: u32,
+    // --- v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner) ---
+    todo_summary_json: Option<&str>,
+    kimi_token_usage_json: Option<&str>,
+    meta_banner_json: Option<&str>,
 ) -> AppResult<()> {
     conn.execute(
         r#"
@@ -601,7 +623,11 @@ pub fn enrich_session_meta(
           -- v0.8.7 A: parent_uuids (newline-separated) GraphView ParentUuid edges
           parent_uuids_text         = ?24,
           -- v0.9.5: thinking_count (kimi content.part.part.type=="think" 计数)
-          thinking_count            = ?25
+          thinking_count            = ?25,
+          -- v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner)
+          todo_summary_json         = ?26,
+          kimi_token_usage_json     = ?27,
+          meta_banner_json          = ?28
         WHERE session_id = ?1
         "#,
         params![
@@ -635,6 +661,10 @@ pub fn enrich_session_meta(
             parent_uuids_text,
             // v0.9.5: thinking_count
             thinking_count as i64,
+            // v0.9.8: kimi 专属聚合 (JSON)
+            todo_summary_json,
+            kimi_token_usage_json,
+            meta_banner_json,
         ],
     )?;
     Ok(())
@@ -903,6 +933,9 @@ mod round_trip_tests {
             Some("[[\"Bash\",3]]"), // tool_error
             Some("uuid-a\nuuid-b"), // v0.8.7 A: parent_uuids
             7,                      // v0.9.5: thinking_count
+            None,                   // v0.9.8: todo_summary_json
+            None,                   // v0.9.8: kimi_token_usage_json
+            None,                   // v0.9.8: meta_banner_json
         )
         .unwrap();
         // 读回验证
@@ -956,6 +989,8 @@ mod round_trip_tests {
         enrich_session_meta(
             &conn, "s1", 0, 0, 0, None, None, None, 0, 0, 0, 0, 0, 0, None, None, None, 0, None,
             None, 0, None, None, None, None, 0, // v0.9.5: thinking_count = 0
+            None, None,
+            None, // v0.9.8: todo_summary_json / kimi_token_usage_json / meta_banner_json
         )
         .unwrap();
         // 写完后所有列应为 default 0 / None

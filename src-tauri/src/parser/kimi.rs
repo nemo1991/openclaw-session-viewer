@@ -205,11 +205,26 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
                 }
                 out.push(build_turn_prompt(obj, idx, extract_time(obj)));
             }
-            "metadata" | "config.update" | "permission.set_mode" | "tools.set_active_tools" => {
+            // v0.9.8: 完整 wire event type 集合 — 之前 streaming 路径只 emit 4 个,
+            // 实际 dcwin11 真实 schema 含 17 个 top-level event。详情页应全部可见
+            // (meta block),即便被顶部 MetaBanner 折叠也是 collapse 后的可见。
+            // compaction 事件单独 routing 到 build_meta_from_event — generate 阶段
+            // 会从 payload.time / summary 提取 summary_len / begin_time 等显示信息。
+            // 各事件独立 emit (而非 begin+complete 配对) 因为 normalize_session 是单
+            // pass — UI 在 normalize_kimi_record 这边拿到 raw payload 自行配对。
+            "metadata"
+            | "config.update"
+            | "permission.set_mode"
+            | "tools.set_active_tools"
+            | "tools.update_store"
+            | "permission.record_approval_result"
+            | "full_compaction.begin"
+            | "full_compaction.complete"
+            | "context.apply_compaction" => {
                 out.push(build_meta_from_event(obj, r#type, idx, extract_time(obj)));
             }
             _ => {
-                // 单条 fallback — meta / 协议层跳过
+                // 单条 fallback — 协议层跳过 (llm.request/usage.record/etc.)
                 if let Some(n) = normalize_kimi_record(&record, idx) {
                     out.push(n);
                 }
@@ -568,5 +583,140 @@ mod tests {
         // 单条路径走 normalize_kimi_record: 是 loop event → emit meta (不 panic)
         let n = normalize_kimi_record(&rec, 0).expect("tool.result emits meta");
         assert_eq!(n.role, "meta");
+    }
+
+    #[test]
+    fn normalize_session_emits_compaction_events_as_meta() {
+        // v0.9.8: full_compaction.begin/complete + context.apply_compaction 都是
+        // meta emit 类型 — 详情页 transcript 应可见,顶部 MetaBanner 折叠显示
+        // 总数 (compaction_count)。
+        let records = vec![
+            json!({"type":"metadata","protocol_version":"1.4","created_at":1_u64}),
+            json!({
+                "type":"full_compaction.begin",
+                "uuid":"fc-begin-1",
+                "time":1000_u64,
+                "context_window_tokens":128000
+            }),
+            json!({
+                "type":"full_compaction.complete",
+                "uuid":"fc-complete-1",
+                "time":1100_u64,
+                "duration_ms": 100_u64,
+                "summary_token_count": 512
+            }),
+            json!({
+                "type":"context.apply_compaction",
+                "time":1101_u64,
+                "applied_compaction_id":"fc-complete-1"
+            }),
+            json!({"type":"full_compaction.begin","uuid":"fc-begin-2","time":2000_u64}),
+            json!({
+                "type":"full_compaction.complete",
+                "uuid":"fc-complete-2",
+                "time":2100_u64,
+                "duration_ms": 80_u64
+            }),
+        ];
+        let out = normalize_session(records);
+
+        // 6 事件 → 6 meta blocks (compaction 事件独立 emit,非配对压缩)
+        let compaction_metas: Vec<&NormalizedMessage> = out
+            .iter()
+            .filter(|n| {
+                matches!(
+                    n.raw_type.as_str(),
+                    "full_compaction.begin"
+                        | "full_compaction.complete"
+                        | "context.apply_compaction"
+                )
+            })
+            .collect();
+        assert_eq!(
+            compaction_metas.len(),
+            5,
+            "expected 5 compaction-related meta blocks, got {} ({:?})",
+            compaction_metas.len(),
+            out
+        );
+
+        // 每个 compaction 事件都是 role=meta,kind=meta
+        for m in &compaction_metas {
+            assert_eq!(m.role, "meta");
+            assert_eq!(m.blocks[0].kind, "meta");
+            assert!(
+                m.blocks[0].data.get("label").is_some(),
+                "label should be preserved on compaction meta block"
+            );
+        }
+
+        // 验证 timestamp 透传 — full_compaction.begin.time=1000 → rfc3339
+        let begin1 = compaction_metas
+            .iter()
+            .find(|m| m.raw_type == "full_compaction.begin" && m.id.contains("4"))
+            .expect("first begin");
+        assert!(
+            begin1.timestamp.is_some(),
+            "compaction events should carry rfc3339 timestamp"
+        );
+    }
+
+    #[test]
+    fn normalize_session_emits_tools_update_store_and_permission_approval_as_meta() {
+        // v0.9.8: TodoWrite (tools.update_store{key:"todo"}) 和
+        // permission.record_approval_result 同样应作为 meta block 出现在
+        // 详情页 — 给用户完整的"配置/权限变更"timeline 视图。
+        let records = vec![
+            json!({"type":"metadata","protocol_version":"1.4","created_at":1_u64}),
+            json!({
+                "type":"tools.update_store",
+                "key":"todo",
+                "value":{"items":[
+                    {"id":"1","status":"completed","content":"first"},
+                    {"id":"2","status":"in_progress","content":"second"}
+                ]},
+                "time":100_u64
+            }),
+            json!({
+                "type":"permission.record_approval_result",
+                "request_id":"req-1",
+                "decision":"approve",
+                "time":200_u64
+            }),
+            json!({
+                "type":"config.update",
+                "config":{"modelAlias":"deepseek-v4-flash","thinkingEffort":"high"},
+                "time":300_u64
+            }),
+        ];
+        let out = normalize_session(records);
+
+        // metadata + todo + approval + config = 4 meta blocks
+        let meta_blocks: Vec<&NormalizedMessage> =
+            out.iter().filter(|n| n.role == "meta").collect();
+        assert_eq!(
+            meta_blocks.len(),
+            4,
+            "expected 4 meta blocks (metadata + todo + approval + config), got {} ({:?})",
+            meta_blocks.len(),
+            out
+        );
+
+        // tools.update_store raw_type 透传
+        let todo_meta = out
+            .iter()
+            .find(|m| m.raw_type == "tools.update_store")
+            .expect("todo meta present");
+        assert_eq!(todo_meta.role, "meta");
+        assert_eq!(todo_meta.blocks[0].kind, "meta");
+        assert!(
+            todo_meta.blocks[0]
+                .data
+                .get("payload")
+                .and_then(|p| p.get("key"))
+                .and_then(|k| k.as_str())
+                == Some("todo"),
+            "todo payload preserved in meta block"
+        );
     }
 }

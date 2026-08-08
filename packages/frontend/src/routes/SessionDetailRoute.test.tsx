@@ -330,6 +330,91 @@ describe("SessionSummaryStrip — v0.8.4 item 2' 全读 DB", () => {
   });
 });
 
+describe("MetaBannerFold — v0.9.8 kimi config/perm/tools 折叠面板", () => {
+  beforeEach(() => {
+    mockNavigate.mockClear();
+    useSessionsStore.setState({ sessions: [], loading: false, error: null });
+  });
+
+  function renderWithBanner(meta: SessionMeta) {
+    return render(
+      <MemoryRouter initialEntries={[{ pathname: "/session/x", state: { session: meta } }]}>
+        <Routes>
+          <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+        </Routes>
+      </MemoryRouter>
+    );
+  }
+
+  const bannerFull = {
+    protocolVersion: "1.4",
+    profileName: "default",
+    modelAlias: "deepseek-v4-flash",
+    thinkingEffort: "high",
+    permissionMode: "auto",
+    activeToolCount: 12,
+    configChangeCount: 3,
+    approvalCount: 5,
+    compactionCount: 2,
+    lastCompactionDurationMs: 150,
+  };
+
+  it("无 metaBanner → fold 不渲染 (claude/openclaw session)", async () => {
+    const { container } = renderWithBanner({ ...parentMeta });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(container.querySelector('[data-testid="meta-banner-fold"]')).toBeNull();
+  });
+
+  it("有 metaBanner → fold 渲染,默认折叠,detail 区域不可见", async () => {
+    renderWithBanner({ ...parentMeta, metaBanner: bannerFull });
+    const fold = await screen.findByTestId("meta-banner-fold");
+    expect(fold.textContent).toMatch(/Meta/);
+    expect(fold.textContent).toMatch(/v1\.4/);
+    expect(fold.textContent).toMatch(/deepseek-v4-flash/);
+    expect(fold.textContent).toMatch(/high/);
+    expect(fold.textContent).toMatch(/3 cfg/);
+    expect(fold.textContent).toMatch(/5 approve/);
+    expect(fold.textContent).toMatch(/2 compact/);
+    // 折叠态:detail 区域不渲染
+    expect(screen.queryByTestId("meta-banner-detail")).toBeNull();
+  });
+
+  it("点 toggle → 展开 detail,显示完整 snapshot", async () => {
+    const user = userEvent.setup();
+    renderWithBanner({ ...parentMeta, metaBanner: bannerFull });
+    const toggle = await screen.findByTestId("meta-banner-toggle");
+    await user.click(toggle);
+    const detail = await screen.findByTestId("meta-banner-detail");
+    expect(detail.textContent).toMatch(/default/); // profile name
+    expect(detail.textContent).toMatch(/active tools/);
+    expect(detail.textContent).toMatch(/12/);
+    expect(detail.textContent).toMatch(/config changes/);
+    expect(detail.textContent).toMatch(/approvals/);
+    expect(detail.textContent).toMatch(/compactions/);
+    expect(detail.textContent).toMatch(/last compact/);
+    expect(detail.textContent).toMatch(/150 ms/);
+  });
+
+  it("0 changes → 不显示 counts pill,fold 仍渲染 (有 protocol/version)", async () => {
+    renderWithBanner({
+      ...parentMeta,
+      metaBanner: {
+        ...bannerFull,
+        configChangeCount: 0,
+        approvalCount: 0,
+        compactionCount: 0,
+      },
+    });
+    const fold = await screen.findByTestId("meta-banner-fold");
+    // fold 仍渲染
+    expect(fold).toBeTruthy();
+    // 0 changes → counts pill 不渲染(只渲染 protocol/model/thinking/perm)
+    expect(fold.textContent).not.toMatch(/cfg/);
+    expect(fold.textContent).not.toMatch(/approve/);
+    expect(fold.textContent).not.toMatch(/compact/);
+  });
+});
+
 describe("SessionDetailRoute — reload 按钮 (v0.8.11)", () => {
   beforeEach(() => {
     mockNavigate.mockClear();

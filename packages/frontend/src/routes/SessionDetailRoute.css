@@ -301,6 +301,106 @@
   color: var(--color-primary);
 }
 
+/* ===== v0.9.8: MetaBanner fold ===== */
+.meta-banner-fold {
+  background: color-mix(in srgb, var(--color-bg-elevated) 70%, transparent);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.meta-banner-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 16px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-text-muted, #94a3b8);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.meta-banner-toggle:hover {
+  background: var(--color-bg-hover, rgba(148, 163, 184, 0.06));
+}
+
+.meta-banner-toggle .chev {
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.1s;
+  color: var(--color-text-faint, #475569);
+}
+.meta-banner-toggle .chev.open {
+  transform: rotate(90deg);
+}
+
+.meta-banner-toggle .mb-label {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.mb-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+}
+.mb-proto {
+  background: rgba(148, 163, 184, 0.18);
+  color: #cbd5e1;
+}
+.mb-model {
+  background: rgba(59, 130, 246, 0.15);
+  color: rgb(59, 130, 246);
+}
+.mb-thinking {
+  background: rgba(168, 85, 247, 0.15);
+  color: rgb(168, 85, 247);
+}
+.mb-perm {
+  background: rgba(245, 158, 11, 0.15);
+  color: rgb(245, 158, 11);
+}
+.mb-counts {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgb(99, 102, 241);
+  margin-left: auto;
+}
+
+.meta-banner-detail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 16px;
+  padding: 8px 16px 10px 36px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 50%, transparent);
+  background: color-mix(in srgb, var(--color-bg) 30%, transparent);
+}
+
+.meta-banner-detail .mb-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 2px 0;
+}
+
+.meta-banner-detail .mb-key {
+  color: var(--color-text-faint, #475569);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  font-size: 10px;
+}
+
+.meta-banner-detail .mb-val {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
 .session-notes-panel {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
