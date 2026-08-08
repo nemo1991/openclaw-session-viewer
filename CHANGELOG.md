@@ -2,6 +2,81 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.10] - 2026-08-08
+
+v0.9.9 修了 envelope unwrap + content.part thinking parser。dcwin11 bpm-large 真实
+样本继续揭示两个 v0.9.0 以来**藏在 kimi subagent 链路**和**transcript 边角事件**
+里的盲区:
+
+1. **SubagentPanel 对 kimi 完全空白** — 后端 `list_subagents_inner` 硬编码
+   `<session_dir>/subagents/`,但 kimi 把子代理放在 `<session_dir>/agents/agent-N/`
+   (N 是数字,不是 uuid;main agent 也走这条路径但 `list_subagents` 应跳过 — 它
+   是 session 自己的 main,而非 subagent)。
+2. **4 个用户可观察事件在 transcript 静默丢失** — `turn.steer` (用户 mid-turn
+   改方向)、`turn.cancel` (用户取消)、`plan_mode.enter` / `plan_mode.cancel`
+   (进入/退出 plan 模式) 在 `normalize_kimi_record` (streaming) 的 catch-all arm
+   走 `_ => None` 漏掉;bpm-large 里这 4 个 event 共 8 次出现,详情页全 0。
+
+### Added
+
+- **A. Kimi subagent discovery** — `list_subagents_inner` 走 source-aware 分派:
+  kimi → 遍历 `<session_dir>/agents/` 子目录,排序后跳过 `main`,收集所有
+  `agent-N/wire.jsonl` 路径;`claude` / `openclaw` 仍走原 `<session_dir>/subagents/`
+  路径。`get_subagent_summary_inner` 同样按 source 解析 `jsonl_path`。前端
+  `apiListSubagentsByMeta` 正则从 `/(subagents)\/?$/` 扩展为
+  `/(subagents|agents)\/?$/`,让两种 source 都正确去掉尾段。
+- **B. 4 个 kimi event type 在 streaming 路径 emit 为 meta block** — 在
+  `normalize_kimi_record` 的 catch-all 之前插入显式 arm:`turn.steer` /
+  `turn.cancel` / `plan_mode.enter` / `plan_mode.cancel` 走 `build_meta_from_event`
+  跟 batch 路径对齐。`normalize_session` (batch) 也加上这 4 个 — 之前 streaming
+  和 batch 行为不一致,现在两条路径统一。
+
+### Changed
+
+- `scan_jsonl_header` / `scan_jsonl_summary` (subagents.rs) 加 source dispatch:
+  kimi `time` 是顶层 `i64` ms (用 `chrono::from_timestamp_millis` 转 RFC3339),
+  message counting 用 `turn.prompt` (user) / `step.begin` (assistant) /
+  `context.append_message`;其它 source 仍走 `timestamp` ISO 字符串 + `user` /
+  `assistant` / `message`。
+- 新增 helper `list_subagent_jsonls(session_dir: &Path) -> Vec<(agent_id, jsonl_path)>` —
+  抽离 source-aware 发现逻辑,`list_subagents_inner` / `get_subagent_summary_inner`
+  共用。
+
+### Tests
+
+- `list_subagents_inner_kimi_walks_agents_dir_skips_main` — tempdir 放 3 个
+  `agent-0/1/2` 子目录 + `main/`,断言 list 返回 3 项 (按 `agent-N` 排序),
+  jsonlPath 指向对应 `wire.jsonl`。
+- `list_subagents_inner_kimi_returns_empty_when_no_agents_dir` — tempdir 无
+  `agents/` → 返回空 vec 不报错。
+- `get_subagent_summary_inner_kimi_resolves_agents_wire_jsonl` — 校验
+  `get_subagent_summary_inner` 对 `agent-2` 解析到正确的 `<session>/agents/agent-2/wire.jsonl`,
+  并读出 message_count = 1 (1 个 `turn.prompt`)。
+
+### Notes
+
+- kimi 不写 `.meta.json` (OpenClaw 才有) — `meta_path` 留 `PathBuf::new()`,
+  前端 `meta` 字段为 undefined,不显示 agentType/description/spawnDepth chip,
+  只显示 messageCount + 时间戳 — 跟 v0.9.8 baseline 一致。
+- v0.9.0 后的 KimiPaths 命名以 `.kimi-code/` 为 home (实际 kimi CLI 也可能写
+  `.kimi/`) — `fs/paths.rs::KimiPaths::new` 已支持两种命名,本版不动。
+- bpm-large (5834 行) 已知有 22 个 unmatched `step.begin` (末 step 缺 `step.end`),
+  本版不在修 — 见 v0.9.9 P1 deferred。
+
+### Numbers
+
+- Rust: 302 → 306 tests (+4: 1 event-type 测 + 3 kimi subagent 测)
+- New code: `list_subagent_jsonls` helper (~30 行), source dispatch in
+  `scan_jsonl_*` (~10 行), `normalize_kimi_record` 加 1 arm (~15 行),
+  `normalize_session` 加 4 个 event type (~8 行)
+- API surface 0 变化 — 前端仅 1 行 regex 扩展
+
+### Files
+
+- Modified: `src-tauri/src/commands/subagents.rs`
+- Modified: `src-tauri/src/parser/kimi.rs`
+- Modified: `packages/frontend/src/lib/api.ts`
+
 ## [0.9.9] - 2026-08-08
 
 v0.9.8 让 `normalize_session` 收齐 17 个 top-level wire event type。v0.9.9 揭示

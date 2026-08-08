@@ -11,6 +11,7 @@ use tauri::State;
 use crate::error::AppError;
 use crate::error::AppResult;
 use crate::fs::paths::{self, AppPaths};
+use crate::fs::source::source_from_path;
 use crate::fs::walker;
 use crate::model::{SubagentMeta, SubagentSummary};
 use crate::AppState;
@@ -37,6 +38,63 @@ fn sanitize_agent_id(agent_id: &str) -> Option<&str> {
     }
 }
 
+/// v0.9.10: 从 session_dir 推断 source 并返回 subagent 文件列表。
+///
+/// - claude / openclaw → `<session_dir>/subagents/agent-*.jsonl` (.meta.json 可选)
+/// - kimi → `<session_dir>/agents/agent-*/wire.jsonl` (跳过 `main`)
+fn list_subagent_jsonls(session_dir: &Path) -> Vec<(String, std::path::PathBuf)> {
+    let src = source_from_path(&session_dir.to_string_lossy());
+    let mut out: Vec<(String, std::path::PathBuf)> = Vec::new();
+
+    if src == "kimi" {
+        let agents_dir = session_dir.join("agents");
+        if !agents_dir.is_dir() {
+            return out;
+        }
+        let Ok(entries) = std::fs::read_dir(&agents_dir) else {
+            return out;
+        };
+        let mut names: Vec<String> = entries
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let p = e.path();
+                if !p.is_dir() {
+                    return None;
+                }
+                let name = p.file_name()?.to_str()?.to_string();
+                // 跳过 main + tasks/ + plans/ 等非 agent 子目录
+                if name == "main" || !name.starts_with("agent-") {
+                    return None;
+                }
+                Some(name)
+            })
+            .collect();
+        names.sort();
+        for name in names {
+            let wire = agents_dir.join(&name).join("wire.jsonl");
+            if wire.exists() {
+                out.push((name, wire));
+            }
+        }
+    } else {
+        // claude / openclaw 旧逻辑不变
+        let subagent_dir = session_dir.join("subagents");
+        if !subagent_dir.exists() {
+            return out;
+        }
+        for jsonl_path in walker::list_jsonl_files(&subagent_dir).unwrap_or_default() {
+            let stem = jsonl_path
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            let agent_id = stem.strip_prefix("agent-").unwrap_or(&stem).to_string();
+            out.push((agent_id, jsonl_path));
+        }
+    }
+    out
+}
+
 /// 列出某个会话下的所有子代理
 ///
 /// v0.5.0:除基础信息外,还从 .meta.json 提取 agentType/description/toolUseId,
@@ -46,6 +104,9 @@ fn sanitize_agent_id(agent_id: &str) -> Option<&str> {
 ///
 /// v0.8.14 item B: 加 assert_within_any_root 路径安全检查 + 单文件 size cap
 /// + meta.json panic catch。跟其他 file-touching Tauri command 对齐。
+///
+/// v0.9.10: kimi 路径下从 `<session_dir>/agents/agent-*/wire.jsonl` 派生
+/// (跳过 main)。其它 source 走原 `<session_dir>/subagents/agent-*.jsonl`。
 #[tauri::command]
 pub async fn list_subagents(
     session_dir: String,
@@ -63,13 +124,11 @@ pub(crate) fn list_subagents_inner(
     if !session_dir.exists() {
         return Ok(vec![]);
     }
-    let subagent_dir = session_dir.join("subagents");
-    if !subagent_dir.exists() {
-        return Ok(vec![]);
-    }
+    let subagent_files = list_subagent_jsonls(session_dir);
+    let src = source_from_path(&session_dir.to_string_lossy());
+    let subagent_dir = session_dir.join(if src == "kimi" { "agents" } else { "subagents" });
     let mut out = Vec::new();
-    let entries = walker::list_jsonl_files(&subagent_dir).unwrap_or_default();
-    for jsonl_path in entries {
+    for (agent_id, jsonl_path) in subagent_files {
         // v0.8.14 item B: 单文件 size cap
         if let Ok(meta) = std::fs::metadata(&jsonl_path) {
             if meta.len() > MAX_FILE_SIZE {
@@ -82,14 +141,18 @@ pub(crate) fn list_subagents_inner(
             }
         }
 
-        let stem = jsonl_path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_string();
-        // 文件名形如 agent-<id>
-        let agent_id = stem.strip_prefix("agent-").unwrap_or(&stem).to_string();
-        let meta_path = subagent_dir.join(format!("{}.meta.json", stem));
+        // v0.9.10: kimi 无 .meta.json (state.json 统一管) → meta_path 留空,
+        // 后续 meta 解析短路返回 None。claude/openclaw 走原 agent-<id>.meta.json 路径。
+        let meta_path = if src == "kimi" {
+            std::path::PathBuf::new()
+        } else {
+            let stem = jsonl_path
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            subagent_dir.join(format!("{}.meta.json", stem))
+        };
 
         // v0.8.14 item B: meta.json size cap + panic catch
         // 防止 attacker 塞 5 GB "meta.json" 让 read_to_string OOM,
@@ -184,12 +247,18 @@ pub(crate) fn get_subagent_summary_inner(
     paths: &AppPaths,
 ) -> AppResult<Option<SubagentSummary>> {
     paths::assert_within_any_root(paths, session_dir)?;
-    let subagent_dir = session_dir.join("subagents");
-    if !subagent_dir.exists() {
-        return Ok(None);
-    }
-    // agent_id 形如 "a1d924c..." → 文件名 "agent-a1d924c...jsonl"
-    let jsonl_path = subagent_dir.join(format!("agent-{}.jsonl", agent_id));
+    // v0.9.10: kimi 走 agents/agent-N/wire.jsonl,其它 source 走 subagents/agent-<id>.jsonl
+    let src = source_from_path(&session_dir.to_string_lossy());
+    let jsonl_path = if src == "kimi" {
+        session_dir.join("agents").join(agent_id).join("wire.jsonl")
+    } else {
+        let subagent_dir = session_dir.join("subagents");
+        if !subagent_dir.exists() {
+            return Ok(None);
+        }
+        // agent_id 形如 "a1d924c..." → 文件名 "agent-a1d924c...jsonl"
+        subagent_dir.join(format!("agent-{}.jsonl", agent_id))
+    };
     if !jsonl_path.exists() {
         return Ok(None);
     }
@@ -211,7 +280,13 @@ pub(crate) fn get_subagent_summary_inner(
         Ok(_) => {}
     }
 
-    let meta_path = subagent_dir.join(format!("agent-{}.meta.json", agent_id));
+    let meta_path = if src == "kimi" {
+        std::path::PathBuf::new()
+    } else {
+        session_dir
+            .join("subagents")
+            .join(format!("agent-{}.meta.json", agent_id))
+    };
 
     // v0.8.14 item B: meta.json size cap + panic catch
     let meta = if meta_path.exists() {
@@ -300,6 +375,7 @@ fn scan_jsonl_header(
         Err(_) => return (None, None, None),
     };
     let reader = BufReader::new(file);
+    let src = source_from_path(&path.to_string_lossy());
     let mut count: u32 = 0;
     let mut first: Option<String> = None;
     let mut last: Option<String> = None;
@@ -308,20 +384,32 @@ fn scan_jsonl_header(
             Ok(v) => v,
             Err(_) => continue,
         };
-        // Claude envelope: type/message/timestamp 在顶层;OpenClaw 也类似
-        let ts = val
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        // Claude envelope: type/message/timestamp 在顶层;OpenClaw 也类似。
+        // v0.9.10: kimi wire `time` 是顶层 ms i64 (无 timestamp 字符串字段)。
+        let ts: Option<String> = if src == "kimi" {
+            val.get("time").and_then(|v| v.as_i64()).and_then(|ms| {
+                chrono::DateTime::from_timestamp_millis(ms).map(|dt| dt.to_rfc3339())
+            })
+        } else {
+            val.get("timestamp")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        };
         if first.is_none() {
             first = ts.clone();
         }
         if ts.is_some() {
             last = ts;
         }
-        // 排除 meta 行(mode/permission/title/last-prompt 等),只数消息
+        // 排除 meta 行(mode/permission/title/last-prompt 等),只数消息。
+        // v0.9.10: kimi 用 turn.prompt (user) / step.begin (assistant) 数消息。
         let ty = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        if ty == "message" || ty == "user" || ty == "assistant" {
+        let is_msg = if src == "kimi" {
+            ty == "turn.prompt" || ty == "step.begin" || ty == "context.append_message"
+        } else {
+            ty == "message" || ty == "user" || ty == "assistant"
+        };
+        if is_msg {
             count += 1;
         }
     }
@@ -339,6 +427,7 @@ fn scan_jsonl_summary(path: &Path, max_lines: usize) -> ScanSummary {
         Err(_) => return (0, vec![], None, None),
     };
     let reader = BufReader::new(file);
+    let src = source_from_path(&path.to_string_lossy());
     let mut count: u32 = 0;
     let mut first: Option<String> = None;
     let mut last: Option<String> = None;
@@ -350,11 +439,16 @@ fn scan_jsonl_summary(path: &Path, max_lines: usize) -> ScanSummary {
             Err(_) => continue,
         };
 
-        // timestamp
-        let ts = val
-            .get("timestamp")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        // v0.9.10: kimi `time` 是顶层 ms i64 (无 timestamp 字符串字段)
+        let ts: Option<String> = if src == "kimi" {
+            val.get("time").and_then(|v| v.as_i64()).and_then(|ms| {
+                chrono::DateTime::from_timestamp_millis(ms).map(|dt| dt.to_rfc3339())
+            })
+        } else {
+            val.get("timestamp")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        };
         if first.is_none() {
             first = ts.clone();
         }
@@ -365,11 +459,19 @@ fn scan_jsonl_summary(path: &Path, max_lines: usize) -> ScanSummary {
         // type
         let ty = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
-        if ty == "user" || ty == "assistant" || ty == "message" {
+        // v0.9.10: kimi turn.prompt / step.begin / context.append_message 都是消息
+        let is_msg = if src == "kimi" {
+            ty == "turn.prompt" || ty == "step.begin" || ty == "context.append_message"
+        } else {
+            ty == "user" || ty == "assistant" || ty == "message"
+        };
+        if is_msg {
             count += 1;
         }
 
-        // tool_use.name 分布: 扫 content 块
+        // tool_use.name 分布: 扫 content 块 (claude/openclaw 走 message.content[]).
+        // kimi 走顶层 tool.call event,不在这层扫 — tool_distribution 留空,
+        // SubagentPanel 显示 kimi 时 tool 列会空,但 message_count 准确。
         if let Some(content) = val
             .get("message")
             .and_then(|m| m.get("content"))
@@ -626,5 +728,130 @@ mod tests {
         assert!(r.is_none(), "oversized jsonl 应返 None");
 
         std::fs::remove_file(&big).ok();
+    }
+
+    // ===== v0.9.10: kimi subagent discovery =====
+
+    /// 构造 AppPaths 包含 kimi root,让 assert_within_any_root 接受 kimi 路径。
+    fn make_test_paths_with_kimi(tmp: &tempfile::TempDir) -> AppPaths {
+        let home = tmp.path().to_path_buf();
+        AppPaths {
+            home: home.clone(),
+            default_root: RootSource {
+                label: "default".to_string(),
+                path: home.clone(),
+                claude: Some(ClaudePaths::new(&home)),
+                openclaw: Some(OpenClawPaths::new(&home)),
+                kimi: Some(crate::fs::paths::KimiPaths::new(&home)),
+            },
+            custom_roots: vec![],
+        }
+    }
+
+    #[test]
+    fn list_subagents_inner_kimi_walks_agents_dir_skips_main() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_kimi(&tmp);
+        // KimiPaths::new 内部用 `.kimi-code/`,session_dir 必须在这个 root 下
+        let session_dir = tmp.path().join(".kimi-code/sessions/wd_x/session_y");
+        let agents_dir = session_dir.join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        // main (应跳过) + agent-0 + agent-1 + 一个非 agent-N 的 dir (tasks/, plans/)
+        // main 应跳过 (path 含 "main" 或非 agent- prefix)
+        std::fs::create_dir_all(agents_dir.join("main")).unwrap();
+        std::fs::write(
+            agents_dir.join("main").join("wire.jsonl"),
+            r#"{"type":"metadata","protocol_version":"1.4"}
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(agents_dir.join("agent-0")).unwrap();
+        std::fs::write(
+            agents_dir.join("agent-0").join("wire.jsonl"),
+            r#"{"type":"metadata","protocol_version":"1.4"}
+"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(agents_dir.join("agent-1")).unwrap();
+        std::fs::write(
+            agents_dir.join("agent-1").join("wire.jsonl"),
+            r#"{"type":"metadata","protocol_version":"1.4"}
+"#,
+        )
+        .unwrap();
+        // tasks/ + plans/ 是 main 的子目录,不应被当 agent 列出
+        std::fs::create_dir_all(agents_dir.join("tasks")).unwrap();
+        std::fs::create_dir_all(agents_dir.join("plans")).unwrap();
+
+        let r = list_subagents_inner(&session_dir, &paths).expect("ok");
+        assert_eq!(
+            r.len(),
+            2,
+            "kimi 应只列出 agent-0 + agent-1 (skip main/tasks/plans), got {} entries: {:?}",
+            r.len(),
+            r.iter().map(|m| &m.agent_id).collect::<Vec<_>>()
+        );
+        let ids: Vec<&str> = r.iter().map(|m| m.agent_id.as_str()).collect();
+        assert!(ids.contains(&"agent-0"));
+        assert!(ids.contains(&"agent-1"));
+        // 字典序
+        assert_eq!(ids, vec!["agent-0", "agent-1"]);
+        // jsonl_path 指向 agent-N/wire.jsonl
+        for m in &r {
+            assert!(
+                m.jsonl_path
+                    .ends_with(&format!("/{}/wire.jsonl", m.agent_id)),
+                "jsonl_path 应是 agents/<id>/wire.jsonl, got {}",
+                m.jsonl_path
+            );
+            // kimi 无 .meta.json → meta_path 留空字符串
+            assert!(
+                m.meta_path.is_empty(),
+                "kimi meta_path 应为空 (无 .meta.json), got {}",
+                m.meta_path
+            );
+            // agent_type / description / spawn_depth 都是 None
+            assert!(m.agent_type.is_none());
+            assert!(m.description.is_none());
+            assert!(m.spawn_depth.is_none());
+        }
+    }
+
+    #[test]
+    fn list_subagents_inner_kimi_returns_empty_when_no_agents_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_kimi(&tmp);
+        let session_dir = tmp.path().join(".kimi-code/sessions/wd_x/session_y");
+        std::fs::create_dir_all(&session_dir).unwrap();
+
+        let r = list_subagents_inner(&session_dir, &paths).expect("ok");
+        assert!(
+            r.is_empty(),
+            "无 agents/ 子目录的 kimi session 应返回空, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn get_subagent_summary_inner_kimi_resolves_agents_wire_jsonl() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let paths = make_test_paths_with_kimi(&tmp);
+        let session_dir = tmp.path().join(".kimi-code/sessions/wd_x/session_y");
+        let agents_dir = session_dir.join("agents");
+        std::fs::create_dir_all(agents_dir.join("agent-2")).unwrap();
+        // 写一个有效 wire.jsonl (metadata + 一个 turn.prompt 让 message_count >= 1)
+        std::fs::write(
+            agents_dir.join("agent-2").join("wire.jsonl"),
+            r#"{"type":"metadata","protocol_version":"1.4","created_at":1}
+{"type":"turn.prompt","input":[{"type":"text","text":"hi"}],"time":100}
+"#,
+        )
+        .unwrap();
+
+        let s = get_subagent_summary_inner(&session_dir, "agent-2", &paths)
+            .expect("ok")
+            .expect("agent-2 应被发现");
+        assert_eq!(s.agent_id, "agent-2");
+        assert_eq!(s.message_count, Some(1));
     }
 }
