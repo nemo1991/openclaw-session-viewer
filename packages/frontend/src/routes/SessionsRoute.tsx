@@ -20,7 +20,7 @@ import { useSessionsStore } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
 import { useOverrides } from "../state/overridesStore";
 import { useKey } from "../lib/keymap";
-import { formatBytes, formatDuration, formatTime } from "../lib/format";
+import { formatBytes, formatDuration, formatNumber, formatTime } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { SearchPalette } from "../views/SearchPalette";
 import { HomeStatusBar } from "../components/HomeStatusBar"; // v0.8.4 item 1
@@ -569,7 +569,11 @@ function SessionCard({
         s.durationSeconds != null ||
         (s.errorCount != null && s.errorCount > 0) ||
         (s.repeatRunCount != null && s.repeatRunCount > 0) ||
-        (s.idleGapCount != null && s.idleGapCount > 0)) && (
+        (s.idleGapCount != null && s.idleGapCount > 0) ||
+        // v0.9.8: kimi 专属聚合 chip
+        s.todoSummary ||
+        s.kimiTokenUsage ||
+        (s.metaBanner && s.metaBanner.compactionCount > 0)) && (
         <div className="session-stats">
           {s.thinkingCount && s.thinkingCount > 0 && (
             <span className="stat-chip stat-thinking" title="思考块">
@@ -621,6 +625,48 @@ function SessionCard({
               }
             >
               💤 {s.idleGapCount}
+            </span>
+          )}
+          {/* v0.9.8: kimi TodoWrite chip — 末次 `tools.update_store{key:"todo"}` 状态 */}
+          {s.todoSummary && (
+            <span
+              className="stat-chip stat-todo"
+              title={
+                s.todoSummary.current
+                  ? `进行中: ${s.todoSummary.current} — ${s.todoSummary.done}/${s.todoSummary.total} 完成`
+                  : `${s.todoSummary.done}/${s.todoSummary.total} 完成`
+              }
+            >
+              📋 {s.todoSummary.done}/{s.todoSummary.total}
+            </span>
+          )}
+          {/* v0.9.8: kimi token chip — `usage.record{scope:"turn"}` 累加 */}
+          {s.kimiTokenUsage &&
+            (s.kimiTokenUsage.input > 0 ||
+              s.kimiTokenUsage.output > 0 ||
+              s.kimiTokenUsage.cacheRead > 0) && (
+              <span
+                className="stat-chip stat-tokens"
+                title={
+                  `input ${formatNumber(s.kimiTokenUsage.input)}, ` +
+                  `output ${formatNumber(s.kimiTokenUsage.output)}, ` +
+                  `cache hit ${formatNumber(s.kimiTokenUsage.cacheRead)}`
+                }
+              >
+                🪙 {formatNumber(s.kimiTokenUsage.input + s.kimiTokenUsage.cacheRead)}
+              </span>
+            )}
+          {/* v0.9.8: kimi compaction chip — `full_compaction.{begin,complete}` 对数 */}
+          {s.metaBanner && s.metaBanner.compactionCount > 0 && (
+            <span
+              className="stat-chip stat-compaction"
+              title={
+                s.metaBanner.lastCompactionDurationMs
+                  ? `${s.metaBanner.compactionCount} 次压缩, 末次 ${(s.metaBanner.lastCompactionDurationMs / 1000).toFixed(1)}s`
+                  : `${s.metaBanner.compactionCount} 次压缩`
+              }
+            >
+              🗜 {s.metaBanner.compactionCount}
             </span>
           )}
           {s.topTools?.map((t) => (

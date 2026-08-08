@@ -77,6 +77,15 @@ pub struct MetaExtras {
     // claude/openclaw 暂未拆 thinking/text,统一算 text_message_count;
     // kimi 因为 wire 事件显式区分 `think`/`text` 两个 part,直接统计 think 数。
     pub thinking_count: u32,
+    // --- v0.9.8: kimi TodoWrite 状态 + token 聚合 + MetaBanner 配置/权限/压缩快照 ---
+    /// `tools.update_store{key:"todo"}` 末次 value 解析出的当前 todo 状态
+    pub todo_summary: Option<crate::model::TodoSummary>,
+    /// `usage.record{usageScope:"turn"}` 累加 inputOther/output/inputCacheRead/inputCacheCreation
+    /// 跟 `total_tokens` 区分:这个是 session 内自聚合,total_tokens 是从 llm.request 单点取
+    pub kimi_token_usage: Option<crate::model::TokenUsage>,
+    /// 顶部 MetaBanner 折叠快照:protocol_version / profile/model 演化 / permission mode /
+    /// active tool 数 / approval / compaction 计数
+    pub meta_banner: Option<crate::model::MetaBanner>,
 }
 
 /// 扫 jsonl 全量(或 5000 行上限), 提取派生指标
@@ -502,6 +511,19 @@ fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
     let mut current_count: u32 = 0;
     // B: idle_gap 跟踪 (相邻 step.end.time gap)
     let mut prev_step_end_time: Option<i64> = None;
+    // v0.9.8: TodoWrite 状态 — 末次 tools.update_store{key:"todo"}
+    let mut todo_summary: Option<crate::model::TodoSummary> = None;
+    // v0.9.8: token 聚合 — usage.record{usageScope:"turn"} 累加
+    let mut token_input: u64 = 0;
+    let mut token_output: u64 = 0;
+    let mut token_cache_read: u64 = 0;
+    let mut token_cache_write: u64 = 0;
+    let mut token_seen: bool = false;
+    // v0.9.8: MetaBanner 折叠快照
+    let mut banner = crate::model::MetaBanner::default();
+    // compaction begin/complete 配对跟踪 — 每对算 duration_ms
+    let mut compaction_begin_time: Option<i64> = None;
+    let mut last_compaction_duration_ms: Option<u64> = None;
 
     crate::parser::jsonl::for_each_line(path, |_idx, _raw, v| {
         let obj = match v.as_object() {
@@ -523,6 +545,23 @@ fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
             "usage.record" => {
                 if let Some(m) = obj.get("model").and_then(|x| x.as_str()) {
                     model_set.insert(m.to_string());
+                }
+                // v0.9.8: token 聚合 — 仅累加 scope=="turn" (scope=="context" 是 context cache read, 不计)
+                let scope = obj.get("usageScope").and_then(|x| x.as_str());
+                if scope == Some("turn") {
+                    if let Some(u) = obj.get("usage").and_then(|v| v.as_object()) {
+                        token_seen = true;
+                        token_input += u.get("inputOther").and_then(|v| v.as_u64()).unwrap_or(0);
+                        token_output += u.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
+                        token_cache_read += u
+                            .get("inputCacheRead")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        token_cache_write += u
+                            .get("inputCacheCreation")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                    }
                 }
             }
             "context.append_loop_event" => {
@@ -637,9 +676,112 @@ fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
                     _ => {}
                 }
             }
+            // v0.9.8: MetaBanner + TodoWrite 聚合 (top-level events)
+            "metadata" => {
+                // 仅取首个;后续 proto_version 通常不变
+                if banner.protocol_version.is_none() {
+                    banner.protocol_version = obj
+                        .get("protocol_version")
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+            }
+            "config.update" => {
+                banner.config_change_count += 1;
+                if banner.profile_name.is_none() {
+                    banner.profile_name = obj
+                        .get("profileName")
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+                if banner.model_alias.is_none() {
+                    banner.model_alias = obj
+                        .get("modelAlias")
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+                if banner.thinking_effort.is_none() {
+                    banner.thinking_effort = obj
+                        .get("thinkingEffort")
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+            }
+            "permission.set_mode" => {
+                // 取末次 mode (覆盖之前的) — user 改 mode 是 idempotent
+                if let Some(m) = obj.get("mode").and_then(|x| x.as_str()) {
+                    banner.permission_mode = Some(m.to_string());
+                }
+            }
+            "tools.set_active_tools" => {
+                if banner.active_tool_count.is_none() {
+                    if let Some(arr) = obj.get("names").and_then(|x| x.as_array()) {
+                        banner.active_tool_count = Some(arr.len() as u32);
+                    }
+                }
+            }
+            "tools.update_store" => {
+                // 仅 key=="todo" — dcwin11 bpm 已验证只此值
+                if obj.get("key").and_then(|x| x.as_str()) == Some("todo") {
+                    if let Some(arr) = obj.get("value").and_then(|x| x.as_array()) {
+                        let mut total: u32 = 0;
+                        let mut done: u32 = 0;
+                        let mut current: Option<String> = None;
+                        for item in arr {
+                            total += 1;
+                            let status = item.get("status").and_then(|x| x.as_str()).unwrap_or("");
+                            let title =
+                                item.get("title").and_then(|x| x.as_str()).map(String::from);
+                            if status == "done" {
+                                done += 1;
+                            } else if status == "in_progress" && current.is_none() {
+                                current = title.clone();
+                            }
+                        }
+                        todo_summary = Some(crate::model::TodoSummary {
+                            total,
+                            done,
+                            current,
+                            updated_at_ms: time,
+                        });
+                    }
+                }
+            }
+            "permission.record_approval_result" => {
+                banner.approval_count += 1;
+            }
+            "full_compaction.begin" => {
+                compaction_begin_time = time;
+            }
+            "full_compaction.complete" => {
+                // 配对 begin 算 duration_ms (kimi 是 begin→complete 顺序保证)
+                if let (Some(b), Some(c)) = (compaction_begin_time, time) {
+                    if c > b {
+                        last_compaction_duration_ms = Some((c - b) as u64);
+                    }
+                }
+                banner.compaction_count += 1;
+                compaction_begin_time = None;
+            }
             _ => {}
         }
     })?;
+
+    // 末尾 flush
+    flush_repeat_run_kimi(&mut out, &mut current_tool, &mut current_count);
+
+    // v0.9.8: 把 3 个聚合状态写入 out
+    out.todo_summary = todo_summary;
+    if token_seen {
+        out.kimi_token_usage = Some(crate::model::TokenUsage {
+            input: token_input,
+            output: token_output,
+            cache_read: token_cache_read,
+            cache_write: token_cache_write,
+        });
+    }
+    banner.last_compaction_duration_ms = last_compaction_duration_ms;
+    out.meta_banner = Some(banner);
 
     // 末尾 flush
     flush_repeat_run_kimi(&mut out, &mut current_tool, &mut current_count);
@@ -1356,5 +1498,111 @@ mod tests {
             extras.thinking_count
         );
         assert!(extras.duration_seconds.unwrap_or(0) > 0);
+    }
+
+    // ===== v0.9.8: Kimi 聚合字段 (TodoWrite + token + MetaBanner) =====
+
+    /// dcwin11 bpm session 真实 fixture:5834 行 wire.jsonl,验证 3 个聚合:
+    /// - todo_summary: 55 次 tools.update_store{key:"todo"} 末次状态
+    /// - kimi_token_usage: 623 个 usage.record{usageScope:"turn"} 累加 ≈
+    ///   inputOther:2.3M / output:716k / inputCacheRead:30.9M / inputCacheCreation:0
+    /// - meta_banner: {protocol:"1.4", config_change_count:>0, approval_count:20, compaction_count:22}
+    #[test]
+    fn build_meta_full_kimi_v098_dcwin11_bpm_aggregates_three_fields() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("fixtures/kimi/wire-bpm-large.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let extras = build_meta_full_kimi(&path).expect("build_meta_full_kimi 大文件");
+
+        // todo_summary: bpm 真实有 55 个 todo update
+        let todo = extras
+            .todo_summary
+            .as_ref()
+            .expect("todo_summary 应有 (55 次 update 后必有)");
+        assert!(
+            todo.total >= 4,
+            "末次 todo total >= 4 (fixture 实际值), got {}",
+            todo.total
+        );
+        assert!(todo.done <= todo.total);
+        println!(
+            "todo total={} done={} current={:?}",
+            todo.total, todo.done, todo.current
+        );
+
+        // kimi_token_usage: 验证大概量级,不锁死 exact number (dcwin11 真实数据已 grep 过)
+        let tok = extras
+            .kimi_token_usage
+            .as_ref()
+            .expect("kimi_token_usage 应有");
+        assert!(tok.input > 1_000_000, "input > 1M, got {}", tok.input);
+        assert!(tok.output > 100_000, "output > 100k, got {}", tok.output);
+        assert!(
+            tok.cache_read > 10_000_000,
+            "cache_read > 10M (kimi deepseek-v4-flash cache hit 高), got {}",
+            tok.cache_read
+        );
+
+        // meta_banner: 4 字段都得有
+        let banner = extras.meta_banner.as_ref().expect("meta_banner 应有");
+        assert_eq!(banner.protocol_version.as_deref(), Some("1.4"));
+        assert!(banner.config_change_count > 0);
+        assert!(banner.approval_count > 0);
+        assert!(banner.compaction_count > 0);
+        assert!(
+            banner.last_compaction_duration_ms.unwrap_or(0) > 0,
+            "至少一次 compaction 完成对 → duration_ms > 0"
+        );
+        println!(
+            "banner: profile={:?} model={:?} tools={:?} config_changes={} approvals={} compactions={} last_dur={:?}",
+            banner.profile_name,
+            banner.model_alias,
+            banner.active_tool_count,
+            banner.config_change_count,
+            banner.approval_count,
+            banner.compaction_count,
+            banner.last_compaction_duration_ms
+        );
+    }
+
+    /// 单元 fixture 测试: 单条 tools.update_store{key:"todo"} → todo_summary 提取
+    #[test]
+    fn build_meta_full_kimi_v098_aggregates_todo_from_in_memory() {
+        let tmp = std::env::temp_dir().join(format!("ocsv_kimi_todo_{}.jsonl", std::process::id()));
+        let content = "{\"type\":\"metadata\",\"protocol_version\":\"1.4\",\"created_at\":1,\"time\":100}\n\
+                       {\"type\":\"tools.update_store\",\"key\":\"todo\",\"value\":[{\"title\":\"A\",\"status\":\"done\"},{\"title\":\"B\",\"status\":\"in_progress\"},{\"title\":\"C\",\"status\":\"pending\"}],\"time\":200}\n";
+        std::fs::write(&tmp, content).unwrap();
+        let extras = build_meta_full_kimi(&tmp).expect("build");
+        std::fs::remove_file(&tmp).ok();
+        let todo = extras.todo_summary.expect("todo 应有");
+        assert_eq!(todo.total, 3);
+        assert_eq!(todo.done, 1);
+        assert_eq!(todo.current.as_deref(), Some("B"));
+        assert_eq!(todo.updated_at_ms, Some(200));
+    }
+
+    /// 单元 fixture 测试: usage.record{usageScope:"turn"} 累加,不累计 scope=="context" 的
+    #[test]
+    fn build_meta_full_kimi_v098_aggregates_tokens_only_turn_scope() {
+        let tmp =
+            std::env::temp_dir().join(format!("ocsv_kimi_token_{}.jsonl", std::process::id()));
+        let content = "{\"type\":\"metadata\",\"protocol_version\":\"1.4\",\"created_at\":1,\"time\":100}\n\
+                       {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":1000,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":200}\n\
+                       {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":200,\"output\":80,\"inputCacheRead\":2000,\"inputCacheCreation\":0},\"usageScope\":\"context\",\"time\":300}\n\
+                       {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":150,\"output\":40,\"inputCacheRead\":500,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":400}\n";
+        std::fs::write(&tmp, content).unwrap();
+        let extras = build_meta_full_kimi(&tmp).expect("build");
+        std::fs::remove_file(&tmp).ok();
+        let tok = extras.kimi_token_usage.expect("token 应有");
+        // 累加 2 条 turn: input=100+150=250, output=50+40=90, cache_read=1000+500=1500
+        assert_eq!(tok.input, 250);
+        assert_eq!(tok.output, 90);
+        assert_eq!(tok.cache_read, 1500);
+        // context 跳过
     }
 }

@@ -1,0 +1,16 @@
+{
+  "createdAt": "2026-08-05T07:32:24.559Z",
+  "updatedAt": "2026-08-07T06:46:20.598Z",
+  "title": "阅读一下 src\\Carrier.Sites.Template\\rev_js\\Ultimus自定义表单流程开发使用手册_V2.0.mht 形成开发SOP",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "C:/Users/dc/.kimi-code/sessions/wd_bpm_ab308ba3bc10/session_8579e28a-8795-43a9-818e-0d436ba31530/agents/main",
+      "type": "main",
+      "parentAgentId": null
+    }
+  },
+  "custom": {},
+  "workDir": "D:/workspace/carrier/BPM",
+  "lastPrompt": "修改Form/AsiaCust、AsiaSup下页面中引用的js，将原Managers/Sup、Cust、Sup_Cust改为Aisa_Sup_Cust的"
+}

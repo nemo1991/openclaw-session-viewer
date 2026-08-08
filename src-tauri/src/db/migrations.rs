@@ -50,6 +50,10 @@ const NEW_COLUMNS: &[(&str, &str)] = &[
     ("parent_uuids_text", "TEXT"),
     // --- v0.8.8: GraphView first_prompt 列 (list_graph SELECT 引用, 之前 schema 漏) ---
     ("first_prompt", "TEXT"),
+    // --- v0.9.8: kimi 专属聚合列 (TodoWrite + token + MetaBanner) ---
+    ("todo_summary_json", "TEXT"),
+    ("kimi_token_usage_json", "TEXT"),
+    ("meta_banner_json", "TEXT"),
 ];
 
 /// v0.8.8: 列重命名 — 老 v0.8.x DB 用 `first_ts`/`last_ts`, list_graph SELECT 现在引用

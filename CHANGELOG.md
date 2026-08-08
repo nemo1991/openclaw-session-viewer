@@ -2,6 +2,110 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.8] - 2026-08-08
+
+v0.9.7 用 dcwin11 真实样本回归验证 kimi wire 解析。v0.9.8 主题是 **把 dcwin11
+真实样本里藏着的 meta 信息聚合成可消费 UI** — 之前 kimi wire 是事件流
+(~1000 events) 但详情页只能看到 collapsed ~50 messages,TodoWrite / token 用量 /
+compaction 次数 / config/perm 变更全部隐没在没显示的事件流里。
+
+### Added
+
+- **A. Transcript collapse (backend batch path)** — `commands/transcript.rs`
+  kimi 分支从 streaming fallback (`normalize_kimi_record`) 切换到 batch load +
+  `normalize_session` state machine。一次性 read wire.jsonl → run state machine
+  → emit ~50 collapsed `NormalizedMessage`。Claude/openclaw 保持 streaming
+  (它们的 jsonl 已是 message 流,line-by-line 即可)。Event flow 200/批分包避免
+  payload 过大。`normalize_session` 在 `parser/kimi.rs` 扩展到 17 个 top-level
+  event type: `metadata` / `config.update` / `permission.set_mode` /
+  `tools.set_active_tools` / `tools.update_store` / `permission.record_approval_result` /
+  `full_compaction.begin` / `full_compaction.complete` / `context.apply_compaction`
+  全部走 `build_meta_from_event` 入 transcript(详情页可直接看到 timeline)。
+- **B. MetaExtras + SessionMeta 3 新字段(kimi 专属聚合)** — Rust 模型
+  `TodoSummary` / `TokenUsage`(复用 v0.9.4 已有的) / `MetaBanner`。
+  - `todo_summary` 从 `tools.update_store{key:"todo"}` 最后一个 `value.items[]`
+    派生:`{total, done, current?, updated_at_ms?}`。
+  - `kimi_token_usage` 从 `usage.record{usageScope:"turn"}` 累加
+    `inputTokens / outputTokens / cacheRead / cacheWrite`,**跳过** `usageScope=="context"`
+    (避免重复计数)。Claude/openclaw 留 `None`(它们用 `total_tokens`)。
+  - `meta_banner` 从 `metadata` / `config.update` / `permission.set_mode` /
+    `tools.set_active_tools` / `permission.record_approval_result` /
+    `full_compaction.begin` / `full_compaction.complete` 聚合:
+    `protocolVersion, profileName, modelAlias, thinkingEffort, permissionMode,
+ activeToolCount, configChangeCount, approvalCount, compactionCount,
+ lastCompactionDurationMs`。
+- **C. DB schema 3 新列 + idempotent ALTER** — `todo_summary_json`,
+  `kimi_token_usage_json`, `meta_banner_json` 加到 `SCHEMA_SQL` + `NEW_COLUMNS`,
+  旧 DB 自动 `ensure_columns` ALTER TABLE 同步。`JOIN_SELECT_BASE` /
+  `joined_row_mapper` / `enrich_session_meta` / `sync.rs::upsert_session_meta`
+  全部 3 路 wire 上(同时改 3 个 SessionMeta 构造点:`commands/sessions.rs` 3 处 +
+  `db/schema.rs` 1 处)。
+- **D. UI chip + MetaBanner fold** —
+  - SessionsRoute 列表行新增 3 个 chip,跟现有 thinking/tools/duration/error
+    chip 并列:`📋 done/total`(teal) · `🪙 input+cacheRead`(indigo) ·
+    `🗜 compaction_count`(灰)。`kimiTokenUsage` 仅 `input + cacheRead > 0`
+    时显示(避免全是 0 的 session 误导)。
+  - SessionDetailRoute 新增 `MetaBannerFold` 折叠面板(顶部 chip 行下方,
+    NotesPanel 上方),默认折叠显示 `v1.4 / deepseek-v4-flash / 🧠 high /
+🔐 auto · {cfg} cfg · {approve} approve · {compact} compact`,点 chevron
+    展开看 `profile / activeTools / configChangeCount / approvalCount /
+compactionCount / lastCompactionDurationMs`。Cluade/openclaw session
+    无 `metaBanner` 不渲染。
+- **E. `formatNumber` 复用** — `SessionsRoute` import `formatNumber`
+  from `@ocsv/shared/lib/format`,token chip 显示 `12,345` 风格千分位。
+
+### Test
+
+- 3 个 `build_meta_full_kimi_v098_*` 测试(bpm-large fixture):
+  - `bpm_aggregates_three_fields` — 5834 行 dcwin11 bpm wire 一次性跑出 3 字段
+    真实值(todo / token / banner)。
+  - `aggregates_todo_from_in_memory` — 内存 fixture 验 `tools.update_store{key:"todo"}`
+    last-wins 累加逻辑。
+  - `aggregates_tokens_only_turn_scope` — 验证 turn vs context scope 隔离
+    (context scope 跳过)。
+- 2 个 `parser/kimi.rs` `normalize_session` 测:
+  - `emits_compaction_events_as_meta` — 5 个 `full_compaction.begin/complete` +
+    `context.apply_compaction` 事件 → 5 个 role=meta block,timestamp 透传 rfc3339。
+  - `emits_tools_update_store_and_permission_approval_as_meta` —
+    `tools.update_store{key:"todo"}` + `permission.record_approval_result` +
+    `config.update` 三类事件 → 4 个 meta block,payload preserved。
+- 4 个 `SessionDetailRoute.test.tsx` `MetaBannerFold` 测:
+  - 无 `metaBanner` 不渲染(claude/openclaw session)。
+  - 默认折叠,5 个 pill(`v1.4` / model / thinking / perm / counts)可见。
+  - 点 toggle 展开 detail 显示完整 snapshot(profile / activeTools /
+    configChangeCount / approvalCount / compactionCount / lastCompact)。
+  - 0 changes 时 counts pill 不渲染,但 fold 仍渲染。
+
+### Numbers
+
+- Rust: 295 → 300 tests (+5)
+- Frontend: 609 → 613 tests (+4)
+- DCwin11 bpm-large fixture 5834 行 wire(3MB)一次性走通 batch collapse +
+  3 字段 enrich
+
+### Files
+
+- Modified: `src-tauri/src/commands/{transcript,sessions}.rs`,
+  `src-tauri/src/parser/{kimi.rs, meta_extras.rs}`,
+  `src-tauri/src/model/mod.rs`,
+  `src-tauri/src/db/{schema.rs, migrations.rs, sync.rs}`,
+  `packages/shared/src/normalize.ts`,
+  `packages/frontend/src/routes/{SessionDetailRoute.tsx, SessionDetailRoute.css,
+  SessionsRoute.tsx, SessionsRoute.css}`,
+  `packages/frontend/src/routes/SessionDetailRoute.test.tsx`
+- New: `fixtures/kimi/{state-bpm-large.json, wire-bpm-large.jsonl}` (5834 行,
+  dcwin11 bpm session copy)
+
+### Deferred
+
+- `MetaBannerFold` 不存 raw event 列表 — 用户点开仅看到当前 snapshot
+  (counts),看不到每次 config.update 的 timestamp diff。如需 timeline view
+  可后续加 `meta_banner_history_json` 列。
+- `permission.record_approval_result` decision 当前仅计数,未记录
+  (request_id → decision 映射未持久化)。
+- Kimi thinking part 的 metadata (model/thinking_effort) 与 `meta_banner.thinking_effort`
+  在 config.update 之后会发散 — 当前只取 last value。
+
 ## [0.9.7] - 2026-08-07
 
 v0.9.6 让 `thinking_count` 跨 source 全填。v0.9.7 主题是 **用 dcwin11 真实样本验证

@@ -604,6 +604,11 @@ export default function SessionDetailRoute() {
       {/* 聚合 chip 行 — 一眼看到 session 结构 (v0.8.4 item 2' 全部从 meta.* 读) */}
       <SessionSummaryStrip meta={meta} />
 
+      {/* v0.9.8: MetaBanner fold — kimi config/perm/tools 历史的折叠面板,
+       * SessionSummaryStrip 下方,NotesPanel 上方。默认折叠,点 chevron 展开看
+       * 完整 metadata snapshot。无 metaBanner 不渲染。 */}
+      {meta.metaBanner && <MetaBannerFold banner={meta.metaBanner} />}
+
       {/* v0.8.0: notes 编辑面板 + links 列表 */}
       {(notesEditing || overrides.snap.notes[meta.sessionId]) && (
         <div className="session-notes-panel" data-testid="session-notes-panel">
@@ -845,4 +850,102 @@ function formatIdleGapFromMs(ms: number): string {
   if (hr < 24) return min % 60 > 0 ? `${hr} 小时 ${min % 60} 分` : `${hr} 小时`;
   const day = Math.floor(hr / 24);
   return hr % 24 > 0 ? `${day} 天 ${hr % 24} 小时` : `${day} 天`;
+}
+
+/**
+ * v0.9.8: MetaBannerFold — kimi config/perm/tools 历史折叠面板
+ *
+ * 后端 `meta_banner` JSON 包含:
+ * - protocol_version / profile_name / model_alias / thinking_effort / permission_mode
+ * - active_tool_count
+ * - config_change_count / approval_count / compaction_count
+ * - last_compaction_duration_ms
+ *
+ * 设计:
+ * - 默认折叠 — 一行显示 protocol_version + 4 个 count 的简略 tag
+ * - 点 chevron 展开 — 显示完整 snapshot
+ * - 无 metaBanner 不渲染 (claude/openclaw session 没有)
+ */
+function MetaBannerFold({ banner }: { banner: NonNullable<SessionMeta["metaBanner"]> }) {
+  const [expanded, setExpanded] = useState(false);
+  const totalChanges = banner.configChangeCount + banner.approvalCount + banner.compactionCount;
+
+  return (
+    <div
+      className={`meta-banner-fold ${expanded ? "is-expanded" : ""}`}
+      data-testid="meta-banner-fold"
+    >
+      <button
+        className="meta-banner-toggle"
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "折叠" : "展开完整 metadata snapshot"}
+        data-testid="meta-banner-toggle"
+      >
+        <span className={`chev ${expanded ? "open" : ""}`}>▶</span>
+        <span className="mb-label">📜 Meta</span>
+        {banner.protocolVersion && (
+          <span className="mb-pill mb-proto" title="kimi wire protocol version">
+            v{banner.protocolVersion}
+          </span>
+        )}
+        {banner.modelAlias && (
+          <span className="mb-pill mb-model" title="config.update.modelAlias">
+            {banner.modelAlias}
+          </span>
+        )}
+        {banner.thinkingEffort && (
+          <span className="mb-pill mb-thinking" title="thinking effort">
+            🧠 {banner.thinkingEffort}
+          </span>
+        )}
+        {banner.permissionMode && (
+          <span className="mb-pill mb-perm" title="permission mode">
+            🔐 {banner.permissionMode}
+          </span>
+        )}
+        {totalChanges > 0 && (
+          <span className="mb-pill mb-counts" title="config changes / approvals / compactions">
+            {banner.configChangeCount > 0 && `${banner.configChangeCount} cfg`}
+            {banner.approvalCount > 0 && ` · ${banner.approvalCount} approve`}
+            {banner.compactionCount > 0 && ` · ${banner.compactionCount} compact`}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className="meta-banner-detail" data-testid="meta-banner-detail">
+          {banner.profileName && (
+            <div className="mb-row">
+              <span className="mb-key">profile</span>
+              <span className="mb-val">{banner.profileName}</span>
+            </div>
+          )}
+          {banner.activeToolCount !== undefined && banner.activeToolCount !== null && (
+            <div className="mb-row">
+              <span className="mb-key">active tools</span>
+              <span className="mb-val">{banner.activeToolCount}</span>
+            </div>
+          )}
+          <div className="mb-row">
+            <span className="mb-key">config changes</span>
+            <span className="mb-val">{banner.configChangeCount}</span>
+          </div>
+          <div className="mb-row">
+            <span className="mb-key">approvals</span>
+            <span className="mb-val">{banner.approvalCount}</span>
+          </div>
+          <div className="mb-row">
+            <span className="mb-key">compactions</span>
+            <span className="mb-val">{banner.compactionCount}</span>
+          </div>
+          {banner.lastCompactionDurationMs !== undefined &&
+            banner.lastCompactionDurationMs !== null && (
+              <div className="mb-row">
+                <span className="mb-key">last compact</span>
+                <span className="mb-val">{banner.lastCompactionDurationMs} ms</span>
+              </div>
+            )}
+        </div>
+      )}
+    </div>
+  );
 }

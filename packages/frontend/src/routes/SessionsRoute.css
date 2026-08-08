@@ -238,6 +238,20 @@
   color: rgb(107, 114, 128);
 }
 
+/* v0.9.8: kimi TodoWrite + token + compaction chip */
+.stat-todo {
+  background: rgba(0, 181, 173, 0.15);
+  color: #00b5ad;
+}
+.stat-tokens {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgb(99, 102, 241);
+}
+.stat-compaction {
+  background: rgba(120, 113, 108, 0.18);
+  color: rgb(120, 113, 108);
+}
+
 .tool-chip {
   display: inline-block;
   padding: 1px 6px;

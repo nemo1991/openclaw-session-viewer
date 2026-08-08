@@ -11,7 +11,7 @@ use crate::error::AppResult;
 use crate::fs::source::source_from_path;
 use crate::parser::claude::{normalize, NormalizedBlock, NormalizedMessage, TokenUsageOut};
 use crate::parser::jsonl;
-use crate::parser::kimi::normalize_kimi_record;
+use crate::parser::kimi::normalize_session as normalize_kimi_session;
 use crate::parser::openclaw::normalize_entry;
 use crate::AppState;
 
@@ -53,7 +53,48 @@ pub async fn stream_transcript(
     let (err_tx, mut err_rx) = mpsc::channel::<String>(4);
 
     tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = jsonl::stream_batches(&p, 500, |batch| {
+        // v0.9.8: kimi wire.jsonl 是事件流,无法 streaming collapse (state machine 必须
+        // 看完 step.begin → step.end 才 flush),且 collapse 后 ~50 messages 取代
+        // ~1000 events。改成 batch load 全读后跑 normalize_session,emit collapsed
+        // StreamBatch(es)。claude/openclaw 保持 stream_batches line-by-line (它们的
+        // jsonl 已经是 message 流,1 行 = 1 NormalizedMessage)。
+        if src == "kimi" {
+            let result: Result<(), String> = (|| {
+                // 1) 一次性读完所有 records
+                let mut records: Vec<serde_json::Value> = Vec::new();
+                jsonl::for_each_line(&p, |_idx, _byte, v| {
+                    records.push(v.clone());
+                })
+                .map_err(|e| e.to_string())?;
+                // 2) 跑 normalize_session state machine → collapsed NormalizedMessage
+                let messages = normalize_kimi_session(records);
+                // 3) 按 200 条一组分包,避免单 batch payload 太大
+                const SUB_BATCH: usize = 200;
+                let mut global_idx: usize = 0;
+                for chunk in messages.chunks(SUB_BATCH) {
+                    let entries: Vec<TranscriptEntryOut> = chunk
+                        .iter()
+                        .map(|norm| TranscriptEntryOut {
+                            index: global_idx,
+                            byte_offset: 0,
+                            raw: serde_json::Value::Null, // collapsed 后无对应 raw
+                            normalized: norm.clone(),
+                        })
+                        .collect();
+                    let start = global_idx;
+                    global_idx += entries.len();
+                    let _ = tx.blocking_send(StreamBatch {
+                        start_index: start,
+                        entries,
+                    });
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                log::error!("kimi batch transcript 失败 ({}): {}", path_for_log, e);
+                let _ = err_tx.blocking_send(e);
+            }
+        } else if let Err(e) = jsonl::stream_batches(&p, 500, |batch| {
             let entries: Vec<TranscriptEntryOut> = batch
                 .records
                 .iter()
@@ -62,7 +103,6 @@ pub async fn stream_transcript(
                     let idx = batch.start_index + i;
                     let norm = match src {
                         "openclaw" => normalize_entry(v, idx),
-                        "kimi" => normalize_kimi_record(v, idx),
                         _ => normalize(v, idx),
                     }?;
                     Some(TranscriptEntryOut {

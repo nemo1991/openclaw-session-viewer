@@ -128,6 +128,24 @@ export interface SessionMeta {
   /** 该 session 出现过的全部 parent_uuid 引用 (去重), newline-separated text
    * 给 GraphView 派生 ParentUuid edges (G1 跨 session 关联可视化) */
   parentUuidsText?: string;
+  // --- v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner) ---
+  /** Kimi TodoWrite 末次状态 — `tools.update_store{key:"todo"}` 解析 */
+  todoSummary?: { total: number; done: number; current?: string; updatedAtMs?: number };
+  /** Kimi session token 聚合 — `usage.record{usageScope:"turn"}` 累加 input/output/cache */
+  kimiTokenUsage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  /** Meta Banner 配置/权限/压缩快照(详情页折叠面板用) */
+  metaBanner?: {
+    protocolVersion?: string;
+    profileName?: string;
+    modelAlias?: string;
+    thinkingEffort?: string;
+    permissionMode?: string;
+    activeToolCount?: number;
+    configChangeCount: number;
+    approvalCount: number;
+    compactionCount: number;
+    lastCompactionDurationMs?: number;
+  };
 }
 
 /** 归一化后的内容块 */
@@ -564,19 +582,25 @@ export function normalizeKimiRecord(
   if (!type) return null;
 
   const id = `kimi-${type}-${index}`;
-  const timestamp = typeof obj.time === "number"
-    ? new Date(obj.time).toISOString()
-    : typeof obj.timestamp === "string"
-      ? obj.timestamp
-      : undefined;
+  const timestamp =
+    typeof obj.time === "number"
+      ? new Date(obj.time).toISOString()
+      : typeof obj.timestamp === "string"
+        ? obj.timestamp
+        : undefined;
 
   switch (type) {
     case "turn.prompt": {
       const input = Array.isArray(obj.input) ? obj.input : [];
       const text = input
-        .map((b) => (b && typeof b === "object" && "text" in b && typeof (b as { text: unknown }).text === "string"
-          ? (b as { text: string }).text
-          : ""))
+        .map((b) =>
+          b &&
+          typeof b === "object" &&
+          "text" in b &&
+          typeof (b as { text: unknown }).text === "string"
+            ? (b as { text: string }).text
+            : ""
+        )
         .join("");
       return {
         id,

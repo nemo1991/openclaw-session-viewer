@@ -588,6 +588,10 @@ pub(crate) fn build_claude_session_meta(
         tool_error: None,
         // v0.8.7 A: quick path 不算 parent_uuids, 留给 enrich 二阶段
         parent_uuids_text: None,
+        // v0.9.8: kimi 专属聚合字段,quick path 不算,留给 enrich 二阶段
+        todo_summary: None,
+        kimi_token_usage: None,
+        meta_banner: None,
     })
 }
 
@@ -756,6 +760,10 @@ pub(crate) fn build_openclaw_session_meta(
         tool_error: None,
         // v0.8.7 A: quick path 不算 parent_uuids, 留给 enrich 二阶段
         parent_uuids_text: None,
+        // v0.9.8: kimi 专属聚合字段,quick path 不算,留给 enrich 二阶段
+        todo_summary: None,
+        kimi_token_usage: None,
+        meta_banner: None,
     })
 }
 
@@ -1051,6 +1059,10 @@ pub(crate) fn build_kimi_session_meta(
         available_models: None,
         tool_error: None,
         parent_uuids_text: None,
+        // v0.9.8: kimi 专属聚合字段,quick path 不算,留给 enrich 二阶段
+        todo_summary: None,
+        kimi_token_usage: None,
+        meta_banner: None,
     })
 }
 

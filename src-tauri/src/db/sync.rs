@@ -367,6 +367,19 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
             } else {
                 Some(extras.parent_uuids.join("\n"))
             };
+            // v0.9.8: kimi 专属聚合 JSON 序列化
+            let todo_summary_json = extras
+                .todo_summary
+                .as_ref()
+                .and_then(|t| serde_json::to_string(t).ok());
+            let kimi_token_usage_json = extras
+                .kimi_token_usage
+                .as_ref()
+                .and_then(|t| serde_json::to_string(t).ok());
+            let meta_banner_json = extras
+                .meta_banner
+                .as_ref()
+                .and_then(|t| serde_json::to_string(t).ok());
             let _ = state.db.with(|c| {
                 crate::db::schema::enrich_session_meta(
                     c,
@@ -400,6 +413,10 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
                     parent_uuids_text.as_deref(),
                     // v0.9.5: thinking_count (kimi 走 build_meta_full_kimi 填)
                     extras.thinking_count,
+                    // v0.9.8: kimi 专属聚合
+                    todo_summary_json.as_deref(),
+                    kimi_token_usage_json.as_deref(),
+                    meta_banner_json.as_deref(),
                 )?;
                 Ok::<_, AppError>(())
             });
