@@ -2,6 +2,132 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.15] - 2026-08-10
+
+v0.9.14 把 645 条 `usage.record` 折成 `usage.chart` (token cost 时间线)。
+本版扫同一批 dcwin11 真实样本发现 **648 条 `llm.request` 仍 protocol-layer
+skip** — 这条流跟 `usage.record` 几乎 1:1 配对 (`request.chart` 跟
+`usage.chart` 互补),承载 4 个独立信号:
+
+### 关键发现 (bpm-large session_8579e28a)
+
+648 条 `llm.request`,跟 `usage.record` 几乎 1:1 配对:
+
+- `maxTokens` 范围 **50,451 → 131,072** (~80K 跨度) — 上下文剩余预算的
+  时间线。prompt 越长 → `maxTokens` 越低 → 用户能看到 "还剩多少上下文"
+- `kind` 字段分布: **625 loop + 23 compaction** — 常规 turn LLM 调用 vs
+  compaction 触发的 summary LLM 调用 (跟 v0.9.12 `apply_compaction` 1:1 配对)
+- `messageCount` 范围 **1 → 128** — session 长度 trace
+- `turnStep` 范围 **0.1 → 18.22** — 19 turns,每个 turn 最多 81 steps
+- **`toolsHash` 全 648 一致** (`22f4bc8f...`) — 跟 v0.9.13 `tools_snapshot`
+  hash 100% 对齐 → tool config 全程稳定,**0 drift**
+- **`systemPromptHash` 跨 session 23 个独立 hash** (config drift signal!) —
+  compaction / manual edit 触发 system prompt 切换 23 次。bpm-large 用户
+  之前完全无感知
+- 65.3% 的 event 携带 inline `systemPrompt` 文本 (首次引入 hash 时附带),
+  其余 34.7% 只 hash
+
+### 关键决策 — 648 events 聚合为 1 个 chart meta (非 648 messages)
+
+跟 v0.9.14 `usage.chart` 同模式: 648 条 `llm.request` 单条 emit 会把详情页
+撑成 99% chart 噪音。`normalize_session` 末尾聚合 → 1 个 `request.chart`
+meta:
+
+- **顶层 stats**: `request_count` / `kind_loop` / `kind_compaction` /
+  `compaction_pct` / `max_tokens_min/max/avg` / `message_count_min/max` /
+  `turn_index_min/max` / `tools_hash_baseline` + `drift_count` /
+  `system_prompt_hash_distinct` / `model` / `provider` / `duration_ms`
+- **`buckets[]`**: 60 个时间窗口,每个含 `max_tokens_min/max/avg` +
+  `request_count` + `kind_compaction_count` (前端 inline SVG 3 条折线
+  avg/max/min + amber dots 标 compaction 时刻)
+- **`system_prompt_drift_events[]`**: 每个新 hash 第一次出现的事件 —
+  时间戳 + hash + request_index + `system_prompt_inline` 标记 (前端
+  默认显示前 8 个 hash 切换 + 展开剩余)
+- **`payload.raw_events`**: 前 5 + 后 5 raw event (drill-down)
+
+### Added
+
+- A. Rust `build_request_chart_meta` builder (`parser/kimi.rs`) — 648
+  events → 1 个聚合 `request.chart` meta,默认 60 buckets,带 hash drift
+  检测 (取最高频 hash 为 baseline, 统计 drift_count) + system prompt
+  drift 子表
+- B. Rust `RequestRecord` struct + `parse_request_record` 提取 11 个字段
+  (maxTokens / kind / messageCount / turnStep / toolsHash /
+  systemPromptHash / systemPromptInline / time ...)
+- C. `normalize_session` 末尾在 `usage.chart` 之后 emit 1 个 `request.chart`
+  meta (顺序: ... → compaction meta → tools_snapshot → usage_chart →
+  request_chart)
+- D. `normalize_kimi_record` 单条路径继续 skip `llm.request` (单条 event
+  无法形成 chart, 跟 v0.9.14 同 pattern)
+- E. Frontend `RequestChartMetaBlock` 组件 — 头部 stats pill + inline SVG
+  3 折线 chart (avg 主线 + min/max range alpha + amber compaction dots)
+  - drift 子表 (前 8 hash 切换 + 展开剩余) + raw events 折叠/展开
+- F. Frontend `RequestChartSvg` 独立组件 — viewBox 600×80 (跟 v0.9.14
+  `UsageChart` 同尺寸对齐), polyline + circle
+- G. 字段命名兼容 — `get()` helper 双查 snake_case + camelCase (跟
+  v0.9.14 一致)
+- H. `isKnownMetaLabel` 路由 — `request.chart` 走 `MetaBlock` 不走
+  `UnknownBlockCard`
+- I. CSS 样式 — `.request-chart-meta` (violet accent border, 区别 amber
+  cost / teal compaction / indigo tools) + `.request-chart-svg` +
+  `.request-chart-legend` + `.request-chart-raw-events`
+
+### Stats (bpm-large 实测)
+
+- 648 events → 1 个聚合 meta, 60 buckets
+- maxTokens range: 50,451 → 131,072 (avg ~88K)
+- kind 分流: 625 loop (96.5%) + 23 compaction (3.5%) — compaction 每 ~27
+  turn 触发一次,跟 v0.9.12 `apply_compaction` 计数一致 (差 1 = 1 次
+  compaction 触发但未 apply)
+- toolsHash drift = 0 (100% 跟 v0.9.13 snapshot 一致)
+- systemPromptHash distinct = 23 (23 次 system prompt 切换!)
+- duration: 49h wallclock (177,025,000 ms)
+
+### Tests
+
+- `parse_request_record_extracts_fields` (Rust) — 11 字段提取
+- `parse_request_record_handles_compaction_kind_and_no_inline` (Rust) —
+  compaction kind + 无 inline text
+- `build_request_chart_meta_empty_input_returns_none` (Rust) — 0 input
+- `build_request_chart_meta_aggregates_buckets_and_stats` (Rust) — 5 个
+  synthetic event 验证 kind 分流 / drift events / 1:1 bucket
+- `build_request_chart_meta_detects_tools_hash_drift` (Rust) — 4 events
+  3+1 hash → drift_count=1
+- `normalize_session_v0915_bpm_large_request_chart_has_648_events_aggregated`
+  (Rust) — fixture-driven, 验证 bpm-large 真实数据
+- 4 个新前端测试 — 总数+headroom 渲染 / drift 子表限 8 / 缺
+  request_count fallback / 展开 raw events 按钮
+
+### Numbers
+
+- Rust: 318 → 325 tests (+7)
+- Frontend: 625 → 629 tests (+4)
+- Files: 6 (src-tauri/src/parser/kimi.rs, packages/frontend/src/components/
+  meta/MetaBlock.tsx, packages/frontend/src/components/meta/RequestChart.tsx,
+  packages/frontend/src/components/meta/MetaBlock.test.tsx,
+  packages/frontend/src/components/MessageBubble.tsx,
+  packages/frontend/src/components/MessageBubble.css)
+- fixture: 1 (wire-bpm-large-v0915.jsonl, 6040 lines)
+
+### Notes
+
+- DB schema 不变 (meta block 不入 DB, 走 attach to assistant message)
+- `normalize_kimi_record` (single fallback) 仍返回 `None` — 单条 event
+  无法形成 chart
+- 视觉跟 v0.9.14 `usage.chart` 对齐 (同 viewBox 600×80), 但配色用 violet
+  (区别 amber cost)
+- 跟 v0.9.13 `tools_snapshot` 的 hash drift 互补: tools snapshot 1 个
+  hash 对比, request chart 648 个连续 hash 时间线
+
+### Deferred (v0.9.16+)
+
+- 跨 session token 趋势 (`tool_global_stats` 已有 tool 跨 session 聚合,
+  但 token 跨 session 还没做)
+- `inputCacheCreation` 触发检测 (bpm-large 全 0, 但其它 session 可能有)
+- 会话级 model/provider 切换检测 (v0.9.15 揭示 toolsHash 稳定, 但
+  `model` / `provider` 在跨 session 场景可能切换)
+- token 成本估算 (model→price mapping 缺失)
+
 ## [0.9.14] - 2026-08-10
 
 v0.9.13 把 `llm.tools_snapshot` 提到 meta block 顶层。v0.9.14 扫同一批 dcwin11

@@ -17,7 +17,10 @@
 //! - `context.append_message` — 整条 message(非 loop,直接 role-based emit)
 //! - `metadata` / `config.update` / `permission.set_mode` / `tools.set_active_tools`
 //!   — 会话开头 1 条 meta,带 label + payload
-//! - `llm.request` / `usage.record` — 协议层,跳过
+//! - `llm.request` / `usage.record` — 协议层,**单条路径**仍 skip;**batch 路径**
+//!   在 normalize_session 末尾聚合:v0.9.14 usage.record → 1 个 usage.chart meta
+//!   (per-turn token chart), v0.9.15 llm.request → 1 个 request.chart meta
+//!   (maxTokens context headroom + config drift)
 //! - `llm.tools_snapshot` (v0.9.13) — 走 build_tools_snapshot_meta,
 //!   详情页可见 "Tools configured for this session"
 //!
@@ -97,6 +100,8 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         // hash) — 不再 skip。详情页可见 "Tools configured for this session"。
         "llm.tools_snapshot" => Some(build_tools_snapshot_meta(obj, index, timestamp)),
         // 协议层 — 跳过 (wire 协议层细节,无 user value)
+        // v0.9.14: usage.record 聚合在 normalize_session 完成 (645 → 1 chart)
+        // v0.9.15: llm.request 聚合在 normalize_session 完成 (648 → 1 chart)
         "llm.request" | "usage.record" => None,
         // v0.9.10: 用户可观察事件 — emit 为 meta block 让详情页可见
         // (turn.steer 用户 mid-turn 改方向, turn.cancel 用户取消, plan_mode
@@ -142,6 +147,10 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     // v0.9.14: 收集 usage.record event 用于末尾 emit 1 个聚合 meta (per-turn chart)
     // 645 events → 1 个聚合,避免详情页被 645 个 noise meta block 撑爆
     let mut usage_records: Vec<UsageRecord> = Vec::new();
+    // v0.9.15: 收集 llm.request event 用于末尾 emit 1 个聚合 request.chart meta
+    // (context headroom + config drift detection)。648 events → 1 个聚合,
+    // 跟 usage.chart 同模式 (单条 emit 会撑爆详情页)。
+    let mut request_records: Vec<RequestRecord> = Vec::new();
 
     for (idx, record) in records.into_iter().enumerate() {
         // v0.9.9: dcwin11 真实样本揭示 — `context.append_loop_event` 是 envelope,
@@ -305,6 +314,15 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
                     usage_records.push(u);
                 }
             }
+            // v0.9.15: llm.request 不在此 emit (648 event 单条 emit 会撑爆详情页),
+            // 而是在循环末尾聚合为 1 个 request.chart meta block (maxTokens context
+            // headroom + toolsHash/systemPromptHash drift detection + loop/compaction
+            // kind 分流)。单条记录 capture 到 request_records vector 供末尾 emit。
+            "llm.request" => {
+                if let Some(r) = parse_request_record(obj) {
+                    request_records.push(r);
+                }
+            }
             _ => {
                 // 单条 fallback — 协议层跳过 (llm.request/usage.record/etc.)
                 if let Some(n) = normalize_kimi_record(&record, idx) {
@@ -321,6 +339,15 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     if !usage_records.is_empty() {
         let chart_idx = out.len();
         if let Some(chart_msg) = build_usage_chart_meta(&usage_records, chart_idx) {
+            out.push(chart_msg);
+        }
+    }
+    // v0.9.15: 末尾 emit 1 个 request.chart meta block (聚合 648 events)
+    // 0 events → 不 emit。放在 usage.chart 之后,UI 顺序: user → assistant → ...
+    // → compaction meta → tools snapshot → usage.chart → request.chart
+    if !request_records.is_empty() {
+        let chart_idx = out.len();
+        if let Some(chart_msg) = build_request_chart_meta(&request_records, chart_idx) {
             out.push(chart_msg);
         }
     }
@@ -1047,6 +1074,412 @@ fn raw_event_value(r: &UsageRecord) -> serde_json::Value {
             "inputCacheCreation": r.input_cache_creation,
         },
         "usageScope": r.usage_scope,
+        "time": r.time,
+    })
+}
+
+/// v0.9.15: llm.request 内部 struct — context headroom + drift detection +
+/// compaction-vs-loop 分流
+///
+/// 单条 wire event:
+/// ```json
+/// {"type":"llm.request","kind":"loop","provider":"openai","model":"deepseek-v4-flash","maxTokens":131072,"toolsHash":"22f4...","systemPromptHash":"b0e8...","messageCount":1,"turnStep":"0.1","time":1785915236910}
+/// ```
+#[derive(Debug, Clone)]
+struct RequestRecord {
+    model: String,
+    provider: String,
+    kind: String, // "loop" | "compaction" — loop 是常规 turn LLM 调用,compaction 是 summary/compact 触发
+    max_tokens: u64, // 上下文剩余预算 (输出 token 上限);prompt 越长,值越低
+    message_count: u32, // 累计消息数 (session 长度 trace)
+    turn_index: u32, // turnStep "8.29" → 8
+    step_index: u32, // turnStep "8.29" → 29
+    tools_hash: String, // tool config fingerprint — 跨 session 不变 = 配置稳定
+    system_prompt_hash: String, // system prompt fingerprint — 跨 session 变化 = 配置 drift
+    system_prompt_inline: bool, // 本 event 是否携带完整 system_prompt 文本
+    time: u64,
+}
+
+/// v0.9.15: 从 raw llm.request wire event 提取关键字段
+fn parse_request_record(obj: &serde_json::Map<String, Value>) -> Option<RequestRecord> {
+    let model = obj
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let provider = obj
+        .get("provider")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let kind = obj
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("loop")
+        .to_string();
+    let max_tokens = obj.get("maxTokens").and_then(|v| v.as_u64()).unwrap_or(0);
+    let message_count = obj
+        .get("messageCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let turn_step = obj
+        .get("turnStep")
+        .and_then(|v| v.as_str())
+        .unwrap_or("0.0");
+    let (turn_index, step_index) = match turn_step.split_once('.') {
+        Some((t, s)) => (t.parse::<u32>().unwrap_or(0), s.parse::<u32>().unwrap_or(0)),
+        None => (turn_step.parse::<u32>().unwrap_or(0), 0),
+    };
+    let tools_hash = obj
+        .get("toolsHash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let system_prompt_hash = obj
+        .get("systemPromptHash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    // 判定: 顶层带 systemPrompt 字段且是 string → 携带完整文本 (罕见, 首次 hash 引入)
+    let system_prompt_inline = obj.get("systemPrompt").and_then(|v| v.as_str()).is_some();
+    let time = obj.get("time").and_then(|v| v.as_u64()).unwrap_or(0);
+    Some(RequestRecord {
+        model,
+        provider,
+        kind,
+        max_tokens,
+        message_count,
+        turn_index,
+        step_index,
+        tools_hash,
+        system_prompt_hash,
+        system_prompt_inline,
+        time,
+    })
+}
+
+/// v0.9.15: 648 个 llm.request event → 1 个聚合 request.chart meta block
+///
+/// 跟 v0.9.14 usage.chart 区别:
+/// - usage.chart: per-turn token 成本 (input/output/cache 4 维度)
+/// - request.chart: per-turn **context headroom** (maxTokens 随时间变化) +
+///   **config drift detection** (toolsHash / systemPromptHash 跨 session 稳定性)
+///   + **kind 分流** (loop vs compaction LLM 调用)
+///
+/// 设计动机:
+/// - v0.9.14 揭示 "cacheRead 主导成本" (91.2%) — 用户关心 "我花了多少"
+/// - v0.9.15 揭示 "上下文还剩多少" + "我的 kimi session 中途切换了几次
+///   system prompt" — bpm-large 实测: 23 个独立 system_prompt_hash,
+///   23 个 compaction kind LLM 调用,tools_hash 全程稳定 (0 drift)
+/// - 648 单条 emit 会撑爆详情页,聚合为 1 个 meta
+///
+/// 顶层 stats:
+/// - request_count, kind_loop, kind_compaction, compaction_pct
+/// - max_tokens_min / max_tokens_max / max_tokens_avg
+/// - message_count_min / max, turn_index_range (e.g. "0..18")
+/// - tools_hash baseline + drift_count
+/// - system_prompt_hash_distinct (跨 session 出现的独立 hash 数)
+/// - model, provider, duration_ms
+///
+/// buckets[] (60 时间窗口):
+/// - bucket_start / bucket_end (ms 时间戳)
+/// - max_tokens_min / max_tokens_max / max_tokens_avg (单 bucket 内所有请求)
+/// - request_count / kind_compaction_count
+///
+/// system_prompt_drift_events[]:
+/// - 每个新 hash 第一次出现的时间戳 + 该 hash 的 request_index
+/// - system_prompt_inline 标记是否该 event 携带了完整 system prompt 文本
+///
+/// payload.raw_events: 前 5 + 后 5 raw request event (drill-down)
+fn build_request_chart_meta(
+    request_records: &[RequestRecord],
+    index: usize,
+) -> Option<NormalizedMessage> {
+    if request_records.is_empty() {
+        return None;
+    }
+
+    // 1. kind 分流 — loop vs compaction
+    let loop_count = request_records.iter().filter(|r| r.kind == "loop").count();
+    let compaction_count = request_records
+        .iter()
+        .filter(|r| r.kind == "compaction")
+        .count();
+    let total = request_records.len();
+    let compaction_pct = if total > 0 {
+        Some(compaction_count as f64 / total as f64)
+    } else {
+        None
+    };
+
+    // 2. max_tokens stats
+    let max_tokens_min = request_records
+        .iter()
+        .map(|r| r.max_tokens)
+        .min()
+        .unwrap_or(0);
+    let max_tokens_max = request_records
+        .iter()
+        .map(|r| r.max_tokens)
+        .max()
+        .unwrap_or(0);
+    let max_tokens_sum: u64 = request_records.iter().map(|r| r.max_tokens).sum();
+    let max_tokens_avg = if total > 0 {
+        max_tokens_sum / total as u64
+    } else {
+        0
+    };
+
+    // 3. message_count / turn_index range
+    let message_count_min = request_records
+        .iter()
+        .map(|r| r.message_count)
+        .min()
+        .unwrap_or(0);
+    let message_count_max = request_records
+        .iter()
+        .map(|r| r.message_count)
+        .max()
+        .unwrap_or(0);
+    let turn_index_min = request_records
+        .iter()
+        .map(|r| r.turn_index)
+        .min()
+        .unwrap_or(0);
+    let turn_index_max = request_records
+        .iter()
+        .map(|r| r.turn_index)
+        .max()
+        .unwrap_or(0);
+
+    // 4. hash drift detection
+    //    tools_hash: 取最高频 hash 为 baseline,统计 drift_count
+    //    system_prompt_hash: 独立值计数 (无 baseline — drift 是 signal 本身)
+    let mut tools_hash_count: HashMap<&str, usize> = HashMap::new();
+    let mut distinct_system_prompt_hashes: std::collections::BTreeSet<&str> =
+        std::collections::BTreeSet::new();
+    for r in request_records {
+        if !r.tools_hash.is_empty() {
+            *tools_hash_count.entry(r.tools_hash.as_str()).or_insert(0) += 1;
+        }
+        if !r.system_prompt_hash.is_empty() {
+            distinct_system_prompt_hashes.insert(r.system_prompt_hash.as_str());
+        }
+    }
+    let (tools_hash_baseline, tools_hash_drift_count) =
+        match tools_hash_count.iter().max_by_key(|(_, c)| *c) {
+            Some((baseline_hash, baseline_count)) => {
+                let drift = total - baseline_count;
+                (baseline_hash.to_string(), drift)
+            }
+            None => (String::new(), 0),
+        };
+
+    // 5. model / provider — 取第一个非空
+    let model = request_records
+        .iter()
+        .find_map(|r| {
+            if !r.model.is_empty() {
+                Some(r.model.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    let provider = request_records
+        .iter()
+        .find_map(|r| {
+            if !r.provider.is_empty() {
+                Some(r.provider.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // 6. 时间 stats
+    let first_request_at = request_records.iter().map(|r| r.time).min().unwrap_or(0);
+    let last_request_at = request_records.iter().map(|r| r.time).max().unwrap_or(0);
+    let duration_ms = last_request_at.saturating_sub(first_request_at);
+
+    // 7. 时间窗口 bucketing — 跟 v0.9.14 同算法
+    const BUCKET_TARGET: usize = 60;
+    let bucket_count = request_records.len().clamp(1, BUCKET_TARGET);
+    let mut buckets: Vec<serde_json::Value> = Vec::with_capacity(bucket_count);
+    let time_start = request_records.first().map(|r| r.time).unwrap_or(0);
+    let time_end = request_records.last().map(|r| r.time).unwrap_or(0);
+    let span = time_end.saturating_sub(time_start).max(1);
+    let n = request_records.len();
+    let base_size = n / bucket_count;
+    let extra_count = n % bucket_count;
+    let mut start = 0usize;
+    for i in 0..bucket_count {
+        let size = base_size + if i < extra_count { 1 } else { 0 };
+        let end = (start + size).min(n);
+        if start >= n || size == 0 {
+            break;
+        }
+        let slice = &request_records[start..end];
+        let b_max_min: u64 = slice.iter().map(|r| r.max_tokens).min().unwrap_or(0);
+        let b_max_max: u64 = slice.iter().map(|r| r.max_tokens).max().unwrap_or(0);
+        let b_max_sum: u64 = slice.iter().map(|r| r.max_tokens).sum();
+        let b_max_avg = b_max_sum / slice.len() as u64;
+        let b_compaction_count = slice.iter().filter(|r| r.kind == "compaction").count();
+        let bucket_start = time_start + (span * start as u64) / n as u64;
+        let bucket_end = time_start + (span * end as u64) / n as u64;
+        buckets.push(json!({
+            "bucket_start": bucket_start,
+            "bucket_end": bucket_end,
+            "max_tokens_min": b_max_min,
+            "max_tokens_max": b_max_max,
+            "max_tokens_avg": b_max_avg,
+            "request_count": slice.len() as u32,
+            "kind_compaction_count": b_compaction_count as u32,
+        }));
+        start = end;
+    }
+
+    // 8. system_prompt_drift_events — 每个新 hash 第一次出现的时间
+    let mut seen_hashes: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut drift_events: Vec<serde_json::Value> = Vec::new();
+    for (i, r) in request_records.iter().enumerate() {
+        if r.system_prompt_hash.is_empty() {
+            continue;
+        }
+        if seen_hashes.insert(r.system_prompt_hash.as_str()) {
+            drift_events.push(json!({
+                "time": r.time,
+                "hash": r.system_prompt_hash,
+                "request_index": i as u32,
+                "system_prompt_inline": r.system_prompt_inline,
+                "max_tokens": r.max_tokens,
+                "kind": r.kind,
+            }));
+        }
+    }
+
+    // 9. raw payload sample — 前 5 + 后 5 raw event (drill-down)
+    let raw_events: Vec<serde_json::Value> = if request_records.len() <= 10 {
+        request_records
+            .iter()
+            .map(raw_request_event_value)
+            .collect()
+    } else {
+        let head: Vec<serde_json::Value> = request_records[..5]
+            .iter()
+            .map(raw_request_event_value)
+            .collect();
+        let tail: Vec<serde_json::Value> = request_records[request_records.len() - 5..]
+            .iter()
+            .map(raw_request_event_value)
+            .collect();
+        head.into_iter().chain(tail).collect()
+    };
+
+    // 10. 顶层 data 字段
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "label".to_string(),
+        Value::String("request.chart".to_string()),
+    );
+    data.insert("request_count".to_string(), Value::from(total as u64));
+    data.insert("kind_loop".to_string(), Value::from(loop_count as u64));
+    data.insert(
+        "kind_compaction".to_string(),
+        Value::from(compaction_count as u64),
+    );
+    if let Some(p) = compaction_pct {
+        if let Some(n) = serde_json::Number::from_f64(p) {
+            data.insert("compaction_pct".to_string(), Value::Number(n));
+        }
+    }
+    data.insert("max_tokens_min".to_string(), Value::from(max_tokens_min));
+    data.insert("max_tokens_max".to_string(), Value::from(max_tokens_max));
+    data.insert("max_tokens_avg".to_string(), Value::from(max_tokens_avg));
+    data.insert(
+        "message_count_min".to_string(),
+        Value::from(message_count_min as u64),
+    );
+    data.insert(
+        "message_count_max".to_string(),
+        Value::from(message_count_max as u64),
+    );
+    data.insert(
+        "turn_index_min".to_string(),
+        Value::from(turn_index_min as u64),
+    );
+    data.insert(
+        "turn_index_max".to_string(),
+        Value::from(turn_index_max as u64),
+    );
+    data.insert(
+        "tools_hash_baseline".to_string(),
+        Value::String(tools_hash_baseline.clone()),
+    );
+    data.insert(
+        "tools_hash_drift_count".to_string(),
+        Value::from(tools_hash_drift_count as u64),
+    );
+    data.insert(
+        "system_prompt_hash_distinct".to_string(),
+        Value::from(distinct_system_prompt_hashes.len() as u64),
+    );
+    data.insert("model".to_string(), Value::String(model));
+    data.insert("provider".to_string(), Value::String(provider));
+    data.insert(
+        "first_request_at".to_string(),
+        Value::from(first_request_at),
+    );
+    data.insert("last_request_at".to_string(), Value::from(last_request_at));
+    data.insert("duration_ms".to_string(), Value::from(duration_ms));
+    data.insert("buckets".to_string(), Value::Array(buckets));
+    data.insert(
+        "system_prompt_drift_events".to_string(),
+        Value::Array(drift_events),
+    );
+    // raw payload — 用于 back-compat
+    data.insert(
+        "payload".to_string(),
+        json!({
+            "raw_events": raw_events,
+            "raw_count": request_records.len(),
+        }),
+    );
+
+    let timestamp =
+        chrono::DateTime::from_timestamp_millis(first_request_at as i64).map(|dt| dt.to_rfc3339());
+
+    Some(NormalizedMessage {
+        id: format!("kimi-request-chart-{index}"),
+        role: "meta".to_string(),
+        timestamp,
+        blocks: vec![NormalizedBlock {
+            kind: "meta".to_string(),
+            data,
+        }],
+        model: None,
+        stop_reason: None,
+        token_usage: None,
+        is_sidechain: None,
+        subagent_id: None,
+        parent_uuid: None,
+        raw_type: "llm.request".to_string(),
+    })
+}
+
+/// v0.9.15: 把 RequestRecord 渲染回 wire 原始 JSON shape (drill-down sample 用)
+fn raw_request_event_value(r: &RequestRecord) -> serde_json::Value {
+    json!({
+        "type": "llm.request",
+        "kind": r.kind,
+        "provider": r.provider,
+        "model": r.model,
+        "maxTokens": r.max_tokens,
+        "messageCount": r.message_count,
+        "turnStep": format!("{}.{}", r.turn_index, r.step_index),
+        "toolsHash": r.tools_hash,
+        "systemPromptHash": r.system_prompt_hash,
+        "systemPromptInline": r.system_prompt_inline,
         "time": r.time,
     })
 }
@@ -2102,5 +2535,379 @@ mod tests {
         // payload.raw_count = 645
         let payload = data.get("payload").unwrap().as_object().unwrap();
         assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 645);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // v0.9.15: llm.request → request.chart 聚合
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_request_record_extracts_fields() {
+        let rec = json!({
+            "type": "llm.request",
+            "kind": "loop",
+            "provider": "openai",
+            "model": "deepseek-v4-flash",
+            "maxTokens": 131072_u64,
+            "messageCount": 42_u64,
+            "turnStep": "5.12",
+            "toolsHash": "22f4bc8fddf81d51bf724b00006c942c622f5b650473fc7d2872f130afe70365",
+            "systemPromptHash": "b0e88aeb550f628d24dd6207c17f87a4f2a612f8d0ffc23b6f28404cb580c503",
+            "systemPrompt": "You are Kimi...",  // inline → true
+            "time": 1785915236910_u64
+        });
+        let obj = rec.as_object().unwrap();
+        let r = parse_request_record(obj).expect("parse");
+        assert_eq!(r.kind, "loop");
+        assert_eq!(r.provider, "openai");
+        assert_eq!(r.model, "deepseek-v4-flash");
+        assert_eq!(r.max_tokens, 131072);
+        assert_eq!(r.message_count, 42);
+        assert_eq!(r.turn_index, 5);
+        assert_eq!(r.step_index, 12);
+        assert!(r.system_prompt_inline, "inline system_prompt");
+        assert!(r.tools_hash.starts_with("22f4bc8f"));
+        assert!(r.system_prompt_hash.starts_with("b0e88aeb"));
+        assert_eq!(r.time, 1785915236910);
+    }
+
+    #[test]
+    fn parse_request_record_handles_compaction_kind_and_no_inline() {
+        let rec = json!({
+            "type": "llm.request",
+            "kind": "compaction",
+            "provider": "openai",
+            "model": "deepseek-v4-flash",
+            "maxTokens": 80000_u64,
+            "messageCount": 30_u64,
+            "turnStep": "3.1",
+            "toolsHash": "abc",
+            "systemPromptHash": "def",
+            "time": 1000_u64
+        });
+        let r = parse_request_record(rec.as_object().unwrap()).expect("parse");
+        assert_eq!(r.kind, "compaction");
+        assert!(!r.system_prompt_inline, "no inline text");
+    }
+
+    #[test]
+    fn build_request_chart_meta_empty_input_returns_none() {
+        let records: Vec<RequestRecord> = Vec::new();
+        let chart = build_request_chart_meta(&records, 0);
+        assert!(chart.is_none(), "empty input → no chart meta");
+    }
+
+    #[test]
+    fn build_request_chart_meta_aggregates_buckets_and_stats() {
+        // 5 个 synthetic request: 4 loop + 1 compaction, 3 个独立 system_prompt_hash
+        let mut records = Vec::new();
+        let base_time: u64 = 1785915236910;
+        let tools_hash = "22f4bc8fddf81d51bf724b00006c942c622f5b650473fc7d2872f130afe70365";
+        let sph_a = "hashA_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        let sph_b = "hashB_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        let sph_c = "hashC_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        // req 0: maxTokens 100k, hashA
+        records.push(RequestRecord {
+            model: "deepseek-v4-flash".into(),
+            provider: "openai".into(),
+            kind: "loop".into(),
+            max_tokens: 100_000,
+            message_count: 1,
+            turn_index: 0,
+            step_index: 1,
+            tools_hash: tools_hash.into(),
+            system_prompt_hash: sph_a.into(),
+            system_prompt_inline: true,
+            time: base_time,
+        });
+        // req 1: maxTokens 90k, hashB (drift)
+        records.push(RequestRecord {
+            model: "deepseek-v4-flash".into(),
+            provider: "openai".into(),
+            kind: "loop".into(),
+            max_tokens: 90_000,
+            message_count: 2,
+            turn_index: 0,
+            step_index: 2,
+            tools_hash: tools_hash.into(),
+            system_prompt_hash: sph_b.into(),
+            system_prompt_inline: false,
+            time: base_time + 1000,
+        });
+        // req 2: maxTokens 80k, hashC (drift)
+        records.push(RequestRecord {
+            model: "deepseek-v4-flash".into(),
+            provider: "openai".into(),
+            kind: "compaction".into(),
+            max_tokens: 80_000,
+            message_count: 3,
+            turn_index: 0,
+            step_index: 3,
+            tools_hash: tools_hash.into(),
+            system_prompt_hash: sph_c.into(),
+            system_prompt_inline: false,
+            time: base_time + 2000,
+        });
+        // req 3: maxTokens 70k, hashC (重复 → 不进 drift_events)
+        records.push(RequestRecord {
+            model: "deepseek-v4-flash".into(),
+            provider: "openai".into(),
+            kind: "loop".into(),
+            max_tokens: 70_000,
+            message_count: 4,
+            turn_index: 1,
+            step_index: 1,
+            tools_hash: tools_hash.into(),
+            system_prompt_hash: sph_c.into(),
+            system_prompt_inline: false,
+            time: base_time + 3000,
+        });
+        // req 4: maxTokens 60k, hashC
+        records.push(RequestRecord {
+            model: "deepseek-v4-flash".into(),
+            provider: "openai".into(),
+            kind: "loop".into(),
+            max_tokens: 60_000,
+            message_count: 5,
+            turn_index: 1,
+            step_index: 2,
+            tools_hash: tools_hash.into(),
+            system_prompt_hash: sph_c.into(),
+            system_prompt_inline: false,
+            time: base_time + 4000,
+        });
+
+        let chart = build_request_chart_meta(&records, 0).expect("chart emits");
+        let data = &chart.blocks[0].data;
+        assert_eq!(
+            data.get("label").unwrap().as_str().unwrap(),
+            "request.chart"
+        );
+        // kind 分流: 4 loop + 1 compaction
+        assert_eq!(data.get("kind_loop").unwrap().as_u64().unwrap(), 4);
+        assert_eq!(data.get("kind_compaction").unwrap().as_u64().unwrap(), 1);
+        assert_eq!(data.get("request_count").unwrap().as_u64().unwrap(), 5);
+        // maxTokens 范围
+        assert_eq!(
+            data.get("max_tokens_min").unwrap().as_u64().unwrap(),
+            60_000
+        );
+        assert_eq!(
+            data.get("max_tokens_max").unwrap().as_u64().unwrap(),
+            100_000
+        );
+        assert_eq!(
+            data.get("max_tokens_avg").unwrap().as_u64().unwrap(),
+            80_000
+        );
+        // message_count range
+        assert_eq!(data.get("message_count_min").unwrap().as_u64().unwrap(), 1);
+        assert_eq!(data.get("message_count_max").unwrap().as_u64().unwrap(), 5);
+        // turn_index range
+        assert_eq!(data.get("turn_index_min").unwrap().as_u64().unwrap(), 0);
+        assert_eq!(data.get("turn_index_max").unwrap().as_u64().unwrap(), 1);
+        // tools_hash_drift_count: 全 5 个 hash 一致 → 0 drift
+        assert_eq!(
+            data.get("tools_hash_drift_count")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            data.get("tools_hash_baseline").unwrap().as_str().unwrap(),
+            tools_hash
+        );
+        // system_prompt_hash_distinct: 3
+        assert_eq!(
+            data.get("system_prompt_hash_distinct")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            3
+        );
+        // 5 events → 5 buckets (1:1 对应, cap 60 不触发)
+        let buckets = data.get("buckets").unwrap().as_array().unwrap();
+        assert_eq!(buckets.len(), 5);
+        // system_prompt_drift_events: 3 个 (每个 hash 第一次出现)
+        let drift_events = data
+            .get("system_prompt_drift_events")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(drift_events.len(), 3);
+        // 第一个 drift event: hashA, system_prompt_inline = true
+        assert_eq!(
+            drift_events[0].get("hash").unwrap().as_str().unwrap(),
+            sph_a
+        );
+        assert!(drift_events[0]
+            .get("system_prompt_inline")
+            .unwrap()
+            .as_bool()
+            .unwrap());
+        // payload.raw_count
+        let payload = data.get("payload").unwrap().as_object().unwrap();
+        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 5);
+    }
+
+    #[test]
+    fn build_request_chart_meta_detects_tools_hash_drift() {
+        // 4 events: 3 个用 hashA, 1 个用 hashB → drift_count = 1
+        let records = vec![
+            RequestRecord {
+                model: "m".into(),
+                provider: "p".into(),
+                kind: "loop".into(),
+                max_tokens: 100_000,
+                message_count: 1,
+                turn_index: 0,
+                step_index: 1,
+                tools_hash: "hashA".into(),
+                system_prompt_hash: "sph".into(),
+                system_prompt_inline: false,
+                time: 1000,
+            },
+            RequestRecord {
+                model: "m".into(),
+                provider: "p".into(),
+                kind: "loop".into(),
+                max_tokens: 90_000,
+                message_count: 2,
+                turn_index: 0,
+                step_index: 2,
+                tools_hash: "hashA".into(),
+                system_prompt_hash: "sph".into(),
+                system_prompt_inline: false,
+                time: 2000,
+            },
+            RequestRecord {
+                model: "m".into(),
+                provider: "p".into(),
+                kind: "loop".into(),
+                max_tokens: 80_000,
+                message_count: 3,
+                turn_index: 1,
+                step_index: 1,
+                tools_hash: "hashB".into(), // ← drift
+                system_prompt_hash: "sph".into(),
+                system_prompt_inline: false,
+                time: 3000,
+            },
+            RequestRecord {
+                model: "m".into(),
+                provider: "p".into(),
+                kind: "loop".into(),
+                max_tokens: 70_000,
+                message_count: 4,
+                turn_index: 1,
+                step_index: 2,
+                tools_hash: "hashA".into(),
+                system_prompt_hash: "sph".into(),
+                system_prompt_inline: false,
+                time: 4000,
+            },
+        ];
+        let chart = build_request_chart_meta(&records, 0).expect("chart");
+        let data = &chart.blocks[0].data;
+        assert_eq!(
+            data.get("tools_hash_baseline").unwrap().as_str().unwrap(),
+            "hashA"
+        );
+        assert_eq!(
+            data.get("tools_hash_drift_count")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn normalize_session_v0915_bpm_large_request_chart_has_648_events_aggregated() {
+        // v0.9.15: bpm-large 真实样本验证 — 648 个 llm.request 聚合成 1 个
+        // request.chart meta,顶层 stats + 60 buckets + drift detection + 23
+        // 独立 system_prompt_hash
+        let path = std::path::Path::new("<redacted-fixture>-v0914.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let bytes = std::fs::read(path).expect("read fixture");
+        let mut records = Vec::new();
+        for line in bytes.split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
+        }
+        let out = normalize_session(records);
+        let chart_msgs: Vec<_> = out
+            .iter()
+            .filter(|m| m.raw_type == "llm.request" && m.role == "meta")
+            .collect();
+        assert_eq!(
+            chart_msgs.len(),
+            1,
+            "expected exactly 1 request.chart meta block (648 events aggregated)"
+        );
+        let data = &chart_msgs[0].blocks[0].data;
+        // 648 events total
+        assert_eq!(data.get("request_count").unwrap().as_u64().unwrap(), 648);
+        // 625 loop + 23 compaction
+        assert_eq!(data.get("kind_loop").unwrap().as_u64().unwrap(), 625);
+        assert_eq!(data.get("kind_compaction").unwrap().as_u64().unwrap(), 23);
+        // maxTokens 范围 50451 → 131072
+        assert_eq!(
+            data.get("max_tokens_min").unwrap().as_u64().unwrap(),
+            50_451
+        );
+        assert_eq!(
+            data.get("max_tokens_max").unwrap().as_u64().unwrap(),
+            131_072
+        );
+        // 60 buckets (cap)
+        let buckets = data.get("buckets").unwrap().as_array().unwrap();
+        assert_eq!(buckets.len(), 60, "648 events → 60 buckets (cap)");
+        // tools_hash 全程稳定 (跟 v0.9.13 snapshot 一致) → 0 drift
+        assert_eq!(
+            data.get("tools_hash_drift_count")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            0,
+            "bpm-large tools_hash 应当全程一致"
+        );
+        // 23 独立 system_prompt_hash (config drift 信号)
+        assert_eq!(
+            data.get("system_prompt_hash_distinct")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            23,
+            "bpm-large 23 个独立 system_prompt_hash"
+        );
+        // system_prompt_drift_events 长度 = 23 (每个 hash 第一次出现)
+        let drift_events = data
+            .get("system_prompt_drift_events")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(drift_events.len(), 23);
+        // model / provider
+        assert_eq!(
+            data.get("model").unwrap().as_str().unwrap(),
+            "deepseek-v4-flash"
+        );
+        assert_eq!(data.get("provider").unwrap().as_str().unwrap(), "openai");
+        // message_count range 1 → 128
+        assert_eq!(data.get("message_count_min").unwrap().as_u64().unwrap(), 1);
+        assert_eq!(
+            data.get("message_count_max").unwrap().as_u64().unwrap(),
+            128
+        );
+        // payload.raw_count = 648
+        let payload = data.get("payload").unwrap().as_object().unwrap();
+        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 648);
     }
 }

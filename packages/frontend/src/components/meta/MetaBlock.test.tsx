@@ -815,4 +815,136 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(screen.queryByTestId("usage-chart-raw-events")).toBeNull();
     });
   });
+
+  describe("request.chart (v0.9.15)", () => {
+    // v0.9.15: 648 个 llm.request 聚合 → 1 个 request.chart meta + 60
+    // buckets SVG + system_prompt_hash drift list + raw events 折叠/展开
+    const sampleBuckets = Array.from({ length: 60 }, (_, i) => ({
+      bucket_start: 1_000 + i * 1000,
+      bucket_end: 1_000 + (i + 1) * 1000,
+      max_tokens_min: 50_000 + i * 100,
+      max_tokens_max: 120_000 + i * 100,
+      max_tokens_avg: 80_000 + i * 100,
+      request_count: 11,
+      kind_compaction_count: i % 5 === 0 ? 1 : 0,
+    }));
+
+    // 23 个独立 hash — 模拟 bpm-large 的 system prompt 漂移
+    const sampleDriftEvents = Array.from({ length: 23 }, (_, i) => ({
+      time: 1_000 + i * 3600_000,
+      hash: `hash_${String(i).padStart(3, "0")}_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+      request_index: i * 28,
+      system_prompt_inline: i === 0, // 只有第一个携带 inline
+      max_tokens: 100_000,
+      kind: i === 0 ? "loop" : "loop",
+    }));
+
+    const sampleRawEvents = Array.from({ length: 10 }, (_, i) => ({
+      type: "llm.request",
+      kind: i < 9 ? "loop" : "compaction",
+      provider: "openai",
+      model: "deepseek-v4-flash",
+      maxTokens: 80_000 + i * 1000,
+      messageCount: i + 1,
+      turnStep: `${i}.1`,
+      toolsHash: "22f4bc8f",
+      systemPromptHash: "b0e88aeb",
+      systemPromptInline: false,
+      time: 1_000 + i * 1000,
+    }));
+
+    function buildRequestChartBlock(overrides: Record<string, unknown> = {}) {
+      return {
+        kind: "meta",
+        label: "request.chart",
+        request_count: 648,
+        kind_loop: 625,
+        kind_compaction: 23,
+        compaction_pct: 0.0355,
+        max_tokens_min: 50_451,
+        max_tokens_max: 131_072,
+        max_tokens_avg: 88_000,
+        message_count_min: 1,
+        message_count_max: 128,
+        turn_index_min: 0,
+        turn_index_max: 18,
+        tools_hash_baseline: "22f4bc8fddf81d51bf724b00006c942c622f5b650473fc7d2872f130afe70365",
+        tools_hash_drift_count: 0,
+        system_prompt_hash_distinct: 23,
+        model: "deepseek-v4-flash",
+        provider: "openai",
+        first_request_at: 1_000,
+        last_request_at: 178_000_000,
+        duration_ms: 177_000_000,
+        buckets: sampleBuckets,
+        system_prompt_drift_events: sampleDriftEvents,
+        payload: {
+          raw_events: sampleRawEvents,
+          raw_count: 648,
+        },
+        ...overrides,
+      };
+    }
+
+    it("renders request count + headroom + kind breakdown + 60 buckets SVG", () => {
+      const block = buildRequestChartBlock();
+      renderInRoute(<MetaBlock block={block} label="request.chart" />);
+      // 顶部 stats
+      expect(screen.getByTestId("request-chart-count")).toHaveTextContent("648 requests");
+      expect(screen.getByTestId("request-chart-headroom")).toHaveTextContent(/headroom 88.0K avg/);
+      expect(screen.getByTestId("request-chart-kinds")).toHaveTextContent(
+        "625 loop · 23 compaction"
+      );
+      expect(screen.getByTestId("request-chart-session-length")).toHaveTextContent(
+        /msg 1→128 · turn 0→18/
+      );
+      // SVG — 3 条 polyline (min/max/avg) + 多个 amber dot (compaction 时刻)
+      const svg = screen.getByTestId("request-chart-svg");
+      expect(svg).toBeInTheDocument();
+      expect(svg.querySelector('[data-testid="request-chart-line-avg"]')).not.toBeNull();
+      expect(svg.querySelector('[data-testid="request-chart-line-min"]')).not.toBeNull();
+      expect(svg.querySelector('[data-testid="request-chart-line-max"]')).not.toBeNull();
+      // compaction 时刻 → amber circle (60 buckets / 每 5 bucket 一个 = 12 个)
+      const dots = svg.querySelectorAll('circle[data-testid^="request-chart-compaction-"]');
+      expect(dots.length).toBeGreaterThan(0);
+      expect(dots.length).toBeLessThanOrEqual(60);
+      // legend
+      expect(screen.getByTestId("request-chart-legend")).toBeInTheDocument();
+    });
+
+    it("system_prompt_drift_events default collapsed to 8 of 23", () => {
+      const block = buildRequestChartBlock();
+      renderInRoute(<MetaBlock block={block} label="request.chart" />);
+      const section = screen.getByTestId("request-chart-drift");
+      expect(section).toBeInTheDocument();
+      const tags = section.querySelectorAll(".meta-tag");
+      expect(tags).toHaveLength(8);
+      // tools_hash baseline 显式标出
+      expect(screen.getByTestId("request-chart-tools-hash")).toHaveTextContent(
+        /tools_hash 22f4bc8fddf8/
+      );
+    });
+
+    it("missing request_count → fallback UnknownBlockCard", () => {
+      const block = buildRequestChartBlock({ request_count: undefined });
+      const { container } = renderInRoute(<MetaBlock block={block} label="request.chart" />);
+      expect(container.querySelector("[data-testid='request-chart-meta']")).toBeNull();
+      expect(container.firstChild).not.toBeNull();
+    });
+
+    it("展开 / 收起 raw events 按钮", async () => {
+      const { default: userEvent } = await import("@testing-library/user-event");
+      const user = userEvent.setup();
+      const block = buildRequestChartBlock();
+      renderInRoute(<MetaBlock block={block} label="request.chart" />);
+      expect(screen.queryByTestId("request-chart-raw-events")).toBeNull();
+      const toggle = screen.getByTestId("request-chart-raw-toggle");
+      expect(toggle).toHaveTextContent("展开 648 raw events");
+      await user.click(toggle);
+      expect(screen.getByTestId("request-chart-raw-events")).toBeInTheDocument();
+      expect(toggle).toHaveTextContent("收起");
+      await user.click(toggle);
+      expect(screen.queryByTestId("request-chart-raw-events")).toBeNull();
+    });
+  });
 });

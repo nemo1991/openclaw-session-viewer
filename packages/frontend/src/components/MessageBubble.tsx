@@ -211,7 +211,9 @@ function isKnownMetaLabel(label: string): boolean {
     // v0.9.13: kimi llm.tools_snapshot — session 启动时 dump 的 24 个 tool 配置
     label === "llm.tools_snapshot" ||
     // v0.9.14: kimi usage.chart — 645 个 usage.record 聚合 1 个 per-turn chart meta
-    label === "usage.chart"
+    label === "usage.chart" ||
+    // v0.9.15: kimi request.chart — 648 个 llm.request 聚合 1 个 context headroom + drift chart
+    label === "request.chart"
   );
 }
 
