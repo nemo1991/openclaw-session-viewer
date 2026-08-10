@@ -598,4 +598,104 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(document.querySelector("details")).toBeInTheDocument();
     });
   });
+
+  // v0.9.13: llm.tools_snapshot — 24 tool 配置从 raw payload 提到顶层,详情页可见
+  describe("llm.tools_snapshot (v0.9.13)", () => {
+    it("顶层字段渲染 24 tool 名称 + hash", () => {
+      const toolNames = [
+        "Agent",
+        "TodoList",
+        "AskUserQuestion",
+        "Bash",
+        "CreateGoal",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "Edit",
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "AgentSwarm",
+        "GetGoal",
+        "Glob",
+        "Grep",
+        "Read",
+        "SetGoalBudget",
+        "Skill",
+        "TaskList",
+        "TaskOutput",
+        "TaskStop",
+        "FetchURL",
+        "UpdateGoal",
+        "Write",
+      ];
+      const block = {
+        kind: "meta",
+        label: "llm.tools_snapshot",
+        tool_count: 24,
+        tool_names: toolNames,
+        snapshot_hash: "22f4bc8fddf81d51bf724b00006c942c622f5b650473fc7d2872f130afe70365",
+        tool_descriptions: {
+          Bash: "Run a shell command.",
+          Read: "Read a file.",
+        },
+        payload: {},
+      };
+      renderInRoute(<MetaBlock block={block} label="llm.tools_snapshot" />);
+      expect(screen.getByTestId("tools-snapshot-count")).toHaveTextContent("24 个 tool 配置");
+      expect(screen.getByTestId("tools-snapshot-hash")).toHaveTextContent("22f4bc8f…");
+      // 关键 tool 都在 list 里
+      const list = screen.getByTestId("tools-snapshot-list");
+      expect(list.textContent).toContain("Bash");
+      expect(list.textContent).toContain("Agent");
+      expect(list.textContent).toContain("TodoList");
+    });
+
+    it("默认折叠 12 个之后,点 toggle 展开剩余", async () => {
+      const toolNames = Array.from({ length: 24 }, (_, i) => `Tool${i}`);
+      const block = {
+        kind: "meta",
+        label: "llm.tools_snapshot",
+        tool_count: 24,
+        tool_names: toolNames,
+        snapshot_hash: "h".repeat(64),
+        payload: {},
+      };
+      renderInRoute(<MetaBlock block={block} label="llm.tools_snapshot" />);
+      const list = screen.getByTestId("tools-snapshot-list");
+      expect(list.textContent).toContain("Tool0");
+      expect(list.textContent).not.toContain("Tool15");
+      const toggle = screen.getByTestId("tools-snapshot-toggle");
+      expect(toggle).toHaveTextContent(/展开剩余 \d+ 个 tool/);
+      await userEvent.click(toggle);
+      expect(list.textContent).toContain("Tool23");
+    });
+
+    it("完全缺字段 → fallback 到 UnknownBlockCard", () => {
+      const block = {
+        kind: "meta",
+        label: "llm.tools_snapshot",
+        // 完全没 tool_names / payload.tools
+        payload: { hash: "h" },
+      };
+      renderInRoute(<MetaBlock block={block} label="llm.tools_snapshot" />);
+      // fallback: UnknownBlockCard (这里无 payload 关键字段 → 走 pill 形式)
+      expect(screen.queryByTestId("tools-snapshot-count")).not.toBeInTheDocument();
+    });
+
+    it("camelCase 兼容: snapshotHash 也能读", () => {
+      // 老 wire 数据的 camelCase 形式 (前端 TS interface 默认 camelCase)
+      const block = {
+        kind: "meta",
+        label: "llm.tools_snapshot",
+        toolCount: 3,
+        toolNames: ["A", "B", "C"],
+        snapshotHash: "abcdef" + "0".repeat(58),
+        toolDescriptions: { A: "first", B: "second", C: "third" },
+        payload: {},
+      };
+      renderInRoute(<MetaBlock block={block} label="llm.tools_snapshot" />);
+      expect(screen.getByTestId("tools-snapshot-count")).toHaveTextContent("3 个 tool 配置");
+      expect(screen.getByTestId("tools-snapshot-hash")).toBeInTheDocument();
+    });
+  });
 });

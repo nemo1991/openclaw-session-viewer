@@ -2,6 +2,104 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.13] - 2026-08-10
+
+v0.9.12 完成了 bpm-large 22 个 `context.apply_compaction` 的 summary 抽取。
+v0.9.13 继续扫 17 个 dcwin11 wire.jsonl 的 top-level event type,发现还有
+**1 个完全 skip 但 user value 很高**的事件类型 — `llm.tools_snapshot`。
+
+### 发现
+
+dcwin11 7 个 main wire.jsonl 各 1 条 `llm.tools_snapshot`(bpm-large 6040
+行,das-portal 1096 行,platform 859 行,cust-portal-server 334 行,
+cust-portal-mobi 223 行,dc 57 行),每条带 **24 个 tool 配置 + 长 description
+(300-500 字符)+ SHA256 hash**(LLM 缓存键)。`normalize_kimi_record` 走
+protocol-layer skip 路径返回 `None`,详情页**完全不可见**。
+
+但是 user value 很高: "这个 session 配了哪些 tool?" 是理解 session 行为的基础
+信息。比如能调 `AgentSwarm`/`CronCreate`/`TodoList` 的 session 跟只能调基础
+tool 的 session 行为模式完全不同 — 答案藏在 raw wire.jsonl 里,展开
+`UnknownBlockCard` 才能看到 24 个 tool array。
+
+### Added
+
+- **A. 新的 `build_tools_snapshot_meta` builder** (Rust) —
+  `parser/kimi.rs` 新增专属 builder,把 `tool_count` / `tool_names` /
+  `tool_descriptions`(截断到 120 字符,24 个 tool 全部展开会 ~6KB)/
+  `snapshot_hash` 提到 block.data 顶层。`normalize_kimi_record` (streaming)
+  和 `normalize_session` (batch) 两条路径都路由到新 builder,wire 原
+  raw_type (`llm.tools_snapshot`) 保留。
+- **B. 专属 `ToolsSnapshotMetaBlock` 组件** (React) —
+  `components/meta/MetaBlock.tsx` 新增,头部 `count` pill + 8-char hash pill,
+  中部 24 个 tool 名称作为 indigo chip (区别于 compaction 的 teal accent),
+  默认显示前 12 个 + "展开剩余 N 个 tool" 按钮。完全缺字段时回退到
+  `UnknownBlockCard`。
+- **C. `isKnownMetaLabel` 路由** — `components/MessageBubble.tsx` 把
+  `llm.tools_snapshot` 加入已知 meta label,直接走 MetaBlock 不走
+  `UnknownBlockCard` 折叠 UI。
+- **D. 专属样式** — `components/MessageBubble.css` 加 `.tools-snapshot-meta`
+  (indigo 左侧 accent border 跟 compaction 的 teal 区分) +
+  `.tools-snapshot-list` (max-height 200px 滚动) + `.tools-snapshot-tag`
+  (indigo 单色 chip)。
+- **E. 字段命名兼容** — `ToolsSnapshotMetaBlock` 的 `get()` helper 同时支持
+  snake_case (`snapshot_hash` / `tool_names`,后端 Rust serde 默认) 和
+  camelCase (`snapshotHash` / `toolNames`,前端 TS interface),back-compat 老
+  数据。
+
+### Stats (bpm-large 实测)
+
+1 个 `llm.tools_snapshot` 事件:
+
+- 24 个 tool 配置 (Agent / AgentSwarm / Bash / Read / Edit / TodoList /
+  CronCreate / CreateGoal / ... — 范围远超 Claude Code 的 16-tool baseline)
+- SHA256 hash 64 字符 (LLM cache key)
+- 完整 24 tool × 300-500 char descriptions ≈ 6KB;block.data 顶层只放截断
+  版本 (~3KB),raw 完整版在 `payload.tools[]`
+
+### Tests
+
+- `tools_snapshot_emits_meta_with_tools_and_hash` (Rust) — 验证顶层
+  snapshot_hash / tool_count / tool_names / tool_descriptions + payload
+  仍保留
+- `tools_snapshot_truncates_long_descriptions` (Rust) — 验证 300 char
+  description 被截断到 121 char (120 + ellipsis)
+- `tools_snapshot_handles_missing_tools_array` (Rust) — 验证没 tools
+  字段时仍 emit (tool_count=0),不 panic
+- `normalize_session_v0913_bpm_large_tools_snapshot_has_24_tools` (Rust)
+  — 跑 6040 行 bpm-large-v0913 fixture,断言 1 个 llm.tools_snapshot meta,
+  24 个 tool,关键 tool (Agent / Bash / Read / Edit / TodoList / CronCreate)
+  都在,hash 64 字符
+- 4 个新前端测试 (`MetaBlock.test.tsx`) — 顶层字段渲染 / 折叠展开 /
+  fallback 到 UnknownBlockCard / camelCase 兼容
+
+### Numbers
+
+- Rust: 309 → 313 tests (+4)
+- Frontend: 617 → 621 tests (+4)
+- Files: 5 (`src-tauri/src/parser/kimi.rs`,
+  `packages/frontend/src/components/meta/MetaBlock.tsx`,
+  `packages/frontend/src/components/meta/MetaBlock.test.tsx`,
+  `packages/frontend/src/components/MessageBubble.tsx`,
+  `packages/frontend/src/components/MessageBubble.css`)
+- New fixture: `<redacted-fixture>-v0913.jsonl` (6040 行,
+  dcwin11 bpm session copy)
+
+### Notes
+
+- 旧 DB 不受影响 — DB schema 不变,字段提到 block.data 顶层是 parser 层变化,
+  sync 时通过 `extras` 重新走 build_tools_snapshot_meta,老 row 重新 sync
+  即可拿到新结构。
+- `usage.record` (645 条 bpm-large) 仍走 protocol-layer skip — 这些是
+  per-turn token 数据,虽然大但已经有 v0.9.3+ 累加到 `total_tokens`,UI
+  增量价值有限。后续如想 surface per-step chart 可单独再开 v0.9.14。
+
+### Deferred (P1)
+
+- 跨 kimi wire schema drift 的 schema-version 探测(从 v0.9.11 推到 v0.9.13):
+  当前 binary 不能区分 `plan_mode.cancel` vs `plan_mode.exit` 来自哪个
+  kimi 版本。wire 1.4 metadata.protocol_version 不携带 build/kimi-cli 版本号。
+  建议未来 metadata 加 `kimi_cli_version` 字段。
+
 ## [0.9.12] - 2026-08-10
 
 v0.9.11 处理了 dcwin11 schema drift (`plan_mode.exit` vs `plan_mode.cancel`)。

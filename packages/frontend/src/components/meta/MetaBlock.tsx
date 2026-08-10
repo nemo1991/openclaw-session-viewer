@@ -371,6 +371,9 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
     // v0.9.12: context.apply_compaction — LLM 交接笔记 + 压缩统计
     case "context.apply_compaction":
       return <CompactionMetaBlock block={block} />;
+    // v0.9.13: llm.tools_snapshot — session 启动时 dump 的 24 tool schema + hash
+    case "llm.tools_snapshot":
+      return <ToolsSnapshotMetaBlock block={block} />;
     default:
       return <UnknownBlockCard block={block} />;
   }
@@ -467,6 +470,94 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+/* v0.9.13: llm.tools_snapshot 专属渲染
+ *
+ * dcwin11 bpm-large (6040 行) 1 条 llm.tools_snapshot, 24 个 tool (Agent /
+ * AgentSwarm / Bash / Read / Edit / CronCreate / TodoList / ...),每个带
+ * 300-500 字符 description,SHA256 hash 作 LLM 缓存键。之前 protocol-layer
+ * skip 完全不可见。
+ *
+ * 渲染策略:
+ * - 头部: hash + tool count pill + 时间戳
+ * - 中部: tool names 列表 (类似 skill_listing 的 chip,但加 dropdown 展开每个
+ *   tool 的 truncated description 60 字符预览)— 24 个 tool 全展开太长,默认
+ *   折叠
+ * - rawType 保留 (wire "llm.tools_snapshot") — 后续如想区分 kimi 版本有依据
+ *
+ * fallback: 完全缺顶层字段 (老 wire / 老 DB 缓存) → UnknownBlockCard。
+ */
+function ToolsSnapshotMetaBlock({ block }: { block: NormalizedBlockFE }) {
+  const blk = block as Record<string, unknown>;
+  const pl = (block.payload ?? {}) as Record<string, unknown>;
+  const get = (...keys: string[]): unknown => {
+    for (const k of keys) {
+      if (blk[k] !== undefined && blk[k] !== null) return blk[k];
+      if (pl[k] !== undefined && pl[k] !== null) return pl[k];
+    }
+    return undefined;
+  };
+
+  const hash =
+    typeof get("snapshot_hash", "snapshotHash", "hash") === "string"
+      ? (get("snapshot_hash", "snapshotHash", "hash") as string)
+      : null;
+  const toolNames = (get("tool_names", "toolNames") as string[]) ?? [];
+  const toolDescs = (get("tool_descriptions", "toolDescriptions") as Record<string, string>) ?? {};
+  const rawTools = (pl.tools as Array<{ name?: string }>) ?? [];
+
+  // 缺关键字段 → fallback (老 wire / 老 DB 缓存)
+  if (toolNames.length === 0 && rawTools.length === 0) {
+    return <UnknownBlockCard block={block} />;
+  }
+
+  const [showAll, setShowAll] = useState(false);
+  const visibleNames = showAll ? toolNames : toolNames.slice(0, 12);
+  const overflow = toolNames.length - visibleNames.length;
+
+  return (
+    <div className="block-meta-info meta-block-flat tools-snapshot-meta">
+      <span className="meta-kind-badge">🔧 tools snapshot</span>
+      <span className="meta-primary-text" data-testid="tools-snapshot-count">
+        {toolNames.length} 个 tool 配置
+      </span>
+      {hash && (
+        <span
+          className="meta-sub"
+          title={`SHA256 hash (LLM cache key): ${hash}`}
+          data-testid="tools-snapshot-hash"
+        >
+          {hash.slice(0, 8)}…
+        </span>
+      )}
+      <div className="meta-list tools-snapshot-list" data-testid="tools-snapshot-list">
+        {visibleNames.map((name) => {
+          const desc = toolDescs[name];
+          return (
+            <span
+              key={name}
+              className="meta-tag tools-snapshot-tag"
+              title={desc ? `${name}: ${desc}` : name}
+            >
+              {name}
+            </span>
+          );
+        })}
+      </div>
+      {overflow > 0 && (
+        <button
+          type="button"
+          className="meta-show-more"
+          data-testid="tools-snapshot-toggle"
+          onClick={() => setShowAll((v) => !v)}
+          title={showAll ? "收起 tool 列表" : `展开剩余 ${overflow} 个 tool`}
+        >
+          {showAll ? "收起" : `展开剩余 ${overflow} 个 tool`}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /* v0.8.4: file_snapshot 折叠 (item 3)

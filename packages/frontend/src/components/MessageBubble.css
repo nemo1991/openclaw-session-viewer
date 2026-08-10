@@ -1260,3 +1260,22 @@
   word-break: break-word;
   color: var(--color-text, #222);
 }
+
+/* === v0.9.13: llm.tools_snapshot 专属样式 ===
+ * 跟 compaction 一样用左侧 accent border 区分 — 但 tools snapshot 用紫色跟
+ * teal(kimi 品牌色)区分。tool 列表 chips 跟 skill_listing 类似但更紧凑。
+ */
+.tools-snapshot-meta {
+  border-left: 3px solid rgba(99, 102, 241, 0.6); /* indigo — 区别于 teal compaction */
+  background: rgba(99, 102, 241, 0.04);
+}
+.tools-snapshot-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+.tools-snapshot-tag {
+  font-family: var(--font-mono, "SF Mono", "Monaco", monospace);
+  font-size: 10px;
+  background: rgba(99, 102, 241, 0.1);
+  color: rgb(67, 56, 202);
+}

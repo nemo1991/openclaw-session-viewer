@@ -17,8 +17,9 @@
 //! - `context.append_message` — 整条 message(非 loop,直接 role-based emit)
 //! - `metadata` / `config.update` / `permission.set_mode` / `tools.set_active_tools`
 //!   — 会话开头 1 条 meta,带 label + payload
-//! - `llm.request` / `llm.tools_snapshot` / `usage.record` /
-//!   `permission.record_approval_result` — 协议层,跳过
+//! - `llm.request` / `usage.record` — 协议层,跳过
+//! - `llm.tools_snapshot` (v0.9.13) — 走 build_tools_snapshot_meta,
+//!   详情页可见 "Tools configured for this session"
 //!
 //! 协议版本:
 //! - `metadata.protocol_version` `1.x` 支持;`2.x` 及以上跳过该 session
@@ -92,8 +93,11 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         "step.begin" | "step.end" | "content.part" | "tool.call" | "tool.result" => {
             Some(build_loop_event_meta(obj, r#type, index, timestamp))
         }
+        // v0.9.13: llm.tools_snapshot 走专属 builder (24 个 tool schema +
+        // hash) — 不再 skip。详情页可见 "Tools configured for this session"。
+        "llm.tools_snapshot" => Some(build_tools_snapshot_meta(obj, index, timestamp)),
         // 协议层 — 跳过 (wire 协议层细节,无 user value)
-        "llm.request" | "llm.tools_snapshot" | "usage.record" => None,
+        "llm.request" | "usage.record" => None,
         // v0.9.10: 用户可观察事件 — emit 为 meta block 让详情页可见
         // (turn.steer 用户 mid-turn 改方向, turn.cancel 用户取消, plan_mode
         //  进入/退出 plan 模式)。permission.record_approval_result /
@@ -284,6 +288,10 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
             // v0.9.12: 同 streaming 路径 — context.apply_compaction 走专属 builder
             "context.apply_compaction" => {
                 out.push(build_apply_compaction_meta(obj, idx, extract_time(obj)));
+            }
+            // v0.9.13: llm.tools_snapshot — 走专属 builder 不再 skip
+            "llm.tools_snapshot" => {
+                out.push(build_tools_snapshot_meta(obj, idx, extract_time(obj)));
             }
             _ => {
                 // 单条 fallback — 协议层跳过 (llm.request/usage.record/etc.)
@@ -649,6 +657,106 @@ fn build_apply_compaction_meta(
     }
 }
 
+/// v0.9.13: `llm.tools_snapshot` 走专属 builder — kimi session 启动时 dump
+/// 的完整 tool schema (Agent / Bash / Read / Edit / TodoList 等 20+ 工具 +
+/// 长 description + SHA256 hash)。之前 protocol-layer skip 路径直接 `None`,
+/// 详情页完全不可见。但 user value 很高: "这个 session 配了哪些 tool?" 是
+/// 理解 session 行为的基础信息 (比如能调 AgentSwarm / CronCreate 的 session
+/// 跟只能用基础 tool 的 session 行为模式完全不同)。
+///
+/// Builder 策略:
+/// - `tool_count` → 顶层数字
+/// - `tool_names` → 顶层字符串数组 (按 wire 原顺序)
+/// - `tool_descriptions` → 顶层 Map<name, 截断到 120 字符的 description>
+///   (LLM 看到的完整 prompt 摘要;raw 完整版在 payload 里)
+/// - `snapshot_hash` → 顶层字符串 (LLM 缓存键, 跨 session 共享相同 tool 配置
+///   时可以 dedup)
+/// - `payload` 保留 raw event — back-compat 老数据消费方
+///
+/// Wire 原 raw_type ("llm.tools_snapshot") 保留 — UI 后续如想区分
+/// "snapshot 来自 kimi v1.4 / v1.5" 有依据。
+fn build_tools_snapshot_meta(
+    obj: &serde_json::Map<String, Value>,
+    index: usize,
+    timestamp: Option<String>,
+) -> NormalizedMessage {
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "label".to_string(),
+        Value::String("llm.tools_snapshot".to_string()),
+    );
+
+    let hash = obj.get("hash").and_then(|v| v.as_str()).map(String::from);
+    if let Some(h) = &hash {
+        data.insert("snapshot_hash".to_string(), Value::String(h.clone()));
+    }
+
+    // tools[] → 顶层 tool_names + tool_count + tool_descriptions
+    let tools = obj.get("tools").and_then(|v| v.as_array());
+    let tool_names: Vec<String> = tools
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    data.insert(
+        "tool_count".to_string(),
+        Value::from(tool_names.len() as u64),
+    );
+    data.insert(
+        "tool_names".to_string(),
+        Value::Array(
+            tool_names
+                .iter()
+                .map(|n| Value::String(n.clone()))
+                .collect(),
+        ),
+    );
+
+    // tool_descriptions — Map<name, truncated desc>;raw 完整版在 payload 里。
+    // 截断 120 字符防止 meta block 撑爆 (LLM 看到 tool 时附的 doc 经常
+    // 300-500 字符; 24 个 tool 全展开 ~6KB)。
+    if let Some(arr) = tools {
+        let mut descs = serde_json::Map::new();
+        for t in arr {
+            if let (Some(name), Some(desc)) = (
+                t.get("name").and_then(|n| n.as_str()),
+                t.get("description").and_then(|d| d.as_str()),
+            ) {
+                let truncated: String = desc.chars().take(120).collect();
+                let truncated = if desc.chars().count() > 120 {
+                    format!("{truncated}…")
+                } else {
+                    truncated
+                };
+                descs.insert(name.to_string(), Value::String(truncated));
+            }
+        }
+        data.insert("tool_descriptions".to_string(), Value::Object(descs));
+    }
+
+    // 原始 payload — back-compat 任何消费完整 payload 的逻辑
+    data.insert("payload".to_string(), Value::Object(obj.clone()));
+
+    NormalizedMessage {
+        id: format!("kimi-tools_snapshot-{index}"),
+        role: "meta".to_string(),
+        timestamp,
+        blocks: vec![NormalizedBlock {
+            kind: "meta".to_string(),
+            data,
+        }],
+        model: None,
+        stop_reason: None,
+        token_usage: None,
+        is_sidechain: None,
+        subagent_id: None,
+        parent_uuid: None,
+        raw_type: "llm.tools_snapshot".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,11 +804,13 @@ mod tests {
 
     #[test]
     fn protocol_layer_events_return_none() {
-        // v0.9.10: 真正"协议层"(无 user value) — llm.request / llm.tools_snapshot
-        // / usage.record。其余 v0.9.8 之前 skip 的事件 (turn.steer / cancel /
-        // plan_mode.* / permission.record_approval_result / tools.update_store /
-        // compaction.*) 现在都 emit 为 meta block。
-        for ty in ["llm.request", "llm.tools_snapshot", "usage.record"] {
+        // v0.9.10: 真正"协议层"(无 user value) — llm.request / usage.record。
+        // v0.9.13: `llm.tools_snapshot` 不再 skip — 走 build_tools_snapshot_meta
+        // (24 个 tool schema + hash),验下面的 `tools_snapshot_emits_meta_with_tools_and_hash`。
+        // 其余 v0.9.8 之前 skip 的事件 (turn.steer / cancel / plan_mode.* /
+        // permission.record_approval_result / tools.update_store / compaction.*)
+        // 现在都 emit 为 meta block。
+        for ty in ["llm.request", "usage.record"] {
             let rec = json!({"type": ty, "time": 1_u64});
             assert!(
                 normalize_kimi_record(&rec, 0).is_none(),
@@ -708,6 +818,168 @@ mod tests {
                 ty
             );
         }
+    }
+
+    #[test]
+    fn tools_snapshot_emits_meta_with_tools_and_hash() {
+        // v0.9.13: llm.tools_snapshot 不再 skip — 走 build_tools_snapshot_meta
+        // 把 tool count + name + description + hash 提到 block 顶层。
+        let rec = json!({
+            "type": "llm.tools_snapshot",
+            "time": 1_u64,
+            "hash": "abc123",
+            "tools": [
+                {"name": "Bash", "description": "Run a shell command."},
+                {"name": "Read", "description": "Read a file."},
+            ],
+        });
+        let n = normalize_kimi_record(&rec, 0).expect("llm.tools_snapshot emits");
+        assert_eq!(n.role, "meta");
+        assert_eq!(n.raw_type, "llm.tools_snapshot");
+        let block = &n.blocks[0];
+        assert_eq!(block.kind, "meta");
+        assert_eq!(
+            block.data.get("snapshot_hash").unwrap().as_str().unwrap(),
+            "abc123"
+        );
+        assert_eq!(block.data.get("tool_count").unwrap().as_u64().unwrap(), 2);
+        let names = block
+            .data
+            .get("tool_names")
+            .unwrap()
+            .as_array()
+            .expect("tool_names is array");
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].as_str().unwrap(), "Bash");
+        assert_eq!(names[1].as_str().unwrap(), "Read");
+        // description 提到顶层 tool_descriptions (raw payload 仍保留)
+        let descs = block
+            .data
+            .get("tool_descriptions")
+            .unwrap()
+            .as_object()
+            .expect("tool_descriptions is map");
+        assert_eq!(
+            descs.get("Bash").unwrap().as_str().unwrap(),
+            "Run a shell command."
+        );
+        assert!(block.data.get("payload").is_some(), "payload preserved");
+    }
+
+    #[test]
+    fn tools_snapshot_truncates_long_descriptions() {
+        // 120 字符截断 — 防止 meta block 撑爆 (LLM 看到 tool 时附的 doc 经常
+        // 300-500 字符, 24 个 tool 全展开 ~6KB)。
+        let long_desc = "x".repeat(300);
+        let rec = json!({
+            "type": "llm.tools_snapshot",
+            "time": 1_u64,
+            "hash": "h",
+            "tools": [{"name": "Big", "description": long_desc}],
+        });
+        let n = normalize_kimi_record(&rec, 0).expect("emit");
+        let descs = n.blocks[0]
+            .data
+            .get("tool_descriptions")
+            .unwrap()
+            .as_object()
+            .unwrap();
+        let truncated = descs.get("Big").unwrap().as_str().unwrap();
+        // 120 chars + ellipsis char "…"
+        assert!(
+            truncated.chars().count() <= 121,
+            "expected ≤121 chars, got {}",
+            truncated.chars().count()
+        );
+        assert!(truncated.ends_with('…'), "should end with ellipsis");
+    }
+
+    #[test]
+    fn tools_snapshot_handles_missing_tools_array() {
+        // 健壮性: 没 tools 字段 → tool_count=0 + tool_names=[] 但仍然 emit
+        let rec = json!({
+            "type": "llm.tools_snapshot",
+            "time": 1_u64,
+            "hash": "h",
+        });
+        let n = normalize_kimi_record(&rec, 0).expect("emit");
+        assert_eq!(n.role, "meta");
+        assert_eq!(
+            n.blocks[0]
+                .data
+                .get("tool_count")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            n.blocks[0]
+                .data
+                .get("tool_names")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        // hash 仍保留
+        assert_eq!(
+            n.blocks[0]
+                .data
+                .get("snapshot_hash")
+                .unwrap()
+                .as_str()
+                .unwrap(),
+            "h"
+        );
+    }
+
+    #[test]
+    fn normalize_session_v0913_bpm_large_tools_snapshot_has_24_tools() {
+        // v0.9.13: bpm-large 真实样本 6040 行验证 — 1 条 llm.tools_snapshot, 24 个 tool
+        let path = std::path::Path::new("<redacted-fixture>-v0913.jsonl");
+        if !path.exists() {
+            // fixture missing — 在其他 cwd 跑 cargo test 时 skip
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let bytes = std::fs::read(path).expect("read fixture");
+        let mut records = Vec::new();
+        for line in bytes.split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
+        }
+        let out = normalize_session(records);
+        let snapshot_msgs: Vec<_> = out
+            .iter()
+            .filter(|m| m.raw_type == "llm.tools_snapshot")
+            .collect();
+        assert_eq!(
+            snapshot_msgs.len(),
+            1,
+            "expected exactly 1 llm.tools_snapshot meta block"
+        );
+        let block = &snapshot_msgs[0].blocks[0];
+        assert_eq!(
+            block.data.get("tool_count").unwrap().as_u64().unwrap(),
+            24,
+            "bpm-large has 24 tools"
+        );
+        let names = block.data.get("tool_names").unwrap().as_array().unwrap();
+        let names_str: Vec<&str> = names.iter().map(|v| v.as_str().unwrap()).collect();
+        // 关键 tool 都在 (代表 session 能调 subagent / task / cron)
+        for expected in ["Agent", "Bash", "Read", "Edit", "TodoList", "CronCreate"] {
+            assert!(
+                names_str.contains(&expected),
+                "expected tool {expected} in {names_str:?}"
+            );
+        }
+        // hash 透传
+        let h = block.data.get("snapshot_hash").unwrap().as_str().unwrap();
+        assert_eq!(h.len(), 64, "sha256 hex = 64 chars, got {h:?}");
     }
 
     #[test]

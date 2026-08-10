@@ -207,7 +207,9 @@ function isKnownMetaLabel(label: string): boolean {
     label === "queued_command" ||
     label === "queue_operation" ||
     // v0.9.12: kimi context.apply_compaction — LLM 交接笔记 + 压缩统计
-    label === "context.apply_compaction"
+    label === "context.apply_compaction" ||
+    // v0.9.13: kimi llm.tools_snapshot — session 启动时 dump 的 24 个 tool 配置
+    label === "llm.tools_snapshot"
   );
 }
 
@@ -228,6 +230,8 @@ function isMetaKind(kind: string): boolean {
     kind === "compact_file_reference" ||
     kind === "attached_file" ||
     kind === "queued_command" ||
-    kind === "queue_operation"
+    kind === "queue_operation" ||
+    // v0.9.13: kimi llm.tools_snapshot
+    kind === "llm.tools_snapshot"
   );
 }
