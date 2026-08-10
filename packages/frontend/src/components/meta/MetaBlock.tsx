@@ -368,9 +368,105 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
         </div>
       );
     }
+    // v0.9.12: context.apply_compaction — LLM 交接笔记 + 压缩统计
+    case "context.apply_compaction":
+      return <CompactionMetaBlock block={block} />;
     default:
       return <UnknownBlockCard block={block} />;
   }
+}
+
+/* v0.9.12: context.apply_compaction 专属渲染
+ *
+ * dcwin11 bpm-large (5834 行) 含 22 个 apply_compaction 事件,每个都带 LLM 生成
+ * 的中文交接笔记 (`summary`,可达数 KB 字符)。之前这些事件走 UnknownBlockCard
+ * 默认折叠 — 用户必须手动展开才能看到 summary 文本,但展开后又被埋在 6 个
+ * payload 字段表里,体验差。
+ *
+ * 现在后端 parser 把 summary + tokens_before / tokens_after / compacted_count /
+ * kept_user_message_count / compression_ratio 提到 block 顶层 (block.data),本组件
+ * 直接读这些顶层字段渲染: 头部 stats pill + summary 大段文本 (可滚动)。
+ *
+ * fallback: 如果顶层字段缺失 (老 wire 数据 / 老 DB 缓存),仍走 UnknownBlockCard。
+ */
+function CompactionMetaBlock({ block }: { block: NormalizedBlockFE }) {
+  // 字段可能在 payload (旧 wire / 老 DB 缓存) 也可能在 block 顶层 (新 builder)。
+  // 后端字段是 snake_case (`tokens_before`),前端 type camelCase (`tokensBefore`)
+  // — 都要兼容。统一 lookup: 顶层 → payload → camelCase fallback。
+  const blk = block as Record<string, unknown>;
+  const pl = (block.payload ?? {}) as Record<string, unknown>;
+  const get = (...keys: string[]): unknown => {
+    for (const k of keys) {
+      if (blk[k] !== undefined && blk[k] !== null) return blk[k];
+      if (pl[k] !== undefined && pl[k] !== null) return pl[k];
+    }
+    return undefined;
+  };
+
+  const summary = typeof get("summary") === "string" ? (get("summary") as string) : null;
+  const contextSummary =
+    typeof get("contextSummary") === "string" ? (get("contextSummary") as string) : null;
+  const tokensBefore = num(get("tokens_before", "tokensBefore"));
+  const tokensAfter = num(get("tokens_after", "tokensAfter"));
+  const compactedCount = num(get("compacted_count", "compactedCount"));
+  const keptUserCount = num(get("kept_user_message_count", "keptUserMessageCount"));
+
+  // 缺 summary 也缺 stats — fallback 到 UnknownBlockCard,让老数据仍能看
+  if (!summary && tokensBefore === null && tokensAfter === null) {
+    return <UnknownBlockCard block={block} />;
+  }
+
+  return (
+    <div className="block-meta-info meta-block-flat compaction-meta">
+      <span className="meta-kind-badge">🗜️ compaction</span>
+      {tokensBefore !== null && tokensAfter !== null && tokensAfter > 0 && (
+        <span className="meta-primary-text" title={`tokensBefore / tokensAfter`}>
+          {formatTokens(tokensBefore)} → {formatTokens(tokensAfter)}
+          {(() => {
+            const ratio = tokensBefore / tokensAfter;
+            return ` · ${ratio.toFixed(1)}× 压缩`;
+          })()}
+        </span>
+      )}
+      {compactedCount !== null && (
+        <span className="meta-sub" title="被压缩的消息数 (LLM 折叠掉)">
+          {compactedCount} msgs compacted
+        </span>
+      )}
+      {keptUserCount !== null && (
+        <span className="meta-sub" title="保留的用户消息数">
+          {keptUserCount} kept
+        </span>
+      )}
+      {summary && (
+        <div className="compaction-summary" data-testid="compaction-summary">
+          <div className="compaction-summary-title">LLM 交接笔记</div>
+          <pre className="compaction-summary-text">{summary}</pre>
+        </div>
+      )}
+      {!summary && contextSummary && (
+        <div className="compaction-summary">
+          <div className="compaction-summary-title">context 系统提示</div>
+          <pre className="compaction-summary-text">{contextSummary}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function num(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 /* v0.8.4: file_snapshot 折叠 (item 3)

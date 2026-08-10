@@ -2,6 +2,90 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.12] - 2026-08-10
+
+v0.9.11 处理了 dcwin11 schema drift (`plan_mode.exit` vs `plan_mode.cancel`)。
+v0.9.12 继续看 dcwin11 bpm-large 真实 schema,发现 `context.apply_compaction` 事件
+携带的 \*\*LLM 交接笔记 (`summary` 字段,中文叙述当前任务/已确认决策/下一步)
+
+- 压缩统计 (tokensBefore/tokensAfter/compactedCount/keptUserMessageCount) 一直
+  埋在 raw JSON 里\*\*,用户必须手动展开 UnknownBlockCard 才能看到 summary 文本,
+  展开后又被 6 个 payload 字段表淹没。
+
+bpm-large (5834 行) 有 22 个 apply_compaction 事件,平均压缩比 ≈ 23× (58K → 2.5K
+tokens,71 messages compacted,2 kept)。这些是 session 长跑的"checkpoint 笔记",
+对理解 LLM 在大型 task 中如何自我压缩/交接至关重要 — 之前在 UI 上几乎不可见。
+
+### Added
+
+- **A. 新的 `build_apply_compaction_meta` builder** (Rust) —
+  `parser/kimi.rs` 新增专属 builder,把 summary / contextSummary /
+  tokensBefore / tokensAfter / compactedCount / keptUserMessageCount
+  提到 block.data 顶层,并自动计算 `compression_ratio = tokensBefore / tokensAfter`。
+  `normalize_kimi_record` (streaming) 和 `normalize_session` (batch) 两条路径
+  都路由到新 builder,wire 原 raw_type (`context.apply_compaction`) 保留。
+- **B. 专属 `CompactionMetaBlock` 组件** (React) — `components/meta/MetaBlock.tsx`
+  新增,优先读顶层字段 (`summary` / `tokens_before` / `tokens_after` /
+  `compacted_count` / `kept_user_message_count` / `compression_ratio`),fallback
+  到 payload 兼容老 wire / 老 DB 缓存。完全缺字段时回退到 UnknownBlockCard。
+- **C. `isKnownMetaLabel` 路由** — `components/MessageBubble.tsx` 把
+  `context.apply_compaction` 加入已知 meta label,直接走 MetaBlock 不走
+  UnknownBlockCard 的折叠 UI。
+- **D. 专属样式** — `components/MessageBubble.css` 加 `.compaction-meta` 类
+  (teal 左侧 accent border 跟 kimi 品牌色对齐) + `.compaction-summary`
+  (max-height 240px 滚动,LLM 笔记用 `<pre>` 保留原始换行)。
+- **E. 字段命名兼容** — `CompactionMetaBlock` 的 `get()` helper 同时支持
+  snake_case (`tokens_before`,后端 Rust serde 默认) 和 camelCase
+  (`tokensBefore`,前端 TS interface),back-compat 老数据。
+
+### Stats (bpm-large 实测)
+
+22 个 apply_compaction 事件:
+
+- 平均压缩比 **23.4×** (59.4K tokens → 2.5K tokens)
+- 总压缩消息数 **791** (平均 36 messages / compaction)
+- 每次保留用户消息 **2 条** (固定)
+- summary 文本 **20/22 非空** (2 个 LLM 写了空字符串,属正常 edge case)
+
+### Tests
+
+- `apply_compaction_extracts_summary_and_stats_to_block_top_level` (Rust)
+  — 验证 summary 提到顶层、tokens/compression_ratio 计算正确、payload 仍保留
+- `apply_compaction_handles_zero_tokens_after` (Rust) — 验证 `tokensAfter=0`
+  时 `compression_ratio` 为 None (避免 inf)
+- `normalize_session_v0912_bpm_large_apply_compaction_has_summary` (Rust)
+  — 跑 5834 行 bpm-large fixture,断言 22 个 apply_compaction 全部走新 builder
+  且 ≥20 个 summary 非空,平均压缩比在 10-50x 范围
+- 4 个新前端测试 (`MetaBlock.test.tsx`) — 顶层字段渲染 / contextSummary 回退 /
+  payload 缺失 pill / 完整 fallback
+
+### Numbers
+
+- Rust: 306 → 309 tests (+3)
+- Frontend: 613 → 617 tests (+4)
+- Files: 4 (`src-tauri/src/parser/kimi.rs`, `packages/frontend/src/components/meta/MetaBlock.tsx`,
+  `packages/frontend/src/components/meta/MetaBlock.test.tsx`,
+  `packages/frontend/src/components/MessageBubble.tsx`,
+  `packages/frontend/src/components/MessageBubble.css`)
+- 新 CSS: ~35 行 (`.compaction-meta` + `.compaction-summary*`)
+
+### Notes
+
+- 旧 DB 不受影响 — DB schema 不变,字段提到 block.data 顶层是 parser 层变化,
+  sync 时通过 `extras` 重新走 build_apply_compaction_meta,老 row 重新 sync 即可
+  拿到新结构。但 transcript view 是实时渲染,DB 缓存的旧 transcript 不会自动
+  升级 (除非点 reload 触发 re-normalize)。
+- `full_compaction.begin` / `full_compaction.complete` 暂未独立 builder —
+  它们只带 `time` + `source`(begin)/`time`(complete),无 user-facing 数据,
+  走通用 meta emit 已够。
+
+### Deferred (P1)
+
+- 22 个 unmatched step.begin (bpm-large 末尾) — 之前 v0.9.9 P1 注释基于
+  错误假设 (期望 1073 tool_use 实际 1040),实测无 miss,这条 deferred 已撤销。
+- kimi wire schema drift 的 schema-version 探测: 当前 binary 不能区分
+  `plan_mode.cancel` vs `plan_mode.exit` 来自哪个 kimi 版本。
+
 ## [0.9.11] - 2026-08-08
 
 v0.9.10 把 4 个 kimi 用户可观察事件 (`turn.steer` / `turn.cancel` / `plan_mode.enter` /

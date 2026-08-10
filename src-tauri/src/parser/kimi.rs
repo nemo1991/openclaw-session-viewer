@@ -111,10 +111,12 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         | "turn.cancel"
         | "full_compaction.begin"
         | "full_compaction.complete"
-        | "context.apply_compaction"
         | "plan_mode.enter"
         | "plan_mode.cancel"
         | "plan_mode.exit" => Some(build_meta_from_event(obj, r#type, index, timestamp)),
+        // v0.9.12: context.apply_compaction 单独走 build_apply_compaction_meta —
+        // 把 summary + 压缩统计提到 block 顶层,前端 CompactionMetaBlock 直接读
+        "context.apply_compaction" => Some(build_apply_compaction_meta(obj, index, timestamp)),
         // 未知 event type — emit 为 meta,不 panic
         _ => Some(build_meta_from_event(obj, r#type, index, timestamp)),
     }
@@ -272,13 +274,16 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
             | "permission.record_approval_result"
             | "full_compaction.begin"
             | "full_compaction.complete"
-            | "context.apply_compaction"
             | "turn.steer"
             | "turn.cancel"
             | "plan_mode.enter"
             | "plan_mode.cancel"
             | "plan_mode.exit" => {
                 out.push(build_meta_from_event(obj, r#type, idx, extract_time(obj)));
+            }
+            // v0.9.12: 同 streaming 路径 — context.apply_compaction 走专属 builder
+            "context.apply_compaction" => {
+                out.push(build_apply_compaction_meta(obj, idx, extract_time(obj)));
             }
             _ => {
                 // 单条 fallback — 协议层跳过 (llm.request/usage.record/etc.)
@@ -534,6 +539,113 @@ fn build_meta_from_object(
         subagent_id: None,
         parent_uuid: None,
         raw_type: label.to_string(),
+    }
+}
+
+/// v0.9.12: `context.apply_compaction` 专属 builder — 把 LLM 生成的 summary 文本
+/// 和压缩统计提到 block 顶层,让前端 CompactionMetaBlock 能直接渲染,不用再
+/// 走 UnknownBlockCard 让用户手动展开看 raw JSON。
+///
+/// dcwin11 bpm-large 真实 schema (`apply_compaction` 携带):
+/// - `summary` (str) — LLM 生成的交接笔记,中文叙述当前任务/已确认决策/下一步
+/// - `contextSummary` (str) — kimi 写给 LLM 的"上下文已压缩,以下是摘要"系统 prompt
+/// - `tokensBefore` (u64) — 压缩前 token 数
+/// - `tokensAfter` (u64) — 压缩后 token 数
+/// - `compactedCount` (u64) — 被压缩的消息数
+/// - `keptUserMessageCount` (u64) — 保留的用户消息数
+///
+/// `compression_ratio` 自动计算 (tokensBefore/tokensAfter),若除 0 或缺失则 None。
+fn build_apply_compaction_meta(
+    obj: &serde_json::Map<String, Value>,
+    index: usize,
+    timestamp: Option<String>,
+) -> NormalizedMessage {
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "label".to_string(),
+        Value::String("context.apply_compaction".to_string()),
+    );
+
+    // 顶层字段 — 跟 kimi 其他 meta block 的 `label` + `payload` 风格保持一致,
+    // payload 也保留 (back-compat,任何消费 payload 的前端逻辑不破)。
+    let tokens_before = obj
+        .get("tokensBefore")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            obj.get("tokensBefore")
+                .and_then(|v| v.as_i64())
+                .and_then(|n| u64::try_from(n).ok())
+        });
+    let tokens_after = obj.get("tokensAfter").and_then(|v| v.as_u64()).or_else(|| {
+        obj.get("tokensAfter")
+            .and_then(|v| v.as_i64())
+            .and_then(|n| u64::try_from(n).ok())
+    });
+    let compacted_count = obj
+        .get("compactedCount")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            obj.get("compactedCount")
+                .and_then(|v| v.as_i64())
+                .and_then(|n| u64::try_from(n).ok())
+        });
+    let kept_user_count = obj
+        .get("keptUserMessageCount")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            obj.get("keptUserMessageCount")
+                .and_then(|v| v.as_i64())
+                .and_then(|n| u64::try_from(n).ok())
+        });
+
+    if let Some(s) = obj.get("summary").and_then(|v| v.as_str()) {
+        data.insert("summary".to_string(), Value::String(s.to_string()));
+    }
+    if let Some(s) = obj.get("contextSummary").and_then(|v| v.as_str()) {
+        data.insert("context_summary".to_string(), Value::String(s.to_string()));
+    }
+    if let Some(n) = tokens_before {
+        data.insert("tokens_before".to_string(), Value::from(n));
+    }
+    if let Some(n) = tokens_after {
+        data.insert("tokens_after".to_string(), Value::from(n));
+    }
+    if let Some(n) = compacted_count {
+        data.insert("compacted_count".to_string(), Value::from(n));
+    }
+    if let Some(n) = kept_user_count {
+        data.insert("kept_user_message_count".to_string(), Value::from(n));
+    }
+
+    // 压缩比 — tokens_before/tokens_after,f64;缺失/除 0 留 None
+    let compression_ratio = match (tokens_before, tokens_after) {
+        (Some(b), Some(a)) if a > 0 => Some(b as f64 / a as f64),
+        _ => None,
+    };
+    if let Some(r) = compression_ratio {
+        if let Some(num) = serde_json::Number::from_f64(r) {
+            data.insert("compression_ratio".to_string(), Value::Number(num));
+        }
+    }
+
+    // 原始 payload 也保留 — 任何旧逻辑 (UnknownBlockCard 等) 还能用
+    data.insert("payload".to_string(), Value::Object(obj.clone()));
+
+    NormalizedMessage {
+        id: format!("kimi-apply_compaction-{}", index),
+        role: "meta".to_string(),
+        timestamp,
+        blocks: vec![NormalizedBlock {
+            kind: "meta".to_string(),
+            data,
+        }],
+        model: None,
+        stop_reason: None,
+        token_usage: None,
+        is_sidechain: None,
+        subagent_id: None,
+        parent_uuid: None,
+        raw_type: "context.apply_compaction".to_string(),
     }
 }
 
@@ -816,6 +928,146 @@ mod tests {
                 .and_then(|k| k.as_str())
                 == Some("todo"),
             "todo payload preserved in meta block"
+        );
+    }
+
+    /// v0.9.12: context.apply_compaction 应该走 build_apply_compaction_meta,
+    /// summary + 压缩统计提到 block 顶层。
+    #[test]
+    fn apply_compaction_extracts_summary_and_stats_to_block_top_level() {
+        let rec = json!({
+            "type": "context.apply_compaction",
+            "summary": "继续这个任务前,先把当前状态完整记下来。\n当前任务:用 Dapper 重构 AsiaSupDataManager",
+            "contextSummary": "The conversation so far has been compacted to free up context.",
+            "tokensBefore": 59457_u64,
+            "tokensAfter": 2921_u64,
+            "compactedCount": 71_u64,
+            "keptUserMessageCount": 2_u64,
+            "time": 1785977851015_u64
+        });
+        let n = normalize_kimi_record(&rec, 0).expect("apply_compaction emits meta");
+        assert_eq!(n.role, "meta");
+        assert_eq!(n.raw_type, "context.apply_compaction");
+        let d = &n.blocks[0].data;
+        // summary 提到顶层
+        assert!(
+            d.get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .contains("Dapper"),
+            "summary 文本应在顶层, not nested in payload"
+        );
+        // 压缩统计
+        assert_eq!(d.get("tokens_before").and_then(|v| v.as_u64()), Some(59457));
+        assert_eq!(d.get("tokens_after").and_then(|v| v.as_u64()), Some(2921));
+        assert_eq!(d.get("compacted_count").and_then(|v| v.as_u64()), Some(71));
+        assert_eq!(
+            d.get("kept_user_message_count").and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        // compression_ratio = 59457/2921 ≈ 20.35
+        let ratio = d
+            .get("compression_ratio")
+            .and_then(|v| v.as_f64())
+            .expect("ratio");
+        assert!(
+            (ratio - 20.35).abs() < 0.1,
+            "compression_ratio 应 ≈ 20.35, got {}",
+            ratio
+        );
+        // payload 仍保留 (back-compat)
+        assert!(d.get("payload").map(|v| v.is_object()).unwrap_or(false));
+    }
+
+    /// v0.9.12: tokensAfter=0 时 compression_ratio 应为 None (除 0 保护)
+    #[test]
+    fn apply_compaction_handles_zero_tokens_after() {
+        let rec = json!({
+            "type": "context.apply_compaction",
+            "summary": "edge case",
+            "tokensBefore": 1000_u64,
+            "tokensAfter": 0_u64,
+            "compactedCount": 5_u64,
+            "time": 1_u64
+        });
+        let n = normalize_kimi_record(&rec, 0).expect("emits");
+        let d = &n.blocks[0].data;
+        // tokens_after 提了但 compression_ratio 不应算
+        assert_eq!(d.get("tokens_after").and_then(|v| v.as_u64()), Some(0));
+        assert!(
+            d.get("compression_ratio").is_none(),
+            "tokensAfter=0 时 compression_ratio 应 None (避免 inf)"
+        );
+    }
+
+    /// v0.9.12: bpm-large fixture 22 个 apply_compaction 全部走新 builder,
+    /// summary 字段必须非空 (真实 dcwin11 中文交接笔记)
+    #[test]
+    fn normalize_session_v0912_bpm_large_apply_compaction_has_summary() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("<redacted-fixture>.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let mut records: Vec<serde_json::Value> = Vec::new();
+        jsonl::for_each_line(&path, |_idx, _byte, v| {
+            records.push(v.clone());
+        })
+        .expect("for_each_line bpm-large");
+        let out = normalize_session(records);
+
+        let apply_compactions: Vec<&NormalizedMessage> = out
+            .iter()
+            .filter(|n| n.raw_type == "context.apply_compaction")
+            .collect();
+        assert_eq!(
+            apply_compactions.len(),
+            22,
+            "bpm-large 期望 22 个 apply_compaction, got {}",
+            apply_compactions.len()
+        );
+
+        // 每个 apply_compaction 必须有 summary 顶层字段 (非空)
+        let with_summary: Vec<&&NormalizedMessage> = apply_compactions
+            .iter()
+            .filter(|m| {
+                m.blocks[0]
+                    .data
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert!(
+            with_summary.len() >= 20,
+            "至少 20/22 个 apply_compaction 应有非空 summary (dcwin11 真实 schema), got {}",
+            with_summary.len()
+        );
+
+        // 压缩比应在合理范围 (bpm-large 实测 ~58K → 2.5K = 23x)
+        let ratios: Vec<f64> = apply_compactions
+            .iter()
+            .filter_map(|m| {
+                m.blocks[0]
+                    .data
+                    .get("compression_ratio")
+                    .and_then(|v| v.as_f64())
+            })
+            .collect();
+        let avg: f64 = ratios.iter().sum::<f64>() / ratios.len() as f64;
+        println!(
+            "bpm-large 22 apply_compaction: avg compression_ratio = {:.1}x, {} / 22 有 ratio",
+            avg,
+            ratios.len()
+        );
+        assert!(
+            (10.0..=50.0).contains(&avg),
+            "bpm-large 平均压缩比应在 10-50x, got {:.2}",
+            avg
         );
     }
 

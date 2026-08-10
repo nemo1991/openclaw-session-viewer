@@ -1222,3 +1222,41 @@
   font-size: 10px;
   font-weight: 600;
 }
+
+/* === v0.9.12: context.apply_compaction 专属样式 ===
+ * LLM 交接笔记 (summary) 用 pre 渲染保持原始换行;max-height + overflow-y
+ * 限制在 ~240px 让多条压缩事件不撑爆详情页。compaction-meta 框整体加左侧
+ * accent border 跟其他 meta block 区分。*/
+.compaction-meta {
+  border-left: 3px solid rgba(0, 181, 173, 0.6); /* teal 跟 kimi 品牌色对齐 */
+  background: rgba(0, 181, 173, 0.04);
+}
+.compaction-summary {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.compaction-summary-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(0, 181, 173, 1);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.compaction-summary-text {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono, "SF Mono", "Monaco", monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text, #222);
+}

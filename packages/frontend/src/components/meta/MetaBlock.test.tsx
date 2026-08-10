@@ -532,4 +532,70 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(document.querySelector("details")).toBeInTheDocument();
     });
   });
+
+  // v0.9.12: context.apply_compaction 专属渲染 — LLM 交接笔记 + 压缩统计
+  describe("context.apply_compaction (v0.9.12)", () => {
+    it("顶层字段直接显示 summary + stats (不走 <details>)", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "context.apply_compaction",
+        summary:
+          "继续这个任务前,先把当前状态完整记下来。\n当前任务:用 Dapper 重构 AsiaSupDataManager",
+        tokens_before: 59457,
+        tokens_after: 2921,
+        compacted_count: 71,
+        kept_user_message_count: 2,
+        compression_ratio: 20.35,
+      };
+      const { container } = renderInRoute(
+        <MetaBlock block={block} label="context.apply_compaction" />
+      );
+      // 走 compaction-meta 专属样式,不走 UnknownBlockCard 的折叠
+      expect(container.querySelector("details")).toBeNull();
+      expect(container.querySelector(".compaction-meta")).toBeInTheDocument();
+      // summary 文本渲染 (LLM 交接笔记)
+      expect(screen.getByTestId("compaction-summary")).toBeInTheDocument();
+      expect(screen.getByText(/Dapper 重构 AsiaSupDataManager/)).toBeInTheDocument();
+      // 压缩统计 — 文本跨多个 React 节点,直接读 container.textContent
+      const compactText = container.textContent?.replace(/\s+/g, " ") ?? "";
+      expect(compactText).toContain("59.5K → 2.9K");
+      expect(compactText).toContain("20.4× 压缩");
+      expect(compactText).toContain("71 msgs compacted");
+      expect(compactText).toContain("2 kept");
+    });
+
+    it("缺 summary 时回退到 contextSummary (system prompt)", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "context.apply_compaction",
+        contextSummary: "The conversation so far has been compacted to free up context.",
+        tokensBefore: 1000,
+        tokensAfter: 100,
+        payload: { tokensBefore: 1000, tokensAfter: 100 },
+      };
+      renderInRoute(<MetaBlock block={block} label="context.apply_compaction" />);
+      expect(screen.getByText(/compacted to free up context/)).toBeInTheDocument();
+    });
+
+    it("完全缺 stats → fallback 到 UnknownBlockCard (payload 缺失时是 pill 不是 details)", () => {
+      // 老 wire 数据 / 老 DB 缓存:既无顶层字段也无 payload 字段
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "context.apply_compaction",
+      };
+      renderInRoute(<MetaBlock block={block} label="context.apply_compaction" />);
+      // fallback 走 UnknownBlockCard,无 payload 时返回 pill (无 <details>)
+      expect(document.querySelector(".unknown-pill")).toBeInTheDocument();
+    });
+
+    it("有 payload 但无 summary/stats → fallback 走 UnknownBlockCard details", () => {
+      const block: NormalizedBlockFE = {
+        kind: "meta",
+        label: "context.apply_compaction",
+        payload: { someFutureField: "value" },
+      };
+      renderInRoute(<MetaBlock block={block} label="context.apply_compaction" />);
+      expect(document.querySelector("details")).toBeInTheDocument();
+    });
+  });
 });

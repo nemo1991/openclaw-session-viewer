@@ -205,7 +205,9 @@ function isKnownMetaLabel(label: string): boolean {
     label === "compact_file_reference" ||
     label === "attached_file" ||
     label === "queued_command" ||
-    label === "queue_operation"
+    label === "queue_operation" ||
+    // v0.9.12: kimi context.apply_compaction — LLM 交接笔记 + 压缩统计
+    label === "context.apply_compaction"
   );
 }
 
