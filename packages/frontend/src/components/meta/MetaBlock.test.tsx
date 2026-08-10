@@ -698,4 +698,121 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(screen.getByTestId("tools-snapshot-hash")).toBeInTheDocument();
     });
   });
+
+  describe("usage.chart (v0.9.14)", () => {
+    // v0.9.14: 645 个 usage.record 聚合 → 1 个 chart meta + 60 buckets SVG
+    // + 22 session_scope_events + raw events 折叠/展开
+    const sampleBuckets = Array.from({ length: 60 }, (_, i) => ({
+      bucket_start: 1_000 + i * 1000,
+      bucket_end: 1_000 + (i + 1) * 1000,
+      input_other: 100,
+      output: 50,
+      input_cache_read: 200,
+      input_cache_creation: 0,
+      turn_count: 11,
+    }));
+
+    const sampleSessionScope = Array.from({ length: 22 }, (_, i) => ({
+      time: 1_000 + i * 3600_000,
+      input_other: 1000,
+      output: 500,
+      input_cache_read: 2560,
+    }));
+
+    const sampleRawEvents = Array.from({ length: 10 }, (_, i) => ({
+      type: "usage.record",
+      model: "deepseek-v4-flash",
+      usage: {
+        inputOther: 100,
+        output: 50,
+        inputCacheRead: 200,
+        inputCacheCreation: 0,
+      },
+      usageScope: i < 5 ? "turn" : "session",
+      time: 1_000 + i * 1000,
+    }));
+
+    function buildUsageChartBlock(overrides: Record<string, unknown> = {}) {
+      // 跟 v0.9.13 tools_snapshot 测试一致: top-level 字段 + payload
+      // (后端 build_usage_chart_meta 把字段直接放 block.data,前端 get() helper
+      // 既查顶层 snake_case 也查 payload — 顶层 fields 是 back-compat 老 wire)
+      return {
+        kind: "meta",
+        label: "usage.chart",
+        total_tokens: 35_462_012,
+        input_other: 2_383_048,
+        output: 735_540,
+        input_cache_read: 32_343_424,
+        input_cache_creation: 0,
+        cache_hit_ratio: 0.912,
+        model: "deepseek-v4-flash",
+        turn_count: 623,
+        session_scope_count: 22,
+        first_token_at: 1_000,
+        last_token_at: 60_000,
+        duration_ms: 59_000,
+        buckets: sampleBuckets,
+        session_scope_events: sampleSessionScope,
+        payload: {
+          raw_events: sampleRawEvents,
+          raw_count: 645,
+        },
+        ...overrides,
+      };
+    }
+
+    it("renders total tokens + cache ratio + 60 buckets SVG", () => {
+      const block = buildUsageChartBlock();
+      renderInRoute(<MetaBlock block={block} label="usage.chart" />);
+      // 顶部 stats pill
+      expect(screen.getByTestId("usage-chart-total")).toHaveTextContent("35,462,012 tokens");
+      expect(screen.getByTestId("usage-chart-cache-ratio")).toHaveTextContent("cache 91.2%");
+      expect(screen.getByTestId("usage-chart-turn-count")).toHaveTextContent(
+        "623 turns · 60 buckets"
+      );
+      // SVG 60 个 bar
+      const svg = screen.getByTestId("usage-chart-svg");
+      expect(svg).toBeInTheDocument();
+      expect(svg.querySelectorAll("g[data-testid^='usage-chart-bar-']")).toHaveLength(60);
+      // legend 3 种颜色
+      expect(screen.getByTestId("usage-chart-legend")).toBeInTheDocument();
+    });
+
+    it("session_scope_events default collapsed to 5 of 22", () => {
+      const block = buildUsageChartBlock();
+      renderInRoute(<MetaBlock block={block} label="usage.chart" />);
+      const section = screen.getByTestId("usage-chart-session-scope");
+      expect(section).toBeInTheDocument();
+      // 22 个 event → 只前 5 个 .meta-tag
+      const tags = section.querySelectorAll(".meta-tag");
+      expect(tags).toHaveLength(5);
+    });
+
+    it("missing total_tokens → fallback UnknownBlockCard", () => {
+      const block = buildUsageChartBlock({ total_tokens: undefined });
+      const { container } = renderInRoute(<MetaBlock block={block} label="usage.chart" />);
+      // 缺 total_tokens → 不渲染 usage-chart-meta
+      expect(container.querySelector("[data-testid='usage-chart-meta']")).toBeNull();
+      // UnknownBlockCard 兜底
+      expect(container.firstChild).not.toBeNull();
+    });
+
+    it("展开 / 收起 raw events 按钮", async () => {
+      const { default: userEvent } = await import("@testing-library/user-event");
+      const user = userEvent.setup();
+      const block = buildUsageChartBlock();
+      renderInRoute(<MetaBlock block={block} label="usage.chart" />);
+      // 默认折叠
+      expect(screen.queryByTestId("usage-chart-raw-events")).toBeNull();
+      const toggle = screen.getByTestId("usage-chart-raw-toggle");
+      expect(toggle).toHaveTextContent("展开 645 raw events");
+      await user.click(toggle);
+      // 展开后渲染
+      expect(screen.getByTestId("usage-chart-raw-events")).toBeInTheDocument();
+      expect(toggle).toHaveTextContent("收起");
+      await user.click(toggle);
+      // 收起
+      expect(screen.queryByTestId("usage-chart-raw-events")).toBeNull();
+    });
+  });
 });

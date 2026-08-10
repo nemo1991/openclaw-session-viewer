@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::claude::{NormalizedBlock, NormalizedMessage};
 
@@ -139,6 +139,9 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     let mut current: Option<StepAccumulator> = None;
     // tool.call.uuid → 在 current step 里的位置(单 step 内顺序挂 tool_result)
     let mut pending_tool_calls: HashMap<String, usize> = HashMap::new();
+    // v0.9.14: 收集 usage.record event 用于末尾 emit 1 个聚合 meta (per-turn chart)
+    // 645 events → 1 个聚合,避免详情页被 645 个 noise meta block 撑爆
+    let mut usage_records: Vec<UsageRecord> = Vec::new();
 
     for (idx, record) in records.into_iter().enumerate() {
         // v0.9.9: dcwin11 真实样本揭示 — `context.append_loop_event` 是 envelope,
@@ -293,6 +296,15 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
             "llm.tools_snapshot" => {
                 out.push(build_tools_snapshot_meta(obj, idx, extract_time(obj)));
             }
+            // v0.9.14: usage.record 不在此 emit (645 event 单条 emit 会撑爆详情页),
+            // 而是在循环末尾聚合为 1 个 usage.chart meta block (per-turn chart + 22
+            // 个 session-scope compaction-aligned subsection)。单条记录仍 capture
+            // 到 usage_records vector 供末尾 emit。
+            "usage.record" => {
+                if let Some(u) = parse_usage_record(obj) {
+                    usage_records.push(u);
+                }
+            }
             _ => {
                 // 单条 fallback — 协议层跳过 (llm.request/usage.record/etc.)
                 if let Some(n) = normalize_kimi_record(&record, idx) {
@@ -303,6 +315,14 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     }
     if let Some(acc) = current.take() {
         out.push(acc.into_message());
+    }
+    // v0.9.14: 末尾 emit 1 个 usage.chart meta block (聚合 645 events)
+    // 0 events → 不 emit (空 meta 没 user value)
+    if !usage_records.is_empty() {
+        let chart_idx = out.len();
+        if let Some(chart_msg) = build_usage_chart_meta(&usage_records, chart_idx) {
+            out.push(chart_msg);
+        }
     }
     out
 }
@@ -755,6 +775,280 @@ fn build_tools_snapshot_meta(
         parent_uuid: None,
         raw_type: "llm.tools_snapshot".to_string(),
     }
+}
+
+/// v0.9.14: usage.record 内部 struct — 4 维度 token + scope + time
+///
+/// 单条 wire event:
+/// ```json
+/// {"type":"usage.record","model":"deepseek-v4-flash","usage":{"inputOther":21841,"output":220,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1785915243417}
+/// ```
+#[derive(Debug, Clone)]
+struct UsageRecord {
+    model: String,
+    input_other: u64,
+    output: u64,
+    input_cache_read: u64,
+    input_cache_creation: u64,
+    usage_scope: String, // "turn" | "session" (后者 1:1 配对 apply_compaction)
+    time: u64,
+}
+
+/// v0.9.14: 从 raw usage.record wire event 提取关键字段
+fn parse_usage_record(obj: &serde_json::Map<String, Value>) -> Option<UsageRecord> {
+    let model = obj
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let usage = obj.get("usage").and_then(|v| v.as_object())?;
+    let input_other = usage
+        .get("inputOther")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let output = usage.get("output").and_then(|v| v.as_u64()).unwrap_or(0);
+    let input_cache_read = usage
+        .get("inputCacheRead")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let input_cache_creation = usage
+        .get("inputCacheCreation")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let usage_scope = obj
+        .get("usageScope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("turn")
+        .to_string();
+    let time = obj.get("time").and_then(|v| v.as_u64()).unwrap_or(0);
+    Some(UsageRecord {
+        model,
+        input_other,
+        output,
+        input_cache_read,
+        input_cache_creation,
+        usage_scope,
+        time,
+    })
+}
+
+/// v0.9.14: 645 (或 N) 个 usage.record event → 1 个聚合 meta block
+///
+/// 设计动机 (跟 v0.9.13 tools_snapshot 区别):
+/// - tools_snapshot: 1 session 1 event,单条 emit 没问题
+/// - usage.record: 1 session 645 events,单条 emit 会撑爆详情页
+///   解决:在 `normalize_session` 末尾聚合,emit 1 个 meta,带:
+/// - 顶层 stats: total_tokens / input_other / output / input_cache_read /
+///   input_cache_creation / cache_hit_ratio / turn_count / session_scope_count /
+///   first_token_at / last_token_at / duration_ms / model
+/// - buckets[]: 60 个时间窗口(若 events < 60 则 1:1对应), 每个含
+///   bucket_start / input_other / output / input_cache_read / turn_count
+///   (前端 inline SVG stacked bar chart 直接渲染)
+/// - session_scope_events[]: session-scope (跟 apply_compaction 1:1) 的 22 条
+///   compaction-aligned snapshot,前端 subsection 显示
+/// - payload.raw_events: 前 5 + 后 5 raw event sample (drill-down)
+///
+/// wire 原 raw_type "usage.record" 保留 — UI 后续版本可识别。
+fn build_usage_chart_meta(
+    usage_records: &[UsageRecord],
+    index: usize,
+) -> Option<NormalizedMessage> {
+    if usage_records.is_empty() {
+        return None;
+    }
+
+    // 1. 分离 turn-scope vs session-scope
+    let turn_records: Vec<&UsageRecord> = usage_records
+        .iter()
+        .filter(|r| r.usage_scope == "turn")
+        .collect();
+    let session_scope: Vec<&UsageRecord> = usage_records
+        .iter()
+        .filter(|r| r.usage_scope == "session")
+        .collect();
+
+    // 2. 顶层 stats
+    let total_input_other: u64 = turn_records.iter().map(|r| r.input_other).sum();
+    let total_output: u64 = turn_records.iter().map(|r| r.output).sum();
+    let total_cache_read: u64 = turn_records.iter().map(|r| r.input_cache_read).sum();
+    let total_cache_creation: u64 = turn_records.iter().map(|r| r.input_cache_creation).sum();
+    let total_tokens = total_input_other + total_output + total_cache_read + total_cache_creation;
+    let input_total = total_input_other + total_cache_read;
+    let cache_hit_ratio = if input_total > 0 {
+        Some(total_cache_read as f64 / input_total as f64)
+    } else {
+        None
+    };
+
+    let first_token_at = usage_records.iter().map(|r| r.time).min().unwrap_or(0);
+    let last_token_at = usage_records.iter().map(|r| r.time).max().unwrap_or(0);
+    let duration_ms = last_token_at.saturating_sub(first_token_at);
+    let model = usage_records
+        .iter()
+        .find_map(|r| {
+            if !r.model.is_empty() {
+                Some(r.model.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    // 3. 时间窗口 bucketing — N events → ≤ BUCKET_TARGET 个 bucket
+    // BUCKET_TARGET=60: 645 events → 60 buckets (~12.5min/bar), 视觉得当
+    // 少于 60 events → 1:1 对应 (最大化分辨率)
+    // 算法: bucket_count = min(N, BUCKET_TARGET). 若 N ≤ BUCKET_TARGET → 1:1
+    // 对应;若 N > BUCKET_TARGET → ceil(N/BUCKET_TARGET) events/bucket,前面
+    // (N % BUCKET_TARGET) 个 bucket 多 1 event. 200 events / 60 buckets →
+    // 4 events/bucket,但 ceil(200/60)=4, 50 个 bucket 全部分配,空 bucket
+    // 不 emit (cap 60 → 实际 50).
+    const BUCKET_TARGET: usize = 60;
+    let bucket_count = turn_records.len().clamp(1, BUCKET_TARGET);
+    let mut buckets: Vec<serde_json::Value> = Vec::with_capacity(bucket_count);
+    if !turn_records.is_empty() {
+        let time_start = turn_records.first().map(|r| r.time).unwrap_or(0);
+        let time_end = turn_records.last().map(|r| r.time).unwrap_or(0);
+        let span = time_end.saturating_sub(time_start).max(1);
+        let n = turn_records.len();
+        let base_size = n / bucket_count; // 200/60 = 3
+        let extra_count = n % bucket_count; // 200 % 60 = 20
+        let mut start = 0usize;
+        for i in 0..bucket_count {
+            let size = base_size + if i < extra_count { 1 } else { 0 };
+            let end = (start + size).min(n);
+            if start >= n || size == 0 {
+                break; // N ≤ BUCKET_TARGET 时只 emit 实际有的 bucket
+            }
+            let slice = &turn_records[start..end];
+            let b_input_other: u64 = slice.iter().map(|r| r.input_other).sum();
+            let b_output: u64 = slice.iter().map(|r| r.output).sum();
+            let b_cache_read: u64 = slice.iter().map(|r| r.input_cache_read).sum();
+            let b_cache_creation: u64 = slice.iter().map(|r| r.input_cache_creation).sum();
+            // bucket_start/bucket_end: 估算时间窗口 (linear interpolation)
+            let bucket_start = time_start + (span * start as u64) / n as u64;
+            let bucket_end = time_start + (span * end as u64) / n as u64;
+            buckets.push(json!({
+                "bucket_start": bucket_start,
+                "bucket_end": bucket_end,
+                "input_other": b_input_other,
+                "output": b_output,
+                "input_cache_read": b_cache_read,
+                "input_cache_creation": b_cache_creation,
+                "turn_count": (end - start) as u32,
+            }));
+            start = end;
+        }
+    }
+
+    // 4. session_scope_events — 22 个 compaction-aligned snapshot
+    let session_scope_events: Vec<serde_json::Value> = session_scope
+        .iter()
+        .map(|r| {
+            json!({
+                "time": r.time,
+                "input_other": r.input_other,
+                "output": r.output,
+                "input_cache_read": r.input_cache_read,
+                "input_cache_creation": r.input_cache_creation,
+            })
+        })
+        .collect();
+
+    // 5. raw payload sample — 前 5 + 后 5 raw event (drill-down)
+    let raw_events: Vec<serde_json::Value> = if usage_records.len() <= 10 {
+        usage_records.iter().map(raw_event_value).collect()
+    } else {
+        let head: Vec<serde_json::Value> = usage_records[..5].iter().map(raw_event_value).collect();
+        let tail: Vec<serde_json::Value> = usage_records[usage_records.len() - 5..]
+            .iter()
+            .map(raw_event_value)
+            .collect();
+        head.into_iter().chain(tail).collect()
+    };
+
+    // 6. 顶层 data 字段
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "label".to_string(),
+        Value::String("usage.chart".to_string()),
+    );
+    data.insert("total_tokens".to_string(), Value::from(total_tokens));
+    data.insert("input_other".to_string(), Value::from(total_input_other));
+    data.insert("output".to_string(), Value::from(total_output));
+    data.insert(
+        "input_cache_read".to_string(),
+        Value::from(total_cache_read),
+    );
+    data.insert(
+        "input_cache_creation".to_string(),
+        Value::from(total_cache_creation),
+    );
+    if let Some(r) = cache_hit_ratio {
+        if let Some(n) = serde_json::Number::from_f64(r) {
+            data.insert("cache_hit_ratio".to_string(), Value::Number(n));
+        }
+    }
+    data.insert("model".to_string(), Value::String(model));
+    data.insert(
+        "turn_count".to_string(),
+        Value::from(turn_records.len() as u64),
+    );
+    data.insert(
+        "session_scope_count".to_string(),
+        Value::from(session_scope.len() as u64),
+    );
+    data.insert("first_token_at".to_string(), Value::from(first_token_at));
+    data.insert("last_token_at".to_string(), Value::from(last_token_at));
+    data.insert("duration_ms".to_string(), Value::from(duration_ms));
+    data.insert("buckets".to_string(), Value::Array(buckets));
+    data.insert(
+        "session_scope_events".to_string(),
+        Value::Array(session_scope_events),
+    );
+    // raw payload — 用于 back-compat 任何消费完整数据的逻辑
+    data.insert(
+        "payload".to_string(),
+        json!({
+            "raw_events": raw_events,
+            "raw_count": usage_records.len(),
+        }),
+    );
+
+    let timestamp =
+        chrono::DateTime::from_timestamp_millis(first_token_at as i64).map(|dt| dt.to_rfc3339());
+
+    Some(NormalizedMessage {
+        id: format!("kimi-usage-chart-{index}"),
+        role: "meta".to_string(),
+        timestamp,
+        blocks: vec![NormalizedBlock {
+            kind: "meta".to_string(),
+            data,
+        }],
+        model: None,
+        stop_reason: None,
+        token_usage: None,
+        is_sidechain: None,
+        subagent_id: None,
+        parent_uuid: None,
+        raw_type: "usage.record".to_string(),
+    })
+}
+
+/// v0.9.14: 把 UsageRecord 渲染回 wire 原始 JSON shape (drill-down sample 用)
+fn raw_event_value(r: &UsageRecord) -> serde_json::Value {
+    json!({
+        "type": "usage.record",
+        "model": r.model,
+        "usage": {
+            "inputOther": r.input_other,
+            "output": r.output,
+            "inputCacheRead": r.input_cache_read,
+            "inputCacheCreation": r.input_cache_creation,
+        },
+        "usageScope": r.usage_scope,
+        "time": r.time,
+    })
 }
 
 #[cfg(test)]
@@ -1544,5 +1838,269 @@ mod tests {
         );
         // 时间戳来自 envelope (1000~1040) → assistant.timestamp 透传 step.begin 的 envelope.time
         assert!(assistant.timestamp.is_some());
+    }
+
+    // ---------- v0.9.14: usage.record per-turn chart ----------
+
+    #[test]
+    fn parse_usage_record_extracts_4_dimensions() {
+        // v0.9.14: parse_usage_record 应正确提取 inputOther / output /
+        // inputCacheRead / inputCacheCreation 4 维度,加 usageScope + time
+        let rec = json!({
+            "type": "usage.record",
+            "model": "deepseek-v4-flash",
+            "usage": {
+                "inputOther": 21841_u64,
+                "output": 220_u64,
+                "inputCacheRead": 0_u64,
+                "inputCacheCreation": 0_u64,
+            },
+            "usageScope": "turn",
+            "time": 1785915243417_u64,
+        });
+        let obj = rec.as_object().expect("obj");
+        let u = parse_usage_record(obj).expect("parse ok");
+        assert_eq!(u.model, "deepseek-v4-flash");
+        assert_eq!(u.input_other, 21841);
+        assert_eq!(u.output, 220);
+        assert_eq!(u.input_cache_read, 0);
+        assert_eq!(u.input_cache_creation, 0);
+        assert_eq!(u.usage_scope, "turn");
+        assert_eq!(u.time, 1785915243417);
+    }
+
+    #[test]
+    fn build_usage_chart_meta_aggregates_buckets_and_stats() {
+        // v0.9.14: 10 个 turn events + 2 session events → 1 个聚合 meta
+        // bucket: 10 events < 60 cap → 10 buckets (1:1)
+        // session_scope_events: 2 单独保留
+        let records = vec![
+            UsageRecord {
+                model: "deepseek-v4-flash".into(),
+                input_other: 100,
+                output: 50,
+                input_cache_read: 200,
+                input_cache_creation: 0,
+                usage_scope: "turn".into(),
+                time: 1_000,
+            },
+            UsageRecord {
+                model: "deepseek-v4-flash".into(),
+                input_other: 200,
+                output: 60,
+                input_cache_read: 400,
+                input_cache_creation: 0,
+                usage_scope: "turn".into(),
+                time: 2_000,
+            },
+            UsageRecord {
+                model: "deepseek-v4-flash".into(),
+                input_other: 0,
+                output: 0,
+                input_cache_read: 0,
+                input_cache_creation: 0,
+                usage_scope: "session".into(),
+                time: 1_500,
+            },
+        ];
+        let chart = build_usage_chart_meta(&records, 0).expect("chat emits");
+        assert_eq!(chart.role, "meta");
+        assert_eq!(chart.raw_type, "usage.record");
+        let block = &chart.blocks[0];
+        let data = &block.data;
+        assert_eq!(data.get("label").unwrap().as_str().unwrap(), "usage.chart");
+        // 总计: 100+200=300 input_other, 50+60=110 output, 200+400=600 cache_read
+        assert_eq!(data.get("input_other").unwrap().as_u64().unwrap(), 300);
+        assert_eq!(data.get("output").unwrap().as_u64().unwrap(), 110);
+        assert_eq!(data.get("input_cache_read").unwrap().as_u64().unwrap(), 600);
+        assert_eq!(data.get("total_tokens").unwrap().as_u64().unwrap(), 1010);
+        // cache hit ratio = 600 / (300+600) = 0.6667
+        let ratio = data.get("cache_hit_ratio").unwrap().as_f64().unwrap();
+        assert!(
+            (ratio - 0.6666).abs() < 0.001,
+            "cache ratio ~0.667, got {ratio}"
+        );
+        // turn_count=2, session_scope_count=1
+        assert_eq!(data.get("turn_count").unwrap().as_u64().unwrap(), 2);
+        assert_eq!(
+            data.get("session_scope_count").unwrap().as_u64().unwrap(),
+            1
+        );
+        // buckets: 2 个 (1:1)
+        let buckets = data.get("buckets").unwrap().as_array().unwrap();
+        assert_eq!(buckets.len(), 2);
+        assert_eq!(
+            buckets[0].get("input_other").unwrap().as_u64().unwrap(),
+            100
+        );
+        assert_eq!(
+            buckets[1].get("input_other").unwrap().as_u64().unwrap(),
+            200
+        );
+        // session_scope_events: 1 个
+        let sse = data
+            .get("session_scope_events")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(sse.len(), 1);
+        assert_eq!(sse[0].get("time").unwrap().as_u64().unwrap(), 1_500);
+        // payload.raw_events 保留所有 3 条 (≤10 → 全保留)
+        let payload = data.get("payload").unwrap().as_object().unwrap();
+        let raw = payload.get("raw_events").unwrap().as_array().unwrap();
+        assert_eq!(raw.len(), 3);
+        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 3);
+    }
+
+    #[test]
+    fn build_usage_chart_meta_empty_input_returns_none() {
+        // v0.9.14: 0 events → 不 emit 元块 (空 meta 无 user value)
+        let records: Vec<UsageRecord> = vec![];
+        let chart = build_usage_chart_meta(&records, 0);
+        assert!(chart.is_none(), "no events → no chart meta");
+    }
+
+    #[test]
+    fn build_usage_chart_meta_caps_buckets_at_60() {
+        // v0.9.14: 200 events → 60 buckets (cap = 60),
+        // 200 events/60 = 3.33 → 200 实际分 50 buckets (其余 10 个空 bucket 不 emit).
+        // 这个 test 验 ≤ 60 cap + 数据正确。
+        let mut records = Vec::new();
+        for i in 0..200 {
+            records.push(UsageRecord {
+                model: "m".into(),
+                input_other: 1,
+                output: 0,
+                input_cache_read: 0,
+                input_cache_creation: 0,
+                usage_scope: "turn".into(),
+                time: 1_000 + i as u64,
+            });
+        }
+        let chart = build_usage_chart_meta(&records, 0).expect("chart");
+        let buckets = chart.blocks[0]
+            .data
+            .get("buckets")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(buckets.len() <= 60, "bucket count must respect 60 cap");
+        // 总 turn_count 仍 200
+        assert_eq!(
+            chart.blocks[0]
+                .data
+                .get("turn_count")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200
+        );
+        // total_input_other = 200 (每个 1)
+        assert_eq!(
+            chart.blocks[0]
+                .data
+                .get("input_other")
+                .unwrap()
+                .as_u64()
+                .unwrap(),
+            200
+        );
+        // 所有 bucket 内 input_other 之和 = 200
+        let total: u64 = buckets
+            .iter()
+            .map(|b| b.get("input_other").unwrap().as_u64().unwrap())
+            .sum();
+        assert_eq!(total, 200, "all buckets contain total events");
+    }
+
+    #[test]
+    fn build_usage_chart_meta_exactly_60_events_uses_one_bucket_per_event() {
+        // v0.9.14: 60 events == BUCKET_TARGET → 1:1 对应, 60 buckets
+        let mut records = Vec::new();
+        for i in 0..60 {
+            records.push(UsageRecord {
+                model: "m".into(),
+                input_other: 1,
+                output: 0,
+                input_cache_read: 0,
+                input_cache_creation: 0,
+                usage_scope: "turn".into(),
+                time: 1_000 + i as u64,
+            });
+        }
+        let chart = build_usage_chart_meta(&records, 0).expect("chart");
+        let buckets = chart.blocks[0]
+            .data
+            .get("buckets")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(buckets.len(), 60, "60 events → 60 buckets (1:1)");
+        // 每个 bucket 1 个 event
+        for b in buckets {
+            assert_eq!(b.get("turn_count").unwrap().as_u64().unwrap(), 1);
+        }
+    }
+
+    #[test]
+    fn normalize_session_v0914_bpm_large_usage_chart_has_645_events_aggregated() {
+        // v0.9.14: bpm-large 真实样本 6040 行验证 — 645 个 usage.record 聚合
+        // 成 1 个 usage.chart meta,顶层 stats + 60 buckets + 22 session_scope
+        let path = std::path::Path::new("<redacted-fixture>-v0914.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let bytes = std::fs::read(path).expect("read fixture");
+        let mut records = Vec::new();
+        for line in bytes.split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
+        }
+        let out = normalize_session(records);
+        let chart_msgs: Vec<_> = out
+            .iter()
+            .filter(|m| m.raw_type == "usage.record" && m.role == "meta")
+            .collect();
+        assert_eq!(
+            chart_msgs.len(),
+            1,
+            "expected exactly 1 usage.chart meta block (645 events aggregated)"
+        );
+        let block = &chart_msgs[0].blocks[0];
+        let data = &block.data;
+        // 623 turn + 22 session = 645 events
+        assert_eq!(data.get("turn_count").unwrap().as_u64().unwrap(), 623);
+        assert_eq!(
+            data.get("session_scope_count").unwrap().as_u64().unwrap(),
+            22
+        );
+        // 60 buckets (cap)
+        let buckets = data.get("buckets").unwrap().as_array().unwrap();
+        assert_eq!(buckets.len(), 60, "645 events → 60 buckets");
+        // total_tokens = 35_462_012 (验证 dcwin11 真实数据)
+        assert_eq!(
+            data.get("total_tokens").unwrap().as_u64().unwrap(),
+            35_462_012,
+            "bpm-large total tokens"
+        );
+        // cache hit ratio ~0.912
+        let ratio = data.get("cache_hit_ratio").unwrap().as_f64().unwrap();
+        assert!(
+            (ratio - 0.912).abs() < 0.005,
+            "cache hit ratio ~0.912, got {ratio}"
+        );
+        // 22 session_scope_events
+        let sse = data
+            .get("session_scope_events")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(sse.len(), 22);
+        // payload.raw_count = 645
+        let payload = data.get("payload").unwrap().as_object().unwrap();
+        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 645);
     }
 }

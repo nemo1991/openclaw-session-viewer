@@ -30,6 +30,7 @@ import { useFileReveal } from "../../hooks/useFileReveal";
 import { useSettingsStore } from "../../state/settingsStore";
 import type { NormalizedBlockFE } from "../../lib/api";
 import { UnknownBlockCard } from "../UnknownBlockCard";
+import { UsageChartSvg } from "./UsageChart";
 
 export interface MetaBlockProps {
   block: NormalizedBlockFE;
@@ -374,6 +375,9 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
     // v0.9.13: llm.tools_snapshot — session 启动时 dump 的 24 tool schema + hash
     case "llm.tools_snapshot":
       return <ToolsSnapshotMetaBlock block={block} />;
+    // v0.9.14: usage.chart — 645 个 usage.record 聚合 1 个 chart meta
+    case "usage.chart":
+      return <UsageChartMetaBlock block={block} />;
     default:
       return <UnknownBlockCard block={block} />;
   }
@@ -558,6 +562,199 @@ function ToolsSnapshotMetaBlock({ block }: { block: NormalizedBlockFE }) {
       )}
     </div>
   );
+}
+
+/* v0.9.14: usage.chart 专属渲染
+ *
+ * dcwin11 bpm-large (6040 行) 645 个 usage.record 事件 (623 turn + 22 session)。
+ * v0.9.3 把 total 累加到 SessionMeta.total_tokens,但详情页看不到每 turn 趋势。
+ * v0.9.14 后端 `build_usage_chart_meta` 把 645 events 折成 1 个聚合 meta:
+ * - 顶层 stats: total_tokens / input_other / output / input_cache_read /
+ *   cache_hit_ratio / turn_count / session_scope_count / duration_ms
+ * - buckets[]: 60 个时间窗口,inline SVG stacked bar 渲染
+ *   (inputCacheRead indigo-alpha + inputOther blue + output amber)
+ * - session_scope_events[]: 22 个 compaction-aligned snapshot 单独 subsection
+ * - payload.raw_events: 前 5 + 后 5 raw sample (drill-down)
+ *
+ * 渲染策略:
+ * - 头部: total_tokens pill + cache hit ratio pill + turn_count / bucket_count
+ * - 中部: UsageChartSvg (60 stacked bar, time-linear)
+ * - 22 session_scope_events: 默认显示前 5 (跟 v0.9.13 tools_snapshot 限 12)
+ * - 折叠 / 展开 645 raw events 切片 (`payload.raw_events`) — 跟 v0.9.13
+ *   "展开剩余 tool" 同 pattern
+ *
+ * fallback: 缺 total_tokens 或 buckets → UnknownBlockCard
+ */
+function UsageChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+  const blk = block as Record<string, unknown>;
+  const pl = (block.payload ?? {}) as Record<string, unknown>;
+  const get = (...keys: string[]): unknown => {
+    for (const k of keys) {
+      if (blk[k] !== undefined && blk[k] !== null) return blk[k];
+      if (pl[k] !== undefined && pl[k] !== null) return pl[k];
+    }
+    return undefined;
+  };
+
+  const total = num(get("total_tokens", "totalTokens"));
+  const inputOther = num(get("input_other", "inputOther")) ?? 0;
+  const output = num(get("output")) ?? 0;
+  const cacheRead = num(get("input_cache_read", "inputCacheRead")) ?? 0;
+  const cacheCreation = num(get("input_cache_creation", "inputCacheCreation")) ?? 0;
+  const cacheHitRatio = num(get("cache_hit_ratio", "cacheHitRatio"));
+  const turnCount = num(get("turn_count", "turnCount")) ?? 0;
+  const sessionScopeCount = num(get("session_scope_count", "sessionScopeCount")) ?? 0;
+  const durationMs = num(get("duration_ms", "durationMs")) ?? 0;
+  const model = String(get("model") ?? "");
+  const buckets = (get("buckets") as Array<Record<string, unknown>>) ?? [];
+  const sessionScopeEvents =
+    (get("session_scope_events", "sessionScopeEvents") as Array<Record<string, unknown>>) ?? [];
+  const rawEvents = (pl.raw_events as Array<Record<string, unknown>>) ?? [];
+  const rawCount = (pl.raw_count as number) ?? rawEvents.length;
+
+  // 缺关键字段 → fallback (老 wire / 老 DB 缓存)
+  if (total === null || buckets.length === 0) {
+    return <UnknownBlockCard block={block} />;
+  }
+
+  const [showRawEvents, setShowRawEvents] = useState(false);
+
+  return (
+    <div
+      className="block-meta-info meta-block-flat usage-chart-meta"
+      data-testid="usage-chart-meta"
+    >
+      <span className="meta-kind-badge">📊 usage chart</span>
+      <span className="meta-primary-text" data-testid="usage-chart-total">
+        {total.toLocaleString()} tokens
+      </span>
+      <span
+        className="meta-sub"
+        title={`cache hit ratio (cacheRead / input): ${cacheHitRatio !== null ? (cacheHitRatio * 100).toFixed(1) + "%" : "n/a"}`}
+        data-testid="usage-chart-cache-ratio"
+      >
+        cache {cacheHitRatio !== null ? (cacheHitRatio * 100).toFixed(1) + "%" : "n/a"}
+      </span>
+      <span
+        className="meta-sub"
+        title={`turn_count: ${turnCount} 个 turn-scope events, session_scope_count: ${sessionScopeCount} session-scope events`}
+        data-testid="usage-chart-turn-count"
+      >
+        {turnCount} turns · {buckets.length} buckets
+      </span>
+      {model && (
+        <span className="meta-sub" title={`模型: ${model}`}>
+          {model}
+        </span>
+      )}
+      {durationMs > 0 && (
+        <span className="meta-sub" title="session 实际跨度">
+          {formatDurationMs(durationMs)}
+        </span>
+      )}
+      <UsageChartSvg buckets={buckets} />
+      <div className="usage-chart-legend" data-testid="usage-chart-legend">
+        <span className="usage-chart-legend-item">
+          <span
+            className="usage-chart-legend-dot"
+            style={{ background: "rgba(245, 158, 11, 0.9)" }}
+          />
+          output ({output.toLocaleString()})
+        </span>
+        <span className="usage-chart-legend-item">
+          <span
+            className="usage-chart-legend-dot"
+            style={{ background: "rgba(59, 130, 246, 0.9)" }}
+          />
+          input ({inputOther.toLocaleString()})
+        </span>
+        <span className="usage-chart-legend-item">
+          <span
+            className="usage-chart-legend-dot"
+            style={{ background: "rgba(99, 102, 241, 0.4)" }}
+          />
+          cache read ({cacheRead.toLocaleString()})
+        </span>
+        {cacheCreation > 0 && (
+          <span className="usage-chart-legend-item">
+            <span
+              className="usage-chart-legend-dot"
+              style={{ background: "rgba(16, 185, 129, 0.9)" }}
+            />
+            cache write ({cacheCreation.toLocaleString()})
+          </span>
+        )}
+      </div>
+      {sessionScopeEvents.length > 0 && (
+        <div className="meta-section" data-testid="usage-chart-session-scope">
+          <strong className="meta-section-title">
+            {sessionScopeEvents.length} 个 compaction 时刻 session 累计:
+          </strong>
+          <div className="meta-list meta-list-scrollable">
+            {sessionScopeEvents.slice(0, 5).map((e, i) => (
+              <span
+                key={i}
+                className="meta-tag"
+                title={`time=${e.time}, inputOther=${e.input_other}, output=${e.output}, cacheRead=${e.input_cache_read}`}
+              >
+                {formatTokenShort(num(e.input_other) ?? 0)} in +{" "}
+                {formatTokenShort(num(e.output) ?? 0)} out
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {rawEvents.length > 0 && (
+        <button
+          type="button"
+          className="meta-show-more"
+          data-testid="usage-chart-raw-toggle"
+          onClick={() => setShowRawEvents((v) => !v)}
+          title={showRawEvents ? "收起 raw events" : `展开 ${rawCount} raw events`}
+        >
+          {showRawEvents ? "收起" : `展开 ${rawCount} raw events`}
+        </button>
+      )}
+      {showRawEvents && (
+        <div className="usage-chart-raw-events" data-testid="usage-chart-raw-events">
+          {rawEvents.map((e, i) => (
+            <div key={i} className="usage-chart-raw-row">
+              <span className="meta-tag">{String(e.usageScope ?? "turn")}</span>
+              <span className="meta-sub">
+                {formatTokenShort(
+                  ((e.usage as Record<string, unknown>)?.inputOther as number) ?? 0
+                )}{" "}
+                in
+              </span>
+              <span className="meta-sub">
+                {formatTokenShort(((e.usage as Record<string, unknown>)?.output as number) ?? 0)}{" "}
+                out
+              </span>
+              <span className="meta-sub">
+                cache{" "}
+                {formatTokenShort(
+                  ((e.usage as Record<string, unknown>)?.inputCacheRead as number) ?? 0
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms >= 3_600_000_000) return `${(ms / 3_600_000_000).toFixed(1)}M ms`;
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)} min`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)} s`;
+  return `${ms} ms`;
+}
+
+function formatTokenShort(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
 }
 
 /* v0.8.4: file_snapshot 折叠 (item 3)

@@ -2,6 +2,123 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.14] - 2026-08-10
+
+v0.9.13 把 `llm.tools_snapshot` 提到 meta block 顶层。v0.9.14 扫同一批 dcwin11
+真实样本发现 645 条 `usage.record` 仍 protocol-layer skip — 详情页只能看到
+`total_tokens` 累加总数,看不到每 turn 单独成本。
+
+### 关键发现 (bpm-large session_8579e28a)
+
+- 645 条 `usage.record`,两种 `usageScope`:
+  - `turn` 623 (96.6%) — 每 turn dump 一次
+  - `session` 22 (3.4%) — 1:1 配对 22 个 `apply_compaction`,compaction
+    触发后 dump 一次 session 累计
+- 35M token 总数中 cacheRead 92%,inputOther 7%,output 2% — cache hit ratio
+  极高 (跟 v0.9.13 `tools_snapshot` hash 复用率 100% 对应)
+- `cacheRead` 单调 0 → 79744,prompt 越长 cache 越快
+
+### 关键决策 — 645 events 聚合为 1 个 chart meta,非 645 messages
+
+`llm.tools_snapshot` 是 1 event → 1 message (1 session 1 event)。但 `usage.record`
+645 条单条 emit 会把详情页撑成 99% chart 噪音,违反 v0.9.8 transcript collapse
+初衷。
+
+**方案 B (builder 聚合)** : `normalize_session` 末尾扫一遍 `usage.record` 流,
+合成为 1 个聚合 meta + 60-bucket chart data 输出。`session` scope 不混进
+turn chart (它代表 session-累计,跟 per-turn 趋势不同语义),而是同 meta block
+另开 subsection 显示 "compaction 时刻的 session 累计 token"。
+
+**`normalize_kimi_record` (单条 fallback) 仍返回 `None`** — 单条无法构成 chart,
+会变成 stale UI。`protocol_layer_events_return_none` 测试保持 fit。
+
+### Added
+
+- **A. Rust `build_usage_chart_meta` builder** (`parser/kimi.rs`) — 645
+  events → 1 个聚合 meta,默认 60 buckets 按时间窗口均分,带 `total_tokens` /
+  `input_other` / `output` / `input_cache_read` / `input_cache_creation` /
+  `cache_hit_ratio` / `turn_count` / `session_scope_count` / `duration_ms` /
+  `model` 顶层统计 + `session_scope_events` 单独 subsection + payload
+  保留 `raw_events` (前 5 + 后 5) + `raw_count` 钻取
+- **B. `parse_usage_record` 辅助函数** — 从 raw `usage.record` wire event 提取
+  4 维度 token + `model` / `usageScope` / `time`
+- **C. `UsageRecord` struct** (内部) — Rust-side 中间表示,4 维度 u64 字段
+- **D. `UsageChartMetaBlock` 组件** (React, `MetaBlock.tsx`) — 头部 stats
+  pill (`total_tokens` + `cache_hit_ratio` + `turn_count · bucket_count` +
+  `model` + `duration`) + 60 stacked bar `UsageChartSvg` + legend 4 颜色
+  (output amber / input blue / cache read indigo alpha / cache write green) +
+  22 session_scope_events 显示前 5 + 645 raw events 折叠展开按钮
+- **E. `UsageChartSvg` 子组件** (独立 `meta/UsageChart.tsx`) — 60 bar inline
+  SVG `viewBox 600×80`, `useMemo` 缓存 max-total, stack 顺序:
+  `cacheRead` 底 + `inputOther` 中 + `output` 顶 + `cacheCreation` 嵌
+- **F. `isKnownMetaLabel` 路由** — `MessageBubble.tsx` 把 `"usage.chart"`
+  加入已知 meta label,直接走 `MetaBlock` 不走 `UnknownBlockCard` 折叠 UI
+- **G. 字段命名兼容** — `UsageChartMetaBlock` 的 `get()` helper 双查
+  `total_tokens` / `totalTokens` (top-level + payload + camelCase fallback,
+  跟 v0.9.13 同 pattern)
+- **H. 专属样式** — `MessageBubble.css` 加 `.usage-chart-meta` (amber left
+  accent border,跟 compaction teal / tools_snapshot indigo 三方区分) +
+  `.usage-chart-svg` (responsive width) + `.usage-chart-legend` (color
+  dot + label) + `.usage-chart-raw-events` (mono font scrollable table)
+
+### Stats (bpm-large 实测)
+
+645 events → 1 个聚合 meta,60 buckets,raw 完整版在 `payload.raw_events` (前 5 + 后 5):
+
+- `total_tokens`: 35,462,012
+- `input_other`: 2,383,048 (6.7%)
+- `output`: 735,540 (2.1%)
+- `input_cache_read`: 32,343,424 (91.2%)
+- `cache_hit_ratio`: 0.912
+- `turn_count`: 623 (turn-scope)
+- `session_scope_count`: 22 (session-scope,1:1 配对 apply_compaction)
+- `duration_ms`: 177,025,000 (~49h wallclock)
+- `buckets[]`: 60 个 (base 10 events/bucket,前 45 个 bucket 多 1 event)
+- `session_scope_events[]`: 22 个 compaction-aligned snapshot
+- `payload.raw_count`: 645
+- `payload.raw_events`: 10 条 (前 5 + 后 5 sample)
+
+### Tests
+
+- `parse_usage_record_extracts_4_dimensions` (Rust) — 验 4 维度提取 +
+  `usageScope` / `time` 正确
+- `build_usage_chart_meta_aggregates_buckets_and_stats` (Rust) — 3 events
+  (2 turn + 1 session) → 1 chart, 顶层 stats / 2 buckets / 1 session_scope /
+  cache ratio 0.667
+- `build_usage_chart_meta_empty_input_returns_none` (Rust) — 0 events → `None`
+  (空 meta 不 emit)
+- `build_usage_chart_meta_caps_buckets_at_60` (Rust) — 200 events → ≤ 60
+  buckets,总和 = 200 events
+- `build_usage_chart_meta_exactly_60_events_uses_one_bucket_per_event` (Rust)
+  — 60 events == cap → 1:1 对应,每 bucket 1 event
+- `normalize_session_v0914_bpm_large_usage_chart_has_645_events_aggregated`
+  (Rust) — 跑 6040 行 bpm-large-v0914 fixture,断言 645 events 聚合 1 meta
+  / 60 buckets / 22 session_scope / 35,462,012 total / 0.912 cache ratio
+- 4 个新前端测试 (`MetaBlock.test.tsx`) — 60 buckets SVG 渲染 /
+  session_scope 默认折叠 5 / 缺 total_tokens 走 UnknownBlockCard /
+  645 raw events 按钮 toggle
+
+### Numbers
+
+- Rust: 313 → 318 tests (+5,包括 1 个 v0.9.13 fixture 验 60 events cap)
+- Frontend: 621 → 625 tests (+4)
+- Files: 7 (新增 `packages/frontend/src/components/meta/UsageChart.tsx` +
+  `<redacted-fixture>-v0914.jsonl`; 改 5 个)
+- fixture: 1 新增 (`wire-bpm-large-v0914.jsonl`, 6040 lines,跟 v0.9.13
+  同一 wire,验证聚合)
+- 5 files modified: `src-tauri/src/parser/kimi.rs`,
+  `packages/frontend/src/components/meta/MetaBlock.tsx`,
+  `packages/frontend/src/components/meta/MetaBlock.test.tsx`,
+  `packages/frontend/src/components/MessageBubble.tsx`,
+  `packages/frontend/src/components/MessageBubble.css`
+
+### Notes
+
+- DB schema 不变 (meta block 不入 DB, 走 attach to session)
+- `normalize_kimi_record` (single fallback) 仍返回 `None` — 单条无法构成 chart
+- `protocol_layer_events_return_none` 测试 (v0.9.10) 仍 fit,不动
+- 1 个 commit: `feat(kimi): surface usage.record per-turn token chart (v0.9.14)`
+
 ## [0.9.13] - 2026-08-10
 
 v0.9.12 完成了 bpm-large 22 个 `context.apply_compaction` 的 summary 抽取。

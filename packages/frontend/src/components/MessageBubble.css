@@ -1279,3 +1279,61 @@
   background: rgba(99, 102, 241, 0.1);
   color: rgb(67, 56, 202);
 }
+
+/* === v0.9.14: usage.chart 专属样式 ===
+ * 跟 compaction (teal) / tools_snapshot (indigo) 区分 — usage chart 用 amber
+ * accent (跟 output token 同色,语义上 "cost" 关联)。SVG 60 bar stacked
+ * 横向铺 (inputCacheRead 底层 alpha + inputOther 中层 + output 顶层 amber)。
+ */
+.usage-chart-meta {
+  border-left: 3px solid rgba(245, 158, 11, 0.6); /* amber — 区别于 teal compaction / indigo tools_snapshot */
+  background: rgba(245, 158, 11, 0.04);
+}
+.usage-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  height: 80px;
+  margin: 6px 0;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+}
+.usage-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 6px 0;
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+}
+.usage-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.usage-chart-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.usage-chart-raw-events {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-family: var(--font-mono, "SF Mono", "Monaco", monospace);
+  font-size: 10px;
+}
+.usage-chart-raw-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+}
+.usage-chart-raw-row:last-child {
+  border-bottom: none;
+}
