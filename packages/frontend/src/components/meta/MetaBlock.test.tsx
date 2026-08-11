@@ -947,4 +947,141 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(screen.queryByTestId("request-chart-raw-events")).toBeNull();
     });
   });
+
+  describe("todos.chart (v0.9.16)", () => {
+    // v0.9.16: 57 个 tools.update_store event 聚合 → 1 个 todos.chart meta
+    // + 60 buckets SVG + completed_tasks / churn_events 列表
+    const sampleBuckets = Array.from({ length: 60 }, (_, i) => ({
+      bucket_start: 1_000 + i * 1000,
+      bucket_end: 1_000 + (i + 1) * 1000,
+      item_count: 5,
+      done_count: 2 + (i % 3),
+      in_progress_count: 1,
+      pending_count: 2 - (i % 3),
+    }));
+
+    const sampleCompletedTasks = Array.from({ length: 28 }, (_, i) => ({
+      title: `task_${i + 1}_${"x".repeat(30)}`,
+      done_time: 1_000 + i * 6000,
+      update_index: i * 5,
+    }));
+
+    const sampleChurnEvents = Array.from({ length: 47 }, (_, i) => ({
+      time: 2_000 + i * 3000,
+      title: `churn_task_${i + 1}`,
+      action: i % 3 === 0 ? "remove" : "add",
+      update_index: i * 2,
+      initial_status: i % 3 === 0 ? undefined : "pending",
+    }));
+
+    const sampleRawEvents = Array.from({ length: 10 }, (_, i) => ({
+      type: "tools.update_store",
+      key: "todo",
+      value: Array.from({ length: 5 - (i % 3) }, (_, j) => ({
+        title: `item_${i}_${j}`,
+        status: j === 0 ? "done" : j === 1 ? "in_progress" : "pending",
+      })),
+      time: 1_000 + i * 1000,
+    }));
+
+    function buildTodoChartBlock(overrides: Record<string, unknown> = {}) {
+      return {
+        kind: "meta",
+        label: "todos.chart",
+        update_count: 57,
+        unique_task_count: 91,
+        current_done: 23,
+        current_in_progress: 1,
+        current_pending: 4,
+        total_done: 166,
+        total_in_progress: 40,
+        total_pending: 92,
+        churn_count: 47,
+        churn_add_count: 30,
+        churn_remove_count: 17,
+        first_update_at: 1_000,
+        last_update_at: 178_000_000,
+        duration_ms: 177_000_000,
+        buckets: sampleBuckets,
+        completed_tasks: sampleCompletedTasks,
+        churn_events: sampleChurnEvents,
+        payload: {
+          raw_events: sampleRawEvents,
+          raw_count: 57,
+        },
+        ...overrides,
+      };
+    }
+
+    it("renders update count + unique tasks + current status breakdown + 60 buckets SVG", () => {
+      const block = buildTodoChartBlock();
+      renderInRoute(<MetaBlock block={block} label="todos.chart" />);
+      // 顶部 stats
+      expect(screen.getByTestId("todos-chart-count")).toHaveTextContent(
+        "57 updates · 91 unique tasks"
+      );
+      expect(screen.getByTestId("todos-chart-current")).toHaveTextContent(
+        "now 23 done · 1 in_progress · 4 pending"
+      );
+      expect(screen.getByTestId("todos-chart-churn")).toHaveTextContent("47 churn (30 + / 17 -)");
+      // SVG — 60 buckets,每 bucket 3 层 stacked
+      const svg = screen.getByTestId("todos-chart-svg");
+      expect(svg).toBeInTheDocument();
+      const rects = svg.querySelectorAll("rect");
+      // 60 buckets × 3 层 = 180 rect
+      expect(rects).toHaveLength(60 * 3);
+      // legend
+      expect(screen.getByTestId("todos-chart-legend")).toBeInTheDocument();
+    });
+
+    it("completed_tasks default collapsed to 8 of 28", () => {
+      const block = buildTodoChartBlock();
+      renderInRoute(<MetaBlock block={block} label="todos.chart" />);
+      const section = screen.getByTestId("todos-chart-completed");
+      expect(section).toBeInTheDocument();
+      const tags = section.querySelectorAll(".meta-tag");
+      expect(tags).toHaveLength(8);
+      // 展开按钮存在
+      expect(screen.getByTestId("todos-chart-completed-toggle")).toHaveTextContent(
+        "展开剩余 20 个"
+      );
+    });
+
+    it("churn_events renders add/remove with color coding", () => {
+      const block = buildTodoChartBlock();
+      renderInRoute(<MetaBlock block={block} label="todos.chart" />);
+      const section = screen.getByTestId("todos-chart-churn-events");
+      expect(section).toBeInTheDocument();
+      // 47 events → 默认显示前 10
+      const tags = section.querySelectorAll(".meta-tag");
+      expect(tags).toHaveLength(10);
+      // add 和 remove 都有 (看 class)
+      const addTags = section.querySelectorAll(".meta-tag-add");
+      const removeTags = section.querySelectorAll(".meta-tag-remove");
+      expect(addTags.length).toBeGreaterThan(0);
+      expect(removeTags.length).toBeGreaterThan(0);
+    });
+
+    it("missing update_count → fallback UnknownBlockCard", () => {
+      const block = buildTodoChartBlock({ update_count: undefined });
+      const { container } = renderInRoute(<MetaBlock block={block} label="todos.chart" />);
+      expect(container.querySelector("[data-testid='todos-chart-meta']")).toBeNull();
+      expect(container.firstChild).not.toBeNull();
+    });
+
+    it("展开 / 收起 raw events 按钮", async () => {
+      const { default: userEvent } = await import("@testing-library/user-event");
+      const user = userEvent.setup();
+      const block = buildTodoChartBlock();
+      renderInRoute(<MetaBlock block={block} label="todos.chart" />);
+      expect(screen.queryByTestId("todos-chart-raw-events")).toBeNull();
+      const toggle = screen.getByTestId("todos-chart-raw-toggle");
+      expect(toggle).toHaveTextContent("展开 57 raw events");
+      await user.click(toggle);
+      expect(screen.getByTestId("todos-chart-raw-events")).toBeInTheDocument();
+      expect(toggle).toHaveTextContent("收起");
+      await user.click(toggle);
+      expect(screen.queryByTestId("todos-chart-raw-events")).toBeNull();
+    });
+  });
 });

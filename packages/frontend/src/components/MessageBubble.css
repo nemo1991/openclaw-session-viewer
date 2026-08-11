@@ -1396,3 +1396,63 @@
 .request-chart-raw-row:last-child {
   border-bottom: none;
 }
+
+/* === v0.9.16: todos.chart 专属样式 ===
+ *
+ * 跟 compaction (teal) / tools_snapshot (indigo) / usage.chart (amber) /
+ * request.chart (violet) 区分 — todos.chart 用 emerald green 主色, 语义
+ * "completion" (LLM 完成的 task)。SVG 60 bar stacked 横向铺 (pending 底灰
+ * + in_progress 中蓝 + done 顶绿)。
+ */
+.todos-chart-meta {
+  border-left: 3px solid rgba(16, 185, 129, 0.6); /* emerald — 区别 teal compaction / indigo tools / amber cost / violet request */
+  background: rgba(16, 185, 129, 0.04);
+}
+.todos-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  height: 80px;
+  margin: 6px 0;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+}
+.todos-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 6px 0;
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+}
+.todos-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.todos-chart-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.todos-chart-raw-events {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-family: var(--font-mono, "SF Mono", "Monaco", monospace);
+  font-size: 10px;
+}
+.todos-chart-raw-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+}
+.todos-chart-raw-row:last-child {
+  border-bottom: none;
+}

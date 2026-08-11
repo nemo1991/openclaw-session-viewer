@@ -2,6 +2,125 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.16] - 2026-08-11
+
+v0.9.15 把 648 条 `llm.request` 折成 `request.chart` (context headroom + config drift)。
+本版扫描 bpm-large 真实样本发现 **57 条 `tools.update_store` 仍是 v0.9.8 raw meta
+emit 路径** — 详情页底部被 57 个 todo meta block 撑爆 (用户必须展开 57 次才能
+看到 LLM 在执行什么)。`tools.update_store` 的 `key` 字段 100% 是 `"todo"`,
+承载 LLM 每 50 步更新一次的 plan snapshot。
+
+### 关键发现 (bpm-large)
+
+- 57 条 `tools.update_store`,全部 `key="todo"`
+- 列表 size 4-8 (avg 5.2)
+- 跨 57 条 event 出现 **91 个独立 title** — 大幅 churn (LLM 经常 complete / 重
+  写 / 删 todo task)
+- Status 累计: **166 done + 40 in_progress + 92 pending** 跨全 session
+- 中间抽样 event #25 / #30 / #35 / #40 / #45: 5/5 都是**完全不同的任务集**
+  (LLM 完成 phase 1 后, phase 2 整个重写 todo 列表)
+
+### 关键决策 — 57 events 聚合为 1 个 chart meta (非 57 messages)
+
+跟 v0.9.14 / v0.9.15 同模式: 单条 emit 撑爆详情页 → 末尾聚合为 1 个 meta。
+
+**重要区别** (相对 v0.9.14 / v0.9.15): 连续值信号 (token cost / maxTokens)
+vs **状态机信号** (todo lifecycle + churn). Builder 跟踪:
+
+- **task churn** (add / remove 事件) — 47 churn events (30 add / 17 remove)
+- **task status transitions** (pending → in_progress → done)
+- **末次 snapshot 状态** (current_done / in_progress / pending)
+
+### 关键决策 — streaming 路径 `tools.update_store` 改返回 `None`
+
+v0.9.8 batch path 把 57 个 event 单独 emit 成 57 个 raw meta block, 详情页
+被撑爆 (95% 都是 todo noise)。v0.9.16 同样问题在 streaming 路径也发生
+(单条 event 不构成 chart),所以 streaming fallback 路径 (`normalize_kimi_record`)
+也改返回 `None`。
+
+### Added
+
+- A. Rust `build_todo_chart_meta` builder (`parser/kimi.rs`) — 57 events
+  折 1 个聚合 `todos.chart` meta, 60 buckets + 91 unique tasks + 47 churn
+  events + 28 completed tasks
+- B. Rust `TodoRecord` + `TodoItem` struct + `parse_todo_record` 提取字段
+  (12 字段: items / item_count / done_count / in_progress_count /
+  pending_count / time)
+- C. `normalize_session` 末尾在 `request.chart` 之后 emit 1 个 `todos.chart`
+  meta (UI 顺序: ... → compaction meta → tools snapshot → usage.chart →
+  request.chart → todos.chart)
+- D. `normalize_kimi_record` (单条 fallback) 改 `tools.update_store` 返回
+  `None` (单条 event 不构成 chart)
+- E. `normalize_session` 内联 batch path 剥离 `tools.update_store`, 改独立
+  arm 推入 `todo_records`
+- F. `TodoChartSvg` 子组件 (独立 file) — 60 bar stacked (`pending` 灰底 +
+  `in_progress` 蓝中 + `done` 绿顶), viewBox 600×80, 跟 v0.9.14 usage.chart
+  / v0.9.15 request.chart 同 visual weight
+- G. `TodoChartMetaBlock` 组件 (React) — header stats pill + inline SVG
+  stacked bar + `completed_tasks` subsection (默认 8 个 + 展开剩余) +
+  `churn_events` subsection (add/remove 配色, 跟 task_reminder 的 add/remove
+  tag 复用, `.meta-tag-add` / `.meta-tag-remove`) + raw events toggle
+- H. 字段命名兼容 — `get()` helper 双查 snake_case + camelCase (跟 v0.9.14 /
+  v0.9.15 一致)
+- I. `isKnownMetaLabel` / `isMetaKind` 路由 — `todos.chart` 走 MetaBlock 不
+  走 UnknownBlockCard
+- J. CSS 样式 — `.todos-chart-meta` (emerald green accent border) +
+  `.todos-chart-svg` + `.todos-chart-legend` + `.todos-chart-raw-events` +
+  `.todos-chart-raw-row`
+
+### 配色 (跟 v0.9.12 / v0.9.13 / v0.9.14 / v0.9.15 区分)
+
+- compaction: teal `rgba(0, 181, 173, 0.6)`
+- tools_snapshot: indigo `rgba(99, 102, 241, 0.6)`
+- usage.chart: amber `rgba(245, 158, 11, 0.6)` (cost)
+- **request.chart: violet `rgba(139, 92, 246, 0.6)` (drift)**
+- **todos.chart: emerald `rgba(16, 185, 129, 0.6)` (completion)** — 新
+
+5 种 kimi meta block 详情页尾部共存, 每种 1 个 accent border 颜色视觉一眼
+区分。
+
+### Stats (bpm-large 实测)
+
+- 57 events → 1 个聚合 meta, 60 buckets
+- 91 unique tasks (跨全 session, LLM 频繁重写 todo)
+- 47 churn events (30 add / 17 remove)
+- 28 completed tasks (按 done 时间排序)
+- 23 done / 1 in_progress / 4 pending (末次 snapshot)
+- 166 done / 40 in_progress / 92 pending (跨全 session 累计)
+- 49h session 跨度, 1 todo update per ~52 min
+
+### Tests
+
+- `parse_todo_record_extracts_items_and_status_counts` (Rust) — 1 event 4 items → 4/2/1/1
+- `parse_todo_record_skips_non_todo_keys` (Rust) — `key="memory"` → None
+- `build_todo_chart_meta_empty_input_returns_none` (Rust) — 0 events → None
+- `build_todo_chart_meta_aggregates_buckets_and_churn` (Rust) — 5 synthetic events → 5 buckets + 5 unique + 6 churn (5 add + 1 remove)
+- `normalize_session_v0916_bpm_large_todo_chart_has_57_events_aggregated` (Rust) — fixture-driven, 57 events → 1 meta + 91 unique + 47 churn + 28 completed
+- 5 个新前端测试 — count + current 渲染 / 60 buckets SVG (180 rect) / completed 默认 8 collapse / churn add/remove 配色 / fallback UnknownBlockCard / 展开 raw events
+
+### Numbers
+
+- Rust: 325 → 330 tests (+5)
+- Frontend: 629 → 634 tests (+5)
+- Files: 6 (src-tauri/src/parser/kimi.rs, packages/frontend/src/components/meta/MetaBlock.tsx,
+  packages/frontend/src/components/meta/TodoChart.tsx, packages/frontend/src/components/MessageBubble.tsx,
+  packages/frontend/src/components/MessageBubble.css, <redacted-fixture>-v0916.jsonl)
+
+### Notes
+
+- DB schema 不变 (meta block 不入 DB, 走 attach to assistant message)
+- `normalize_kimi_record` (single fallback) 改 `tools.update_store` 返回 `None`
+- `protocol_layer_events_return_none` 测试无需调整 (test list 仅含 `llm.request` / `usage.record`)
+- `normalize_session_v099_bpm_large_unwraps_loop_envelopes` 调整 meta count 断言 (v0.9.16 移除 57 raw meta blocks → 加 1 todos.chart 聚合)
+
+### Deferred (v0.9.17+)
+
+- 跨 session token 趋势 (`tool_global_stats` 已有 tool 跨 session 聚合, token 跨 session 还没做)
+- `inputCacheCreation` 触发检测 (bpm-large 全 0, 其它 session 可能有)
+- 会话级 model/provider 切换检测 (v0.9.15 揭示 toolsHash 稳定, 但 model / provider 跨 session 场景可能切换)
+- token 成本估算 (model→price mapping 缺失)
+- todo churn 跨 session 趋势 (v0.9.16 揭示单 session 91 unique tasks, 跨 session 聚合可能揭示 user task pattern)
+
 ## [0.9.15] - 2026-08-10
 
 v0.9.14 把 645 条 `usage.record` 折成 `usage.chart` (token cost 时间线)。

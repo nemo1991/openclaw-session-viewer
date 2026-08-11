@@ -213,7 +213,9 @@ function isKnownMetaLabel(label: string): boolean {
     // v0.9.14: kimi usage.chart — 645 个 usage.record 聚合 1 个 per-turn chart meta
     label === "usage.chart" ||
     // v0.9.15: kimi request.chart — 648 个 llm.request 聚合 1 个 context headroom + drift chart
-    label === "request.chart"
+    label === "request.chart" ||
+    // v0.9.16: kimi todos.chart — 57 个 tools.update_store 聚合 1 个 plan execution narrative
+    label === "todos.chart"
   );
 }
 
@@ -236,6 +238,8 @@ function isMetaKind(kind: string): boolean {
     kind === "queued_command" ||
     kind === "queue_operation" ||
     // v0.9.13: kimi llm.tools_snapshot
-    kind === "llm.tools_snapshot"
+    kind === "llm.tools_snapshot" ||
+    // v0.9.16: kimi todos.chart
+    kind === "todos.chart"
   );
 }

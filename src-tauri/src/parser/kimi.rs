@@ -106,7 +106,7 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         // v0.9.10: 用户可观察事件 — emit 为 meta block 让详情页可见
         // (turn.steer 用户 mid-turn 改方向, turn.cancel 用户取消, plan_mode
         //  进入/退出 plan 模式)。permission.record_approval_result /
-        // tools.update_store / full_compaction.* / context.apply_compaction 已在
+        // full_compaction.* / context.apply_compaction 已在
         // v0.9.8 batch path 显式 emit,streaming path 也加进来保持一致。
         //
         // v0.9.11: `plan_mode.exit` 是 kimi dcwin11 platform fixture 用的别名 —
@@ -114,8 +114,10 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         // platform 用 `plan_mode.exit`,两者语义完全相同: 都是用户批准 plan 后
         // 退出 plan mode)。统一进 plan_mode arm,保留 wire 原 raw_type
         // (build_meta_from_event 用 r#type 作 raw_type,不变)。
+        //
+        // v0.9.16: tools.update_store 从这 arm 移除 — 单条 record 不构成 chart
+        // (见同 key 处独立 arm 返回 None),aggregation 由 normalize_session 完成。
         "permission.record_approval_result"
-        | "tools.update_store"
         | "turn.steer"
         | "turn.cancel"
         | "full_compaction.begin"
@@ -123,6 +125,9 @@ pub fn normalize_kimi_record(record: &Value, index: usize) -> Option<NormalizedM
         | "plan_mode.enter"
         | "plan_mode.cancel"
         | "plan_mode.exit" => Some(build_meta_from_event(obj, r#type, index, timestamp)),
+        // v0.9.16: tools.update_store 单条 event 不构成 chart → streaming 路径 skip
+        // (aggregation happens in normalize_session batch path)
+        "tools.update_store" => None,
         // v0.9.12: context.apply_compaction 单独走 build_apply_compaction_meta —
         // 把 summary + 压缩统计提到 block 顶层,前端 CompactionMetaBlock 直接读
         "context.apply_compaction" => Some(build_apply_compaction_meta(obj, index, timestamp)),
@@ -151,6 +156,10 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     // (context headroom + config drift detection)。648 events → 1 个聚合,
     // 跟 usage.chart 同模式 (单条 emit 会撑爆详情页)。
     let mut request_records: Vec<RequestRecord> = Vec::new();
+    // v0.9.16: 收集 tools.update_store event 用于末尾 emit 1 个聚合 todos.chart meta
+    // (LLM plan execution narrative: 状态机信号 + churn)。57 events → 1 个聚合,
+    // 跟 usage.chart / request.chart 同模式 (单条 emit 会撑爆详情页)。
+    let mut todo_records: Vec<TodoRecord> = Vec::new();
 
     for (idx, record) in records.into_iter().enumerate() {
         // v0.9.9: dcwin11 真实样本揭示 — `context.append_loop_event` 是 envelope,
@@ -286,7 +295,6 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
             | "config.update"
             | "permission.set_mode"
             | "tools.set_active_tools"
-            | "tools.update_store"
             | "permission.record_approval_result"
             | "full_compaction.begin"
             | "full_compaction.complete"
@@ -323,6 +331,15 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
                     request_records.push(r);
                 }
             }
+            // v0.9.16: tools.update_store 不在此 emit (57 events 单条 emit 会撑爆
+            // 详情页),而是在循环末尾聚合为 1 个 todos.chart meta block (LLM plan
+            // execution narrative: 状态机 + churn detection)。单条记录 capture 到
+            // todo_records vector 供末尾 emit。
+            "tools.update_store" => {
+                if let Some(t) = parse_todo_record(obj) {
+                    todo_records.push(t);
+                }
+            }
             _ => {
                 // 单条 fallback — 协议层跳过 (llm.request/usage.record/etc.)
                 if let Some(n) = normalize_kimi_record(&record, idx) {
@@ -348,6 +365,15 @@ pub fn normalize_session(records: impl IntoIterator<Item = Value>) -> Vec<Normal
     if !request_records.is_empty() {
         let chart_idx = out.len();
         if let Some(chart_msg) = build_request_chart_meta(&request_records, chart_idx) {
+            out.push(chart_msg);
+        }
+    }
+    // v0.9.16: 末尾 emit 1 个 todos.chart meta block (聚合 57 events)
+    // 0 events → 不 emit。放在 request.chart 之后,UI 顺序: user → assistant → ...
+    // → compaction meta → tools snapshot → usage.chart → request.chart → todos.chart
+    if !todo_records.is_empty() {
+        let chart_idx = out.len();
+        if let Some(chart_msg) = build_todo_chart_meta(&todo_records, chart_idx) {
             out.push(chart_msg);
         }
     }
@@ -1484,6 +1510,356 @@ fn raw_request_event_value(r: &RequestRecord) -> serde_json::Value {
     })
 }
 
+/// v0.9.16: tools.update_store 内部 struct — todo 状态 + churn detection
+///
+/// 单条 wire event:
+/// ```json
+/// {"type":"tools.update_store","key":"todo","value":[{"title":"...","status":"done"},...],"time":1785915308477}
+/// ```
+#[derive(Debug, Clone)]
+struct TodoRecord {
+    items: Vec<TodoItem>, // 全量快照 (4-8 items, 跟 wire 完全一致)
+    item_count: u32,
+    done_count: u32,
+    in_progress_count: u32,
+    pending_count: u32,
+    time: u64,
+}
+
+#[derive(Debug, Clone)]
+struct TodoItem {
+    title: String,
+    status: String, // "done" | "in_progress" | "pending"
+}
+
+/// v0.9.16: 从 raw tools.update_store wire event 提取关键字段
+fn parse_todo_record(obj: &serde_json::Map<String, Value>) -> Option<TodoRecord> {
+    let key = obj.get("key").and_then(|v| v.as_str()).unwrap_or("");
+    if key != "todo" {
+        return None; // skip non-todo update_store
+    }
+    let value = obj.get("value")?.as_array()?;
+    let mut items: Vec<TodoItem> = Vec::with_capacity(value.len());
+    let mut done_count = 0u32;
+    let mut in_progress_count = 0u32;
+    let mut pending_count = 0u32;
+    for item in value {
+        let title = item
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let status = item
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("pending")
+            .to_string();
+        if title.is_empty() {
+            continue; // skip nameless items
+        }
+        match status.as_str() {
+            "done" => done_count += 1,
+            "in_progress" => in_progress_count += 1,
+            _ => pending_count += 1,
+        }
+        items.push(TodoItem { title, status });
+    }
+    let item_count = items.len() as u32;
+    let time = obj.get("time").and_then(|v| v.as_u64()).unwrap_or(0);
+    Some(TodoRecord {
+        items,
+        item_count,
+        done_count,
+        in_progress_count,
+        pending_count,
+        time,
+    })
+}
+
+/// v0.9.16: 57 个 tools.update_store event → 1 个聚合 todos.chart meta block
+///
+/// 跟 v0.9.14 / v0.9.15 区别:
+/// - usage.chart: per-turn token 成本 (连续值随时间变化)
+/// - request.chart: per-turn context headroom (连续值随时间变化)
+/// - todos.chart: LLM plan execution narrative (状态机信号, 跨 event 跟踪 task
+///   生命周期 + churn)
+///
+/// 设计动机:
+/// - 当前 v0.9.8 把 57 个 update_store event 单独 emit 成 57 个 raw meta block,
+///   详情页被撑爆 (95% 都是 todo noise)
+/// - bpm-large 实测: 57 events / 91 unique titles / 47 churn events / 166 done
+///   累计 / 92 pending 累计
+/// - 用户角度: 想知道 "LLM 计划了什么 → 完成了什么 → 哪些任务中途被重写"
+///
+/// 顶层 stats:
+/// - update_count, unique_task_count, current_done/in_progress/pending
+///   (末次 snapshot 状态 — 跟 v0.9.15 drift_events 显示 "新 hash 第一次出现"
+///   同思路)
+/// - churn_count (add + remove 事件数), churn_add_count, churn_remove_count
+/// - status_total: 跨全 session 的 done/in_progress/pending 累计 (类似
+///   v0.9.14 total_tokens)
+/// - first_update_at, last_update_at, duration_ms
+///
+/// buckets[] (60 时间窗口):
+/// - bucket_start / bucket_end (ms 时间戳)
+/// - item_count / done_count / in_progress_count / pending_count
+///
+/// completed_tasks[]:
+/// - 每个 unique title → 第一次 seen as "done" 的时间戳 + update_index
+/// - 按 done 时间升序 (用户最关心的 "完成列表" 在前)
+///
+/// churn_events[]:
+/// - add: 新 title 第一次出现 (NOT in prior snapshots)
+/// - remove: 已知 title 在 snapshot 中消失 (was in prior, NOT in current)
+/// - 每个含 timestamp + title + action ("add" | "remove")
+///
+/// payload.raw_events: 前 5 + 后 5 raw event (drill-down)
+#[allow(clippy::too_many_lines)]
+fn build_todo_chart_meta(todo_records: &[TodoRecord], index: usize) -> Option<NormalizedMessage> {
+    if todo_records.is_empty() {
+        return None;
+    }
+
+    let total = todo_records.len();
+
+    // 1. 末次 snapshot 状态 (current_done/in_progress/pending)
+    let last = todo_records.last().unwrap();
+    let current_done = last.done_count;
+    let current_in_progress = last.in_progress_count;
+    let current_pending = last.pending_count;
+
+    // 2. 跨全 session 累计 (status_total)
+    let total_done: u32 = todo_records.iter().map(|r| r.done_count).sum();
+    let total_in_progress: u32 = todo_records.iter().map(|r| r.in_progress_count).sum();
+    let total_pending: u32 = todo_records.iter().map(|r| r.pending_count).sum();
+
+    // 3. unique task tracking + churn detection
+    let mut seen_titles: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut unique_titles: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut completed_tasks: std::collections::BTreeMap<String, (u64, u32)> =
+        std::collections::BTreeMap::new(); // title → (done_time, update_index)
+    let mut churn_events: Vec<serde_json::Value> = Vec::new();
+
+    for (i, rec) in todo_records.iter().enumerate() {
+        // 当前 snapshot 的所有 title
+        let current_titles: std::collections::HashSet<String> =
+            rec.items.iter().map(|it| it.title.clone()).collect();
+
+        // 1) 找 add events (新 title)
+        for title in &current_titles {
+            if seen_titles.insert(title.clone()) {
+                // 第一次见 → add
+                unique_titles.insert(title.clone());
+                if let Some(item) = rec.items.iter().find(|it| &it.title == title) {
+                    churn_events.push(json!({
+                        "time": rec.time,
+                        "title": title,
+                        "action": "add",
+                        "update_index": i as u32,
+                        "initial_status": item.status,
+                    }));
+                }
+            }
+        }
+
+        // 2) 找 remove events (prior snapshot 有, current 没有)
+        if i > 0 {
+            let prior_titles: std::collections::HashSet<String> = todo_records[i - 1]
+                .items
+                .iter()
+                .map(|it| it.title.clone())
+                .collect();
+            for title in &prior_titles {
+                if !current_titles.contains(title) {
+                    churn_events.push(json!({
+                        "time": rec.time,
+                        "title": title,
+                        "action": "remove",
+                        "update_index": i as u32,
+                    }));
+                }
+            }
+        }
+
+        // 3) 找 done transitions (item.status == "done" 且之前不是 done)
+        for item in &rec.items {
+            if item.status == "done" && !completed_tasks.contains_key(&item.title) {
+                completed_tasks.insert(item.title.clone(), (rec.time, i as u32));
+            }
+        }
+    }
+
+    let unique_task_count = unique_titles.len() as u32;
+    let churn_add_count = churn_events
+        .iter()
+        .filter(|e| e.get("action").and_then(|v| v.as_str()) == Some("add"))
+        .count() as u32;
+    let churn_remove_count = churn_events
+        .iter()
+        .filter(|e| e.get("action").and_then(|v| v.as_str()) == Some("remove"))
+        .count() as u32;
+    let churn_count = churn_add_count + churn_remove_count;
+
+    // 4. 时间 stats
+    let first_update_at = todo_records.iter().map(|r| r.time).min().unwrap_or(0);
+    let last_update_at = todo_records.iter().map(|r| r.time).max().unwrap_or(0);
+    let duration_ms = last_update_at.saturating_sub(first_update_at);
+
+    // 5. 60 buckets (跟 v0.9.14 / v0.9.15 同 BUCKET_TARGET)
+    const BUCKET_TARGET: usize = 60;
+    let bucket_count = todo_records.len().clamp(1, BUCKET_TARGET);
+    let mut buckets: Vec<serde_json::Value> = Vec::with_capacity(bucket_count);
+    let time_start = todo_records.first().map(|r| r.time).unwrap_or(0);
+    let time_end = todo_records.last().map(|r| r.time).unwrap_or(0);
+    let span = time_end.saturating_sub(time_start).max(1);
+    let n = todo_records.len();
+    let base_size = n / bucket_count;
+    let extra_count = n % bucket_count;
+    let mut start = 0usize;
+    for i in 0..bucket_count {
+        let size = base_size + if i < extra_count { 1 } else { 0 };
+        let end = (start + size).min(n);
+        if start >= n || size == 0 {
+            break;
+        }
+        let slice = &todo_records[start..end];
+        let b_item_count: u32 = slice.iter().map(|r| r.item_count).sum();
+        let b_done: u32 = slice.iter().map(|r| r.done_count).sum();
+        let b_in_progress: u32 = slice.iter().map(|r| r.in_progress_count).sum();
+        let b_pending: u32 = slice.iter().map(|r| r.pending_count).sum();
+        let bucket_start = time_start + (span * start as u64) / n as u64;
+        let bucket_end = time_start + (span * end as u64) / n as u64;
+        buckets.push(json!({
+            "bucket_start": bucket_start,
+            "bucket_end": bucket_end,
+            "item_count": b_item_count,
+            "done_count": b_done,
+            "in_progress_count": b_in_progress,
+            "pending_count": b_pending,
+        }));
+        start = end;
+    }
+
+    // 6. completed_tasks 按 done 时间排序 (前端直接渲染)
+    let mut completed_tasks_vec: Vec<(String, u64, u32)> = completed_tasks
+        .into_iter()
+        .map(|(title, (done_time, update_idx))| (title, done_time, update_idx))
+        .collect();
+    completed_tasks_vec.sort_by_key(|(_, done_time, _)| *done_time);
+
+    // 7. raw payload sample (drill-down)
+    let raw_events: Vec<serde_json::Value> = if todo_records.len() <= 10 {
+        todo_records.iter().map(raw_todo_event_value).collect()
+    } else {
+        let head: Vec<serde_json::Value> =
+            todo_records[..5].iter().map(raw_todo_event_value).collect();
+        let tail: Vec<serde_json::Value> = todo_records[todo_records.len() - 5..]
+            .iter()
+            .map(raw_todo_event_value)
+            .collect();
+        head.into_iter().chain(tail).collect()
+    };
+
+    // 8. 顶层 data 字段
+    let mut data = serde_json::Map::new();
+    data.insert(
+        "label".to_string(),
+        Value::String("todos.chart".to_string()),
+    );
+    data.insert("update_count".to_string(), Value::from(total as u64));
+    data.insert(
+        "unique_task_count".to_string(),
+        Value::from(unique_task_count as u64),
+    );
+    data.insert("current_done".to_string(), Value::from(current_done as u64));
+    data.insert(
+        "current_in_progress".to_string(),
+        Value::from(current_in_progress as u64),
+    );
+    data.insert(
+        "current_pending".to_string(),
+        Value::from(current_pending as u64),
+    );
+    data.insert("total_done".to_string(), Value::from(total_done as u64));
+    data.insert(
+        "total_in_progress".to_string(),
+        Value::from(total_in_progress as u64),
+    );
+    data.insert(
+        "total_pending".to_string(),
+        Value::from(total_pending as u64),
+    );
+    data.insert("churn_count".to_string(), Value::from(churn_count as u64));
+    data.insert(
+        "churn_add_count".to_string(),
+        Value::from(churn_add_count as u64),
+    );
+    data.insert(
+        "churn_remove_count".to_string(),
+        Value::from(churn_remove_count as u64),
+    );
+    data.insert("first_update_at".to_string(), Value::from(first_update_at));
+    data.insert("last_update_at".to_string(), Value::from(last_update_at));
+    data.insert("duration_ms".to_string(), Value::from(duration_ms));
+    data.insert("buckets".to_string(), Value::Array(buckets));
+    data.insert(
+        "completed_tasks".to_string(),
+        Value::Array(
+            completed_tasks_vec
+                .into_iter()
+                .map(|(title, done_time, update_idx)| {
+                    json!({
+                        "title": title,
+                        "done_time": done_time,
+                        "update_index": update_idx,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    data.insert("churn_events".to_string(), Value::Array(churn_events));
+    data.insert(
+        "payload".to_string(),
+        json!({
+            "raw_events": raw_events,
+            "raw_count": todo_records.len(),
+        }),
+    );
+
+    let timestamp =
+        chrono::DateTime::from_timestamp_millis(first_update_at as i64).map(|dt| dt.to_rfc3339());
+
+    Some(NormalizedMessage {
+        id: format!("kimi-todo-chart-{index}"),
+        role: "meta".to_string(),
+        timestamp,
+        blocks: vec![NormalizedBlock {
+            kind: "meta".to_string(),
+            data,
+        }],
+        model: None,
+        stop_reason: None,
+        token_usage: None,
+        is_sidechain: None,
+        subagent_id: None,
+        parent_uuid: None,
+        raw_type: "tools.update_store".to_string(),
+    })
+}
+
+/// v0.9.16: 把 TodoRecord 渲染回 wire 原始 JSON shape (drill-down sample 用)
+fn raw_todo_event_value(r: &TodoRecord) -> serde_json::Value {
+    json!({
+        "type": "tools.update_store",
+        "key": "todo",
+        "value": r.items.iter().map(|it| json!({
+            "title": it.title,
+            "status": it.status,
+        })).collect::<Vec<_>>(),
+        "time": r.time,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1876,15 +2252,20 @@ mod tests {
         // v0.9.8: TodoWrite (tools.update_store{key:"todo"}) 和
         // permission.record_approval_result 同样应作为 meta block 出现在
         // 详情页 — 给用户完整的"配置/权限变更"timeline 视图。
+        //
+        // v0.9.16: tools.update_store 不再单独 emit 成 meta block,而是 batch
+        // path 末尾聚合成 1 个 todos.chart meta (raw_type 仍 "tools.update_store",
+        // 跟 build_todo_chart_meta builder 一致)。permission.record_approval_result
+        // 仍 emit 成 meta block。
         let records = vec![
             json!({"type":"metadata","protocol_version":"1.4","created_at":1_u64}),
             json!({
                 "type":"tools.update_store",
                 "key":"todo",
-                "value":{"items":[
-                    {"id":"1","status":"completed","content":"first"},
-                    {"id":"2","status":"in_progress","content":"second"}
-                ]},
+                "value":[
+                    {"title":"first","status":"done"},
+                    {"title":"second","status":"in_progress"}
+                ],
                 "time":100_u64
             }),
             json!({
@@ -1901,32 +2282,45 @@ mod tests {
         ];
         let out = normalize_session(records);
 
-        // metadata + todo + approval + config = 4 meta blocks
+        // metadata + todos.chart (聚合) + approval + config = 4 meta blocks
         let meta_blocks: Vec<&NormalizedMessage> =
             out.iter().filter(|n| n.role == "meta").collect();
         assert_eq!(
             meta_blocks.len(),
             4,
-            "expected 4 meta blocks (metadata + todo + approval + config), got {} ({:?})",
+            "expected 4 meta blocks (metadata + todos.chart + approval + config), got {} ({:?})",
             meta_blocks.len(),
             out
         );
 
-        // tools.update_store raw_type 透传
+        // tools.update_store raw_type 仍透传 (builder 设 raw_type = "tools.update_store")
         let todo_meta = out
             .iter()
             .find(|m| m.raw_type == "tools.update_store")
-            .expect("todo meta present");
+            .expect("todo chart meta present");
         assert_eq!(todo_meta.role, "meta");
         assert_eq!(todo_meta.blocks[0].kind, "meta");
-        assert!(
-            todo_meta.blocks[0]
-                .data
-                .get("payload")
-                .and_then(|p| p.get("key"))
-                .and_then(|k| k.as_str())
-                == Some("todo"),
-            "todo payload preserved in meta block"
+        // v0.9.16: data 顶层是 todos.chart 字段 (update_count / current_done /
+        //   buckets / completed_tasks / churn_events),不再是 v0.9.8 的 payload.key
+        let data = &todo_meta.blocks[0].data;
+        assert_eq!(
+            data.get("label").and_then(|v| v.as_str()),
+            Some("todos.chart")
+        );
+        assert_eq!(
+            data.get("update_count").unwrap().as_u64().unwrap(),
+            1,
+            "1 个 tools.update_store event"
+        );
+        assert_eq!(
+            data.get("current_done").unwrap().as_u64().unwrap(),
+            1,
+            "1 个 done item"
+        );
+        assert_eq!(
+            data.get("current_in_progress").unwrap().as_u64().unwrap(),
+            1,
+            "1 个 in_progress item"
         );
     }
 
@@ -2123,12 +2517,14 @@ mod tests {
             "assistant message count 应 ≈ 602 (dcwin11 bpm 实测), got {}",
             assistant_count
         );
-        // meta: ~176 (1 metadata + 24 config + 4 perm.set + 1 tools.set +
-        //         55 tools.update + 20 approval + 22+22 compaction + 22 apply
-        //         + 4 plan_mode + 1 turn.cancel)
+        // v0.9.16: meta 数量 ~125 (1 metadata + 24 config + 4 perm.set + 1 tools.set +
+        //                         20 approval + 22+22 compaction + 22 apply
+        //                         + 4 plan_mode + 1 turn.cancel + 1 todos.chart 聚合)
+        // (旧版 ~176 是 55 个 raw tools.update_store meta blocks + 1 missing。
+        //  v0.9.16 末尾聚合为 1 个 todos.chart meta, delta = -55 + 1 = -54 → ≈ 122)
         assert!(
-            meta_count >= 150,
-            "meta block count 应 ≥ 150, got {}",
+            (115..=140).contains(&meta_count),
+            "meta block count 应 ≈ 125 (v0.9.16 聚合 tools.update_store), got {}",
             meta_count
         );
 
@@ -2909,5 +3305,318 @@ mod tests {
         // payload.raw_count = 648
         let payload = data.get("payload").unwrap().as_object().unwrap();
         assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 648);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // v0.9.16: tools.update_store → todos.chart 聚合
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_todo_record_extracts_items_and_status_counts() {
+        // v0.9.16: 1 个 event 4 items (2 done, 1 in_progress, 1 pending)
+        let rec = json!({
+            "type": "tools.update_store",
+            "key": "todo",
+            "value": [
+                {"title": "task A", "status": "done"},
+                {"title": "task B", "status": "done"},
+                {"title": "task C", "status": "in_progress"},
+                {"title": "task D", "status": "pending"},
+            ],
+            "time": 1785915308477_u64
+        });
+        let r = parse_todo_record(rec.as_object().unwrap()).expect("parse");
+        assert_eq!(r.items.len(), 4);
+        assert_eq!(r.item_count, 4);
+        assert_eq!(r.done_count, 2);
+        assert_eq!(r.in_progress_count, 1);
+        assert_eq!(r.pending_count, 1);
+        assert_eq!(r.time, 1785915308477);
+        assert_eq!(r.items[0].title, "task A");
+        assert_eq!(r.items[2].status, "in_progress");
+    }
+
+    #[test]
+    fn parse_todo_record_skips_non_todo_keys() {
+        // v0.9.16: 如果 key 不是 "todo" (e.g. "memory"),返回 None
+        let rec = json!({
+            "type": "tools.update_store",
+            "key": "memory",
+            "value": [{"content": "some data"}],
+            "time": 1000_u64
+        });
+        assert!(parse_todo_record(rec.as_object().unwrap()).is_none());
+    }
+
+    #[test]
+    fn build_todo_chart_meta_empty_input_returns_none() {
+        let records: Vec<TodoRecord> = Vec::new();
+        let chart = build_todo_chart_meta(&records, 0);
+        assert!(chart.is_none(), "empty input → no chart meta");
+    }
+
+    #[test]
+    fn build_todo_chart_meta_aggregates_buckets_and_churn() {
+        // v0.9.16: 5 个 synthetic events — 跨 event 改动 title 跟 status
+        // 验: 60 buckets, unique task count, churn events (add / remove)
+        // 验: completed_tasks 按 done 时间排序
+        let base_time: u64 = 1785915308477;
+        let mut records = Vec::new();
+
+        // event 0: 3 个任务 (1 done, 1 in_progress, 1 pending)
+        records.push(TodoRecord {
+            items: vec![
+                TodoItem {
+                    title: "alpha".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "beta".into(),
+                    status: "in_progress".into(),
+                },
+                TodoItem {
+                    title: "gamma".into(),
+                    status: "pending".into(),
+                },
+            ],
+            item_count: 3,
+            done_count: 1,
+            in_progress_count: 1,
+            pending_count: 1,
+            time: base_time,
+        });
+        // event 1: 4 个任务 (alpha done, beta done, gamma in_progress, delta new)
+        records.push(TodoRecord {
+            items: vec![
+                TodoItem {
+                    title: "alpha".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "beta".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "gamma".into(),
+                    status: "in_progress".into(),
+                },
+                TodoItem {
+                    title: "delta".into(),
+                    status: "pending".into(),
+                },
+            ],
+            item_count: 4,
+            done_count: 2,
+            in_progress_count: 1,
+            pending_count: 1,
+            time: base_time + 1000,
+        });
+        // event 2: 3 个任务 (alpha done, beta done, gamma done) — delta removed
+        records.push(TodoRecord {
+            items: vec![
+                TodoItem {
+                    title: "alpha".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "beta".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "gamma".into(),
+                    status: "done".into(),
+                },
+            ],
+            item_count: 3,
+            done_count: 3,
+            in_progress_count: 0,
+            pending_count: 0,
+            time: base_time + 2000,
+        });
+        // event 3: 4 个 — 新加 epsilon
+        records.push(TodoRecord {
+            items: vec![
+                TodoItem {
+                    title: "alpha".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "beta".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "gamma".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "epsilon".into(),
+                    status: "pending".into(),
+                },
+            ],
+            item_count: 4,
+            done_count: 3,
+            in_progress_count: 0,
+            pending_count: 1,
+            time: base_time + 3000,
+        });
+        // event 4: 4 个 — final
+        records.push(TodoRecord {
+            items: vec![
+                TodoItem {
+                    title: "alpha".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "beta".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "gamma".into(),
+                    status: "done".into(),
+                },
+                TodoItem {
+                    title: "epsilon".into(),
+                    status: "in_progress".into(),
+                },
+            ],
+            item_count: 4,
+            done_count: 3,
+            in_progress_count: 1,
+            pending_count: 0,
+            time: base_time + 4000,
+        });
+
+        let chart = build_todo_chart_meta(&records, 0).expect("chart emits");
+        let data = &chart.blocks[0].data;
+
+        // 顶层 stats
+        assert_eq!(data.get("update_count").unwrap().as_u64().unwrap(), 5);
+        assert_eq!(
+            data.get("unique_task_count").unwrap().as_u64().unwrap(),
+            5,
+            "alpha + beta + gamma + delta + epsilon = 5 unique"
+        );
+        // 末次 snapshot: 3 done + 1 in_progress + 0 pending
+        assert_eq!(data.get("current_done").unwrap().as_u64().unwrap(), 3);
+        assert_eq!(
+            data.get("current_in_progress").unwrap().as_u64().unwrap(),
+            1
+        );
+        assert_eq!(data.get("current_pending").unwrap().as_u64().unwrap(), 0);
+        // 累计: 1+2+3+3+3 = 12 done, 1+1+0+0+1 = 3 in_progress, 1+1+0+1+0 = 3 pending
+        assert_eq!(data.get("total_done").unwrap().as_u64().unwrap(), 12);
+        assert_eq!(data.get("total_in_progress").unwrap().as_u64().unwrap(), 3);
+        assert_eq!(data.get("total_pending").unwrap().as_u64().unwrap(), 3);
+
+        // churn events: 4 add (alpha, beta, gamma, delta, epsilon = 5 add) + 1 remove (delta)
+        let churn_events = data.get("churn_events").unwrap().as_array().unwrap();
+        assert_eq!(
+            churn_events.len(),
+            6,
+            "5 add (alpha, beta, gamma, delta, epsilon) + 1 remove (delta)"
+        );
+        assert_eq!(data.get("churn_add_count").unwrap().as_u64().unwrap(), 5);
+        assert_eq!(data.get("churn_remove_count").unwrap().as_u64().unwrap(), 1);
+        assert_eq!(data.get("churn_count").unwrap().as_u64().unwrap(), 6);
+
+        // completed_tasks: 3 (alpha, beta, gamma) — epsilon 是 in_progress 不算 done
+        let completed = data.get("completed_tasks").unwrap().as_array().unwrap();
+        assert_eq!(completed.len(), 3);
+        // 排序: 按 done_time 升序 — alpha (event 0), beta (event 1), gamma (event 2)
+        assert_eq!(
+            completed[0].get("title").unwrap().as_str().unwrap(),
+            "alpha"
+        );
+        assert_eq!(completed[1].get("title").unwrap().as_str().unwrap(), "beta");
+        assert_eq!(
+            completed[2].get("title").unwrap().as_str().unwrap(),
+            "gamma"
+        );
+
+        // 时间 stats
+        assert_eq!(
+            data.get("first_update_at").unwrap().as_u64().unwrap(),
+            base_time
+        );
+        assert_eq!(
+            data.get("last_update_at").unwrap().as_u64().unwrap(),
+            base_time + 4000
+        );
+        assert_eq!(data.get("duration_ms").unwrap().as_u64().unwrap(), 4000);
+
+        // 60 buckets (5 events < 60 → 5 buckets)
+        let buckets = data.get("buckets").unwrap().as_array().unwrap();
+        assert_eq!(buckets.len(), 5, "5 events → 5 buckets (≤60 → 用 N)");
+
+        // raw_count = 5
+        let payload = data.get("payload").unwrap().as_object().unwrap();
+        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 5);
+    }
+
+    #[test]
+    fn normalize_session_v0916_bpm_large_todo_chart_has_57_events_aggregated() {
+        // v0.9.16: bpm-large 真实样本 — 57 个 tools.update_store event 聚合成
+        // 1 个 todos.chart meta (91 unique tasks + 47 churn events)
+        let path = std::path::Path::new("<redacted-fixture>-v0916.jsonl");
+        if !path.exists() {
+            eprintln!("skip: {} not found", path.display());
+            return;
+        }
+        let bytes = std::fs::read(path).expect("read fixture");
+        let mut records = Vec::new();
+        for line in bytes.split(|b| *b == b'\n') {
+            if line.is_empty() {
+                continue;
+            }
+            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
+        }
+        let out = normalize_session(records);
+        let chart_msgs: Vec<_> = out
+            .iter()
+            .filter(|m| m.raw_type == "tools.update_store" && m.role == "meta")
+            .collect();
+        assert_eq!(
+            chart_msgs.len(),
+            1,
+            "expected exactly 1 todos.chart meta block (57 events aggregated)"
+        );
+        let data = &chart_msgs[0].blocks[0].data;
+        // 57 events total
+        assert_eq!(data.get("update_count").unwrap().as_u64().unwrap(), 57);
+        // 91 unique tasks (跨 57 条 event 出现的独立 title 数)
+        assert_eq!(
+            data.get("unique_task_count").unwrap().as_u64().unwrap(),
+            91,
+            "bpm-large 91 个独立 todo title"
+        );
+        // 末次 snapshot: 23 done / 1 in_progress / 4 pending
+        assert_eq!(data.get("current_done").unwrap().as_u64().unwrap(), 23);
+        assert_eq!(
+            data.get("current_in_progress").unwrap().as_u64().unwrap(),
+            1
+        );
+        assert_eq!(data.get("current_pending").unwrap().as_u64().unwrap(), 4);
+        // 累计: 166 done / 40 in_progress / 92 pending
+        assert_eq!(data.get("total_done").unwrap().as_u64().unwrap(), 166);
+        assert_eq!(data.get("total_in_progress").unwrap().as_u64().unwrap(), 40);
+        assert_eq!(data.get("total_pending").unwrap().as_u64().unwrap(), 92);
+        // 47 churn events (add + remove)
+        assert_eq!(
+            data.get("churn_count").unwrap().as_u64().unwrap(),
+            47,
+            "bpm-large 47 churn events (add + remove)"
+        );
+        // 60 buckets (cap)
+        let buckets = data.get("buckets").unwrap().as_array().unwrap();
+        assert_eq!(buckets.len(), 60, "57 events → 60 buckets (cap)");
+        // completed_tasks 长度 = 28 (每个 unique 完成 title 一次 done)
+        let completed = data.get("completed_tasks").unwrap().as_array().unwrap();
+        assert_eq!(completed.len(), 28);
+        // churn_events 长度 = 47
+        let churn_events = data.get("churn_events").unwrap().as_array().unwrap();
+        assert_eq!(churn_events.len(), 47);
+        // payload.raw_count = 57
+        let payload = data.get("payload").unwrap().as_object().unwrap();
+        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 57);
     }
 }
