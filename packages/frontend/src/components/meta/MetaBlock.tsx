@@ -33,6 +33,7 @@ import { UnknownBlockCard } from "../UnknownBlockCard";
 import { UsageChartSvg } from "./UsageChart";
 import { RequestChartSvg } from "./RequestChart";
 import { TodoChartSvg } from "./TodoChart";
+import { AiTitleChartSvg } from "./AiTitleChart";
 
 export interface MetaBlockProps {
   block: NormalizedBlockFE;
@@ -386,6 +387,9 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
     // v0.9.16: todos.chart — 57 个 tools.update_store 聚合 1 个 plan execution narrative
     case "todos.chart":
       return <TodoChartMetaBlock block={block} />;
+    // v0.9.17: ai-title.chart — Claude 1185 个 ai-title + custom-title 聚合 1 个 identity chart
+    case "ai-title.chart":
+      return <AiTitleChartMetaBlock block={block} />;
     default:
       return <UnknownBlockCard block={block} />;
   }
@@ -1185,6 +1189,223 @@ function TodoChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* v0.9.17: ai-title.chart 专属渲染
+ *
+ * <redacted-session-id> 真实 sample: 1185 个 ai-title event (Claude Code 每 turn 自动重命名
+ * session 标题) + 若干 custom-title (用户手动 rename)。v0.9.17 镜像 v0.9.16
+ * todos.chart pattern: 末尾聚合为 1 个 ai-title.chart meta。
+ *
+ * 区别 vs todos.chart:
+ * - todos.chart: 状态机信号 (pending/in_progress/done 生命周期 + churn)
+ * - ai-title.chart: identity 信号 (session 标题变更轨迹 + 优先级 metadata)
+ * - todos.chart: 3 layer stacked bar (pending/in_progress/done)
+ * - ai-title.chart: 2 layer stacked bar (ai-title 底 + custom-title 顶 — 优先级高亮)
+ *
+ * 顶层 stats:
+ * - event_count / unique_title_count / custom_title_count / ai_title_count
+ * - title_changes_count (unique - 1)
+ * - current_title (highest-precedence 末次: custom>ai) — 跟 build_claude_session_meta
+ *   precedence logic 一致
+ * - first_seen_title (第一次 title event 的 title)
+ * - duration_ms (session 实际跨度)
+ *
+ * buckets[] (60 时间窗口,按 event index 等分):
+ * - bucket_start / bucket_end (event index range)
+ * - event_count / custom_count / ai_count (前端 inline SVG 渲染)
+ *
+ * title_timeline[]:
+ * - 每个 unique title → 第一次 seen 时的 event index + raw_type (ai-title / custom-title)
+ * - 按 first-seen 升序排序
+ *
+ * top_titles[]:
+ * - top 10 unique titles by event count
+ * - 含 raw_type (priority hint)
+ *
+ * payload.raw_events: 前 5 + 后 5 raw event (drill-down)
+ *
+ * 渲染策略:
+ * - 头部: event_count + unique_title_count pill + current_title pill + custom/ai split pill + duration_ms
+ * - 中部: AiTitleChartSvg (60 bar stacked: ai-title rose 0.7 底 + custom-title rose 1.0 顶)
+ * - top_titles: 默认前 10 + 展开剩余 (按 event_count desc)
+ * - title_timeline: 默认前 10 + 展开剩余 (按 first-seen 顺序)
+ * - custom-title events: 用 .meta-tag-add 配色 (跟 task_reminder add / todos.chart add 复用)
+ * - 折叠 / 展开 raw events
+ *
+ * fallback: 缺 event_count 或 buckets → UnknownBlockCard
+ */
+function AiTitleChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+  const blk = block as Record<string, unknown>;
+  const pl = (block.payload ?? {}) as Record<string, unknown>;
+  const get = (...keys: string[]): unknown => {
+    for (const k of keys) {
+      if (blk[k] !== undefined && blk[k] !== null) return blk[k];
+      if (pl[k] !== undefined && pl[k] !== null) return pl[k];
+    }
+    return undefined;
+  };
+
+  const eventCount = num(get("event_count", "eventCount")) ?? 0;
+  const uniqueTitleCount = num(get("unique_title_count", "uniqueTitleCount")) ?? 0;
+  const customTitleCount = num(get("custom_title_count", "customTitleCount")) ?? 0;
+  const aiTitleCount = num(get("ai_title_count", "aiTitleCount")) ?? 0;
+  const titleChangesCount = num(get("title_changes_count", "titleChangesCount")) ?? 0;
+  const currentTitle = String(get("current_title", "currentTitle") ?? "");
+  const firstSeenTitle = String(get("first_seen_title", "firstSeenTitle") ?? "");
+  const durationMs = num(get("duration_ms", "durationMs")) ?? 0;
+  const buckets = (get("buckets") as Array<Record<string, unknown>>) ?? [];
+  const titleTimeline =
+    (get("title_timeline", "titleTimeline") as Array<Record<string, unknown>>) ?? [];
+  const topTitles = (get("top_titles", "topTitles") as Array<Record<string, unknown>>) ?? [];
+  const rawEvents = (pl.raw_events as Array<Record<string, unknown>>) ?? [];
+  const rawCount = (pl.raw_count as number) ?? rawEvents.length;
+
+  // 缺关键字段 → fallback (老 wire / 老 DB 缓存)
+  if (eventCount === 0 || buckets.length === 0) {
+    return <UnknownBlockCard block={block} />;
+  }
+
+  const TIMELINE_VISIBLE = 10;
+  const TOP_VISIBLE = 10;
+  const [showRawEvents, setShowRawEvents] = useState(false);
+  const [showAllTimeline, setShowAllTimeline] = useState(false);
+  const [showAllTop, setShowAllTop] = useState(false);
+
+  const visibleTimeline = showAllTimeline
+    ? titleTimeline
+    : titleTimeline.slice(0, TIMELINE_VISIBLE);
+  const timelineOverflow = titleTimeline.length - TIMELINE_VISIBLE;
+  const visibleTop = showAllTop ? topTitles : topTitles.slice(0, TOP_VISIBLE);
+  const topOverflow = topTitles.length - TOP_VISIBLE;
+
+  return (
+    <div
+      className="block-meta-info meta-block-flat ai-title-chart-meta"
+      data-testid="ai-title-chart-meta"
+    >
+      <span className="meta-kind-badge">📝 ai-title chart</span>
+      <span className="meta-primary-text" data-testid="ai-title-chart-count">
+        {eventCount.toLocaleString()} events · {uniqueTitleCount} unique titles
+      </span>
+      <span
+        className="meta-sub"
+        title={`末次 title (custom>ai 优先级): "${currentTitle}"`}
+        data-testid="ai-title-chart-current"
+      >
+        current "{currentTitle}"
+      </span>
+      <span
+        className="meta-sub"
+        title={`first seen title: "${firstSeenTitle}"`}
+        data-testid="ai-title-chart-first"
+      >
+        first "{firstSeenTitle}"
+      </span>
+      <span
+        className="meta-sub"
+        title={`custom-title ${customTitleCount} / ai-title ${aiTitleCount}, ${titleChangesCount} 次标题变更`}
+        data-testid="ai-title-chart-split"
+      >
+        {customTitleCount} custom · {aiTitleCount} ai · {titleChangesCount} changes
+      </span>
+      {durationMs > 0 && (
+        <span className="meta-sub" title="session 实际跨度">
+          {formatDurationMs(durationMs)}
+        </span>
+      )}
+      <AiTitleChartSvg buckets={buckets} />
+      <div className="ai-title-chart-legend" data-testid="ai-title-chart-legend">
+        <span className="ai-title-chart-legend-item">
+          <span
+            className="ai-title-chart-legend-dot"
+            style={{ background: "rgba(244, 63, 94, 0.7)" }}
+          />
+          ai-title
+        </span>
+        <span className="ai-title-chart-legend-item">
+          <span
+            className="ai-title-chart-legend-dot"
+            style={{ background: "rgba(244, 63, 94, 1.0)" }}
+          />
+          custom-title
+        </span>
+      </div>
+      {topTitles.length > 0 && (
+        <div className="meta-section" data-testid="ai-title-chart-top">
+          <strong className="meta-section-title">top {topTitles.length} titles (by 频率):</strong>
+          <div className="meta-list meta-list-scrollable">
+            {visibleTop.map((t, i) => (
+              <span
+                key={i}
+                className={`meta-tag ${t.raw_type === "custom-title" ? "meta-tag-add" : ""}`}
+                title={`${t.raw_type} · 出现 ${t.event_count} 次`}
+              >
+                {String(t.title ?? "?").slice(0, 40)} ({num(t.event_count)})
+              </span>
+            ))}
+          </div>
+          {topOverflow > 0 && !showAllTop && (
+            <button
+              type="button"
+              className="meta-show-more"
+              onClick={() => setShowAllTop(true)}
+              data-testid="ai-title-chart-top-toggle"
+            >
+              展开剩余 {topOverflow} 个
+            </button>
+          )}
+        </div>
+      )}
+      {titleTimeline.length > 0 && (
+        <div className="meta-section" data-testid="ai-title-chart-timeline">
+          <strong className="meta-section-title">title timeline (按 first-seen):</strong>
+          <div className="meta-list meta-list-scrollable">
+            {visibleTimeline.map((t, i) => (
+              <span
+                key={i}
+                className={`meta-tag ${t.raw_type === "custom-title" ? "meta-tag-add" : ""}`}
+                title={`${t.raw_type} · first seen at #${t.first_seen_index}`}
+              >
+                #{num(t.first_seen_index)} {String(t.title ?? "?").slice(0, 30)}
+              </span>
+            ))}
+          </div>
+          {timelineOverflow > 0 && !showAllTimeline && (
+            <button
+              type="button"
+              className="meta-show-more"
+              onClick={() => setShowAllTimeline(true)}
+              data-testid="ai-title-chart-timeline-toggle"
+            >
+              展开剩余 {timelineOverflow} 个
+            </button>
+          )}
+        </div>
+      )}
+      {rawEvents.length > 0 && (
+        <button
+          type="button"
+          className="meta-show-more"
+          data-testid="ai-title-chart-raw-toggle"
+          onClick={() => setShowRawEvents((v) => !v)}
+          title={showRawEvents ? "收起 raw events" : `展开 ${rawCount} raw events`}
+        >
+          {showRawEvents ? "收起" : `展开 ${rawCount} raw events`}
+        </button>
+      )}
+      {showRawEvents && (
+        <div className="ai-title-chart-raw-events" data-testid="ai-title-chart-raw-events">
+          {rawEvents.map((e, i) => (
+            <div key={i} className="ai-title-chart-raw-row">
+              <span className="meta-sub">{String(e.type ?? "?")}</span>
+              <span className="meta-sub">{String(e.aiTitle ?? e.title ?? "?")}</span>
+            </div>
+          ))}
         </div>
       )}
     </div>

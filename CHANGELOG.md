@@ -2,6 +2,144 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.17] - 2026-08-11
+
+v0.9.10-16 是 kimi parser chart series (compaction / tools_snapshot / usage /
+request / todos)。本版**切到 Claude lane** — 扫 `<redacted-session-id>` 真实样本 (<redacted>-
+channel-monitor session) 发现 **1185 个 `ai-title` 事件** 当前走 `claude.rs` 单条
+emit,详情页被 1185 个 `title` meta block 撑爆。`custom-title` (用户手动 rename
+session) 跟 `ai-title` (Claude 自动 rename) 一起聚合为 1 个 `ai-title.chart`
+meta,保留 `custom>ai` 优先级 metadata。
+
+### 关键发现 (<redacted-session-id>)
+
+- 1185 `ai-title` events, 18 unique titles
+- Top 5 titles: `<redacted-slug>` (267) / `<redacted-slug>` (166) /
+  `<redacted-slug>` (141) / `<redacted-slug>` (86) /
+  `fix-nav-icons-theme` (81)
+- 17/18 titles 是 slug-form English, 1/18 是 Chinese (`<redacted> <redacted-title>`)
+- 17 title_changes (18 unique - 1 first)
+- first_seen title: `<redacted> <redacted-title>` → current: `<redacted-slug>`
+- 0 custom-title events 在本 fixture (builder 已实现,实测其他 session 会用到)
+
+### 关键决策 — Claude 端引入 batch normalize 路径
+
+`claude.rs` 当前只有 `pub fn normalize(record, idx) -> Option<NormalizedMessage>`
+(streaming),**无 batch 入口**。`kimi.rs` 有 `normalize_session()` (batch collapse),
+`transcript.rs` kimi 分支走 batch 路由。Claude transcript 路径走 streaming,
+没法聚合。
+
+**v0.9.17 解决方案**: 镜像 kimi 模式,新增 `pub fn normalize_session(records) ->
+Vec<NormalizedMessage>` 到 `claude.rs`:
+
+- 大多数 event 走原 `normalize()` 单条 emit
+- `ai-title` / `custom-title` 不 inline emit → 推入 `ai_title_records` collector
+- 末尾聚合 emit 1 个 `ai-title.chart` meta
+
+`transcript.rs` Claude 分支走 batch 路由 (类似 kimi)。**export / analyze /
+subagent jsonls 仍走 streaming `normalize()`** — SubagentMetaBlock 的 title
+渲染依赖 per-event meta block,scope 留 v0.9.18+。
+
+**关键区别 vs v0.9.16**: kimi `normalize_kimi_record` 改 `tools.update_store` 返
+回 `None`;Claude `normalize()` 保留 `ai-title` / `custom-title` arm,**只在 batch
+路径才聚合**。两路径行为分叉 (streaming vs batch)。
+
+### Added
+
+- **A. Rust `normalize_session` batch 入口** (`parser/claude.rs`) — Claude 首个
+  batch 路径,镜像 `kimi::normalize_session`
+- **B. Rust `AiTitleRecord` struct + `parse_ai_title_record`** — 提取 `aiTitle` /
+  `title` 字段 + 保留 `raw_type` 优先级 metadata
+- **C. Rust `build_ai_title_chart_meta` builder (~250 行)** — 1 chart meta 含
+  60 buckets + 18 title_timeline + 10 top_titles + raw_events drill-down
+- **D. `transcript.rs` Claude 分支 batch 路由** (mirrors kimi:61-96 pattern)
+- **E. `jsonl.rs` `read_all_records` helper** — 一次性全文件读,给 batch normalize 用
+- **F. `AiTitleChartSvg` 子组件 (独立 file)** — 60 bar stacked (ai-title 玫瑰
+  0.7 + custom-title 玫瑰 1.0),viewBox 600×80
+- **G. `AiTitleChartMetaBlock` 组件 (React)** — header stats pill + SVG + top_titles
+  (默认 10 + 展开剩余) + title_timeline (默认 10 + 展开剩余,custom-title 用
+  `meta-tag-add` 配色) + raw events toggle
+- **H. 字段命名兼容** — `get()` helper 双查 snake_case + camelCase
+- **I. `isKnownMetaLabel` 路由** — `ai-title.chart` 走 MetaBlock (不加 `isMetaKind`,
+  跟 v0.9.16 todos.chart 同 pattern)
+- **J. CSS 样式** — `.ai-title-chart-meta` (rose accent border) + `.ai-title-chart-svg`
+  - `.ai-title-chart-legend` + `.ai-title-chart-raw-events` + `.ai-title-chart-raw-row`
+
+### 配色 (新增第 6 色)
+
+- compaction: teal `rgba(0, 181, 173, 0.6)`
+- tools_snapshot: indigo `rgba(99, 102, 241, 0.6)`
+- usage.chart: amber `rgba(245, 158, 11, 0.6)`
+- request.chart: violet `rgba(139, 92, 246, 0.6)`
+- todos.chart: emerald `rgba(16, 185, 129, 0.6)`
+- **ai-title.chart: rose `rgba(244, 63, 94, 0.6)` (identity)** — 新
+
+6 种 meta block 详情页尾部共存,每种独立 accent 颜色一眼区分。
+
+### Stats (<redacted-session-id> 实测)
+
+- 1185 events → 1 chart meta, 60 buckets
+- 18 unique titles (跨 1185 events)
+- 17 title_changes (新 title 第一次出现)
+- top 1 占 22.5% (267/1185) — `<redacted-slug>`
+- top 5 占 65% — 重度 re-emit
+- 0 custom-title events (本 fixture);builder 已实现 custom>ai 优先级 logic
+
+### Fixture
+
+`<redacted-fixture>-v0917.jsonl` — 2000 lines / 4.7MB, representative
+slice from real `<redacted-session-id>` (54MB / 24122 lines)。含 108 ai-title events / 3 unique
+titles (`<redacted-project>` / `<redacted-slug>` / `<redacted> <redacted> 频道
+监听桌面应用`),覆盖所有 Claude event types (assistant / user / tool_use /
+tool_result / ai-title / file-history-snapshot 等)。
+
+### Tests
+
+- `parse_ai_title_record_extracts_title_from_aiTitle_field` (Rust)
+- `parse_ai_title_record_extracts_title_from_custom_title_field` (Rust)
+- `parse_ai_title_record_skips_empty_title` (Rust)
+- `parse_ai_title_record_skips_unknown_raw_type` (Rust)
+- `build_ai_title_chart_meta_empty_input_returns_none` (Rust)
+- `build_ai_title_chart_meta_aggregates_buckets_and_top_titles` (Rust)
+- `build_ai_title_chart_meta_top_10_truncation` (Rust)
+- `build_ai_title_chart_meta_raw_events_head_and_tail` (Rust)
+- `normalize_session_aggregates_ai_title_into_chart_meta` (Rust)
+- `normalize_session_no_ai_title_records_no_chart_meta` (Rust)
+- `normalize_session_v0917_<redacted-session-id>_aggregates_ai_title_events` (Rust,fixture-driven)
+- 5 个新前端测试 (count+current+first+split 渲染 / 60 buckets SVG 120 rect /
+  top 10 collapse / timeline 10 collapse / custom-title 配色 / fallback
+  UnknownBlockCard)
+
+### Numbers
+
+- Rust: 330 → 341 tests (+11)
+- Frontend: 634 → 639 tests (+5)
+- Files: 8 (新增 `AiTitleChart.tsx` + `wire-<redacted-session-id>-v0917.jsonl` + 修改
+  `parser/claude.rs` + `commands/transcript.rs` + `parser/jsonl.rs` +
+  `MetaBlock.tsx` + `MessageBubble.tsx` + `MessageBubble.css`)
+
+### Notes
+
+- DB schema 不变 (chart meta 不入 DB, in-memory only)
+- `claude.rs::normalize()` 单条 fallback **保留** `ai-title` / `custom-title`
+  inline emit (SubagentMetaBlock title 渲染依赖,双路径分叉: streaming vs batch)
+- export / analyze / subagent jsonls 仍走 streaming (scope 不同,留 v0.9.18+)
+- `build_claude_session_meta` title precedence logic 不动 (raw event 读,不依赖
+  normalized)
+- `isMetaKind` 不加 `"ai-title.chart"` (跟 v0.9.16 todos.chart 同 pattern)
+- 标题优先级在 batch builder 内复刻 (`records.iter().rev().find(|r| r.raw_type ==
+"custom-title").or_else(|| records.iter().rev().find(|r| r.raw_type ==
+"ai-title"))`)
+
+### Deferred (v0.9.18+)
+
+- Claude session 内 tool_use aggregate pattern (跟 kimi usage.chart 同思路,
+  5811 个 tool_use 聚合 1 个 per-tool-frequency chart)
+- permission-mode 聚合 (1168 events, 4 modes, mode transition timeline)
+- file-history-snapshot 聚合 (284 events, per-file backup timeline)
+- custom-title chart 拆分 (如果 custom-title 数量足够, 单独 emit 1 个 chart)
+- export / analyze 路径走 batch normalize (现仍 streaming, 详情页外场景)
+
 ## [0.9.16] - 2026-08-11
 
 v0.9.15 把 648 条 `llm.request` 折成 `request.chart` (context headroom + config drift)。

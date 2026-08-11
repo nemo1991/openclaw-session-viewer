@@ -1456,3 +1456,63 @@
 .todos-chart-raw-row:last-child {
   border-bottom: none;
 }
+
+/* === v0.9.17: ai-title.chart 专属样式 ===
+ *
+ * 跟 compaction (teal) / tools_snapshot (indigo) / usage.chart (amber) /
+ * request.chart (violet) / todos.chart (emerald) 区分 — ai-title.chart 用
+ * rose 主色,语义 "identity" (Claude session 标题变更轨迹 + 优先级 metadata)。
+ * 6 种 meta block 详情页尾部共存, 每种独立 accent 颜色一眼区分。
+ */
+.ai-title-chart-meta {
+  border-left: 3px solid rgba(244, 63, 94, 0.6); /* rose — 区别 teal/indigo/amber/violet/emerald */
+  background: rgba(244, 63, 94, 0.04);
+}
+.ai-title-chart-svg {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  height: 80px;
+  margin: 6px 0;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+}
+.ai-title-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 4px 0 6px 0;
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+}
+.ai-title-chart-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ai-title-chart-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.ai-title-chart-raw-events {
+  margin-top: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-family: var(--font-mono, "SF Mono", "Monaco", monospace);
+  font-size: 10px;
+}
+.ai-title-chart-raw-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  border-bottom: 1px dashed rgba(0, 0, 0, 0.06);
+}
+.ai-title-chart-raw-row:last-child {
+  border-bottom: none;
+}

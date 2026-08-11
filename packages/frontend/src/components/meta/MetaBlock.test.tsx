@@ -1084,4 +1084,178 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
       expect(screen.queryByTestId("todos-chart-raw-events")).toBeNull();
     });
   });
+
+  /* v0.9.17: claude ai-title.chart — 1185 个 ai-title + custom-title 聚合 1 个 chart meta
+   *
+   * <redacted-session-id> 实测数据参考: 1185 events / 18 unique / 17 changes / 0 custom (本 fixture)
+   * - 顶部 stats: count + current + first + split + duration
+   * - SVG: 60 buckets × 2 layer stacked = 120 rect
+   * - top_titles 默认前 10 (overflow 展开按钮)
+   * - title_timeline 默认前 10 (按 first-seen 顺序)
+   * - custom-title 事件用 .meta-tag-add 配色 (复用 task_reminder / todos.chart)
+   * - 缺 event_count → fallback UnknownBlockCard
+   */
+  describe("ai-title.chart (v0.9.17)", () => {
+    // 60 buckets,每 bucket 2 层 stacked
+    const sampleBuckets = Array.from({ length: 60 }, (_, i) => ({
+      bucket_start: i * 20,
+      bucket_end: (i + 1) * 20,
+      event_count: i < 10 ? 3 : i < 30 ? 2 : 1, // 前 1/3 密,后 1/3 稀
+      custom_count: i === 5 ? 1 : 0, // bucket #5 有 1 个 custom-title
+      ai_count: i < 10 ? 3 : i < 30 ? 2 : 1,
+    }));
+
+    // 18 unique titles — 部分重复 (event_count > 1)
+    const sampleTopTitles = [
+      { title: "<redacted-slug>", event_count: 267, raw_type: "ai-title" },
+      { title: "<redacted-slug>", event_count: 166, raw_type: "ai-title" },
+      { title: "<redacted-slug>", event_count: 141, raw_type: "ai-title" },
+      { title: "<redacted-slug>", event_count: 86, raw_type: "ai-title" },
+      { title: "fix-nav-icons-theme", event_count: 81, raw_type: "ai-title" },
+      { title: "<redacted-project>", event_count: 65, raw_type: "ai-title" },
+      { title: "scraping-bench-config", event_count: 56, raw_type: "ai-title" },
+      { title: "channel-router-cleanup", event_count: 47, raw_type: "ai-title" },
+      { title: "session-cleanup", event_count: 42, raw_type: "ai-title" },
+      { title: "test-rotation", event_count: 38, raw_type: "ai-title" },
+      { title: "doc-update", event_count: 33, raw_type: "ai-title" },
+      { title: "icon-pack-bundling", event_count: 28, raw_type: "ai-title" },
+      { title: "proxy-error-log", event_count: 24, raw_type: "ai-title" },
+      { title: "channel-list-pagination", event_count: 21, raw_type: "ai-title" },
+      { title: "<redacted>-rate-limit", event_count: 18, raw_type: "ai-title" },
+      { title: "channel-cache-warm", event_count: 14, raw_type: "ai-title" },
+      { title: "user-pref-store", event_count: 9, raw_type: "ai-title" },
+      { title: "<redacted> <redacted-title>", event_count: 8, raw_type: "ai-title" },
+    ];
+
+    const sampleTitleTimeline = sampleTopTitles.map((t, i) => ({
+      title: t.title,
+      first_seen_time: 1_000 + i * 1000,
+      first_seen_index: i * 50,
+      raw_type: t.raw_type,
+      event_count: t.event_count,
+    }));
+
+    const sampleRawEvents = Array.from({ length: 10 }, (_, i) => ({
+      type: i === 0 ? "custom-title" : "ai-title",
+      ...(i === 0 ? { title: "manual-rename-session" } : { aiTitle: `auto-title-${i}` }),
+    }));
+
+    function buildAiTitleChartBlock(overrides: Record<string, unknown> = {}) {
+      return {
+        kind: "meta",
+        label: "ai-title.chart",
+        event_count: 1185,
+        unique_title_count: 18,
+        custom_title_count: 1,
+        ai_title_count: 1184,
+        title_changes_count: 17,
+        current_title: "<redacted-slug>",
+        first_seen_title: "<redacted> <redacted-title>",
+        first_event_at: 1_000,
+        last_event_at: 178_000_000,
+        duration_ms: 177_000_000,
+        buckets: sampleBuckets,
+        title_timeline: sampleTitleTimeline,
+        top_titles: sampleTopTitles,
+        payload: {
+          raw_events: sampleRawEvents,
+          raw_count: 1185,
+        },
+        ...overrides,
+      };
+    }
+
+    it("renders event count + unique titles + current + first + split + 60 buckets SVG (120 rect)", () => {
+      const block = buildAiTitleChartBlock();
+      renderInRoute(<MetaBlock block={block} label="ai-title.chart" />);
+      // 顶部 stats — 5 个 pill
+      expect(screen.getByTestId("ai-title-chart-count")).toHaveTextContent(
+        "1,185 events · 18 unique titles"
+      );
+      expect(screen.getByTestId("ai-title-chart-current")).toHaveTextContent(
+        'current "<redacted-slug>"'
+      );
+      expect(screen.getByTestId("ai-title-chart-first")).toHaveTextContent(
+        'first "<redacted> <redacted-title>"'
+      );
+      expect(screen.getByTestId("ai-title-chart-split")).toHaveTextContent(
+        "1 custom · 1184 ai · 17 changes"
+      );
+      // SVG — 60 buckets × 2 层 = 120 rect
+      const svg = screen.getByTestId("ai-title-chart-svg");
+      expect(svg).toBeInTheDocument();
+      const rects = svg.querySelectorAll("rect");
+      expect(rects).toHaveLength(60 * 2);
+      // legend 2 项 (ai-title + custom-title)
+      expect(screen.getByTestId("ai-title-chart-legend")).toBeInTheDocument();
+    });
+
+    it("top_titles default collapsed to 10 of 18", () => {
+      const block = buildAiTitleChartBlock();
+      renderInRoute(<MetaBlock block={block} label="ai-title.chart" />);
+      const section = screen.getByTestId("ai-title-chart-top");
+      expect(section).toBeInTheDocument();
+      const tags = section.querySelectorAll(".meta-tag");
+      expect(tags).toHaveLength(10);
+      expect(screen.getByTestId("ai-title-chart-top-toggle")).toHaveTextContent("展开剩余 8 个");
+    });
+
+    it("title_timeline default collapsed to 10 of 18 (按 first-seen 顺序)", () => {
+      const block = buildAiTitleChartBlock();
+      renderInRoute(<MetaBlock block={block} label="ai-title.chart" />);
+      const section = screen.getByTestId("ai-title-chart-timeline");
+      expect(section).toBeInTheDocument();
+      const tags = section.querySelectorAll(".meta-tag");
+      expect(tags).toHaveLength(10);
+      // timeline 展开按钮存在
+      expect(screen.getByTestId("ai-title-chart-timeline-toggle")).toHaveTextContent(
+        "展开剩余 8 个"
+      );
+      // 第一个 timeline tag 应该是 first_seen_index=0 (<redacted> <redacted>...)
+      const firstTag = tags[0];
+      expect(firstTag?.textContent).toContain("#0");
+    });
+
+    it("custom-title entries get meta-tag-add color coding", () => {
+      // 把第 1 个 timeline + 1 个 top 都标记为 custom-title,验配色 class
+      const block = buildAiTitleChartBlock({
+        title_timeline: [
+          {
+            title: "user-rename-session",
+            first_seen_time: 5_000,
+            first_seen_index: 100,
+            raw_type: "custom-title",
+            event_count: 5,
+          },
+          {
+            title: "auto-title-1",
+            first_seen_time: 10_000,
+            first_seen_index: 200,
+            raw_type: "ai-title",
+            event_count: 50,
+          },
+        ],
+        top_titles: [
+          { title: "user-rename-session", event_count: 5, raw_type: "custom-title" },
+          { title: "auto-title-1", event_count: 50, raw_type: "ai-title" },
+        ],
+      });
+      renderInRoute(<MetaBlock block={block} label="ai-title.chart" />);
+      // timeline section 有 1 个 meta-tag-add
+      const timelineSection = screen.getByTestId("ai-title-chart-timeline");
+      const customTimelineTags = timelineSection.querySelectorAll(".meta-tag-add");
+      expect(customTimelineTags.length).toBeGreaterThan(0);
+      // top section 有 1 个 meta-tag-add
+      const topSection = screen.getByTestId("ai-title-chart-top");
+      const customTopTags = topSection.querySelectorAll(".meta-tag-add");
+      expect(customTopTags.length).toBeGreaterThan(0);
+    });
+
+    it("missing event_count → fallback UnknownBlockCard", () => {
+      const block = buildAiTitleChartBlock({ event_count: undefined });
+      const { container } = renderInRoute(<MetaBlock block={block} label="ai-title.chart" />);
+      expect(container.querySelector("[data-testid='ai-title-chart-meta']")).toBeNull();
+      expect(container.firstChild).not.toBeNull();
+    });
+  });
 });

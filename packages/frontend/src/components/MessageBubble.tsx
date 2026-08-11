@@ -215,7 +215,9 @@ function isKnownMetaLabel(label: string): boolean {
     // v0.9.15: kimi request.chart — 648 个 llm.request 聚合 1 个 context headroom + drift chart
     label === "request.chart" ||
     // v0.9.16: kimi todos.chart — 57 个 tools.update_store 聚合 1 个 plan execution narrative
-    label === "todos.chart"
+    label === "todos.chart" ||
+    // v0.9.17: claude ai-title.chart — 1185 个 ai-title + custom-title 聚合 1 个 identity chart
+    label === "ai-title.chart"
   );
 }
 

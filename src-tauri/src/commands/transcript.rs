@@ -9,7 +9,10 @@ use tokio::sync::mpsc;
 
 use crate::error::AppResult;
 use crate::fs::source::source_from_path;
-use crate::parser::claude::{normalize, NormalizedBlock, NormalizedMessage, TokenUsageOut};
+use crate::parser::claude::{
+    normalize, normalize_session as normalize_claude_session, NormalizedBlock, NormalizedMessage,
+    TokenUsageOut,
+};
 use crate::parser::jsonl;
 use crate::parser::kimi::normalize_session as normalize_kimi_session;
 use crate::parser::openclaw::normalize_entry;
@@ -94,7 +97,48 @@ pub async fn stream_transcript(
                 log::error!("kimi batch transcript 失败 ({}): {}", path_for_log, e);
                 let _ = err_tx.blocking_send(e);
             }
+        } else if src == "claude" {
+            // v0.9.17: claude 走 batch normalize_session — 聚合 1185 个 ai-title /
+            // custom-title events 为 1 个 ai-title.chart meta,避免详情页撑爆。
+            // streaming normalize() 保留给 export/analyze/subagent jsonls (scope 不同)。
+            let result: Result<(), String> = (|| {
+                // 1) 一次性读完所有 records
+                let mut records: Vec<serde_json::Value> = Vec::new();
+                jsonl::for_each_line(&p, |_idx, _byte, v| {
+                    records.push(v.clone());
+                })
+                .map_err(|e| e.to_string())?;
+                // 2) 跑 normalize_session → collapsed NormalizedMessage
+                let messages = normalize_claude_session(records);
+                // 3) 按 200 条一组分包
+                const SUB_BATCH: usize = 200;
+                let mut global_idx: usize = 0;
+                for chunk in messages.chunks(SUB_BATCH) {
+                    let entries: Vec<TranscriptEntryOut> = chunk
+                        .iter()
+                        .map(|norm| TranscriptEntryOut {
+                            index: global_idx,
+                            byte_offset: 0,
+                            raw: serde_json::Value::Null, // collapsed 后无对应 raw
+                            normalized: norm.clone(),
+                        })
+                        .collect();
+                    let start = global_idx;
+                    global_idx += entries.len();
+                    let _ = tx.blocking_send(StreamBatch {
+                        start_index: start,
+                        entries,
+                    });
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                log::error!("claude batch transcript 失败 ({}): {}", path_for_log, e);
+                let _ = err_tx.blocking_send(e);
+            }
         } else if let Err(e) = jsonl::stream_batches(&p, 500, |batch| {
+            // v0.9.17: claude 走 batch (上方 src == "claude" 分支), 这里只剩 openclaw
+            // (legacy streaming path)
             let entries: Vec<TranscriptEntryOut> = batch
                 .records
                 .iter()
