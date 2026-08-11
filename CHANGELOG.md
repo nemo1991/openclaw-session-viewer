@@ -2,6 +2,113 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.18] - 2026-08-11
+
+v0.9.10-17 是 chart meta kind 逐个引入(共 6 种,都各自独立 accent)。本版
+开启 **meta layer top-down 重设计** —— v0.9.18+ 把当前散落的 meta 抽象
+收拢为 4 层 (SessionOverview / ChartsRegion / EventMetaBlock /
+AttachmentBlock),详情页底部视觉混乱从根上理清。本版 (v0.9.18) 只落
+**M1**: palette 集中化 + 13 attachment kind 统一 slate。M2-M6 (ChartBlock
+抽象、AttachmentBlock 抽离、SessionOverview 抽出、ChartsRegion 独立、
+utility 集中) 分后续 release。
+
+### 关键决策 — 13 attachment kind 统一 slate
+
+v0.9.12-17 给 6 chart kind 各自分配独立 accent (teal / indigo / amber /
+violet / emerald / rose)。13 个 Claude attachment kind (plan_mode /
+task_reminder / pr_link / agent_name / agent_listing / skill_listing /
+file_snapshot / file-history-snapshot / invoked_skills /
+plan_file_reference / compact_file_reference / attached_file /
+queued_command / queue_operation) 之前共用 generic wrapper 无 accent,
+详情页多种 meta 共存时视觉拥挤。v0.9.18 决策:
+
+- 13 attachment kind 统一用 **slate** accent (`rgba(100,116,139,0.6)`
+  border + 0.04 alpha bg),作为一个 "attachment 类别" 跟 6 chart 区分。
+- 预留 `eventMeta` (较弱 slate,border 0.4 vs 0.6) 跟 `attachment`
+  共享 slate 但视觉梯度更低,3 层视觉梯度: chart > attachment >
+  eventMeta。
+- palette 仍 6 chart + 1 slate = 7 key,饱和度可控。
+
+### 关键决策 — accent token 集中化
+
+accent token 之前散在 `MessageBubble.css` 各处 (`.compaction-meta` /
+`.usage-chart-meta` / …),改一处需查多处。v0.9.18 集中到:
+
+- **TS 端**: `packages/frontend/src/theme/meta-palette.ts` 导出
+  `META_ACCENT` 对象 (8 个 key × 8 字段 border/bg/tagBg/tagFg/
+  barAlpha/barSolid/badge/displayName) + `ATTACHMENT_META_LABELS`
+  Set (13 个 attachment label 字符串,未来 M3 dispatcher 用)。
+- **CSS 端**: `theme/tokens.css` 加 `--meta-accent-X-border` /
+  `--meta-accent-X-bg` 16 个 CSS variables,跟 TS token 一一对应。
+- **CSS class 端**: `MessageBubble.css` 新增 `.attachment-block-meta` /
+  `.event-meta-block-meta` 两个 wrapper class,引用 CSS variables。
+- **Component 端**: 13 attachment case + `FileSnapshotBlock` 的 wrapper
+  从 `block-meta-info meta-block-flat` 改为
+  `block-meta-info meta-block-flat attachment-block-meta`。
+- 6 chart wrapper 不动 (各自 `<kind>-chart-meta` accent class 保留)。
+
+### Added
+
+- **`packages/frontend/src/theme/meta-palette.ts`** (~165 行) —
+  集中 `META_ACCENT` / `CHART_META_LABELS` / `ATTACHMENT_META_LABELS`
+  三个 export。`MetaAccent` interface 描述每个 accent 的 8 字段。
+- **`theme/tokens.css`** 新增 16 个 `--meta-accent-X-border` /
+  `--meta-accent-X-bg` CSS variables(浅色主题;深色主题适配留后续)。
+- **`MessageBubble.css`** 新增 `.attachment-block-meta` (slate 0.6
+  border + 0.04 bg) 跟 `.event-meta-block-meta` (slate 0.4 border +
+  0.03 bg) 两个 wrapper class。
+- **`docs/adr/0001-meta-kind-accent-colors.md`** update — Status 改
+  v0.9.18,加 "v0.9.18 update" 段落记录 13 attachment slate 决策 +
+  token 集中化 + 4 个备选 + 后果。
+- **`packages/frontend/CONTEXT.md`** 新增 `META_ACCENT` 术语条目,
+  描述 `theme/meta-palette.ts` 8 个 key 跟 CSS variables 一一对应。
+
+### Changed
+
+- **`MetaBlock.tsx`** — 13 attachment case (line 68/102/121/156/172/
+  185/269/287/305/325/345/366) + `FileSnapshotBlock` (line 1441) 的
+  wrapper className 从 `block-meta-info meta-block-flat` 改为
+  `block-meta-info meta-block-flat attachment-block-meta`。共 14 处
+  wrapper,6 chart kind wrapper 未动。
+- **`MessageBubble.css`** — 13 attachment kind wrapper 不再 hardcode
+  inline color,统一通过 `.attachment-block-meta` 引用 CSS variables。
+
+### 不动
+
+- 6 chart kind wrapper (compaction / tools-snapshot / usage-chart /
+  request-chart / todos-chart / ai-title-chart) 各自 `<kind>-chart-meta`
+  accent 保留
+- Rust backend (chart builders 逻辑不变)
+- DB schema
+- export / analyze 路径
+- SubagentMetaBlock (独立组件)
+
+### Tests
+
+- typecheck ✓
+- 47 个 MetaBlock 测试 ✓
+- 15 个 SubagentMetaBlock 测试 ✓
+- 总 62 个测试全过(0 回归)
+
+### Numbers
+
+- 新增 1 file (theme/meta-palette.ts ~165 行)
+- 修改 5 files (tokens.css / MessageBubble.css / MetaBlock.tsx /
+  docs/adr/0001 / CONTEXT.md)
+- CSS classes 新增 2 (.attachment-block-meta / .event-meta-block-meta)
+- CSS variables 新增 16
+- TS accent token: 8 key × 8 fields = 64 字段
+- attachment label 集合: 17 (13 + 4 hyphen twin pr-link/agent-name/
+  agent_listing_delta/file-history-snapshot)
+
+### Notes
+
+- 深色主题适配留后续 (dark mode `[data-theme="dark"]` 块覆盖
+  `--meta-accent-X-*` 即可,无需改 TS)
+- M2-M6 分后续 release:M2 (ChartBlock 抽象) / M3 (AttachmentBlock
+  抽离) / M4 (SessionOverview 抽出) / M5 (ChartsRegion 独立) /
+  M6 (utility 集中 + ADR 收尾)
+
 ## [0.9.17] - 2026-08-11
 
 v0.9.10-16 是 kimi parser chart series (compaction / tools_snapshot / usage /

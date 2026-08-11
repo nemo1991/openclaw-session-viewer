@@ -1516,3 +1516,31 @@
 .ai-title-chart-raw-row:last-child {
   border-bottom: none;
 }
+
+/* === v0.9.18: 13 个 attachment kind 统一 slate accent ===
+ *
+ * v0.9.18 meta layer top-down 重设计决策:13 个 Claude attachment kind
+ * (plan_mode / task_reminder / pr_link / agent_name / agent_listing /
+ * skill_listing / file_snapshot / file-history-snapshot / invoked_skills /
+ * plan_file_reference / compact_file_reference / attached_file /
+ * queued_command / queue_operation) 全部统一用 slate accent,作为
+ * "attachment 类别"跟 6 chart (teal/indigo/amber/violet/emerald/rose)
+ * 区分。配色跟 SVG bar 强绑定的原则不适用 — attachment kind 没 chart
+ * 可视化,只需 border + bg 一致即可。
+ *
+ * 用 var(--meta-accent-attachment-border) 跟 var(--meta-accent-attachment-bg)
+ * 跟 theme/tokens.css 的 --meta-accent-attachment-* 一一对应,改一处全局生效。
+ */
+.attachment-block-meta {
+  border-left: 3px solid var(--meta-accent-attachment-border, rgba(100, 116, 139, 0.6));
+  background: var(--meta-accent-attachment-bg, rgba(100, 116, 139, 0.04));
+}
+
+/* v0.9.18: 单事件 inline meta (Kimi metadata / config.update / OpenClaw
+ * model_change / label / 等) 也用 slate,但 accent 略弱(border 0.4 vs 0.6),
+ * 跟 attachment / chart 视觉上分梯度:chart > attachment > eventMeta。
+ */
+.event-meta-block-meta {
+  border-left: 3px solid var(--meta-accent-event-meta-border, rgba(100, 116, 139, 0.4));
+  background: var(--meta-accent-event-meta-bg, rgba(100, 116, 139, 0.03));
+}

@@ -63,6 +63,26 @@
   --color-input-border: #d0d7de;
   --color-canvas: #f6f8fa;
   --color-focus: #0969da;
+
+  /* v0.9.18: meta layer accent palette (跟 theme/meta-palette.ts 一一对应)
+   * 6 chart kind 各自独立 accent + 13 attachment / eventMeta 统一 slate。
+   * 集中化便于未来重调主题或深色模式适配。 */
+  --meta-accent-compaction-border: rgba(0, 181, 173, 0.6);
+  --meta-accent-compaction-bg: rgba(0, 181, 173, 0.04);
+  --meta-accent-tools-snapshot-border: rgba(99, 102, 241, 0.6);
+  --meta-accent-tools-snapshot-bg: rgba(99, 102, 241, 0.04);
+  --meta-accent-usage-chart-border: rgba(245, 158, 11, 0.6);
+  --meta-accent-usage-chart-bg: rgba(245, 158, 11, 0.04);
+  --meta-accent-request-chart-border: rgba(139, 92, 246, 0.6);
+  --meta-accent-request-chart-bg: rgba(139, 92, 246, 0.04);
+  --meta-accent-todo-chart-border: rgba(16, 185, 129, 0.6);
+  --meta-accent-todo-chart-bg: rgba(16, 185, 129, 0.04);
+  --meta-accent-ai-title-chart-border: rgba(244, 63, 94, 0.6);
+  --meta-accent-ai-title-chart-bg: rgba(244, 63, 94, 0.04);
+  --meta-accent-attachment-border: rgba(100, 116, 139, 0.6);
+  --meta-accent-attachment-bg: rgba(100, 116, 139, 0.04);
+  --meta-accent-event-meta-border: rgba(100, 116, 139, 0.4);
+  --meta-accent-event-meta-bg: rgba(100, 116, 139, 0.03);
 }
 
 [data-theme="dark"] {

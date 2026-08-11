@@ -34,6 +34,8 @@ import { UsageChartSvg } from "./UsageChart";
 import { RequestChartSvg } from "./RequestChart";
 import { TodoChartSvg } from "./TodoChart";
 import { AiTitleChartSvg } from "./AiTitleChart";
+// v0.9.18: 13 个 attachment kind 共享 slate accent 集中到 meta-palette.ts
+import { ATTACHMENT_META_LABELS } from "../../theme/meta-palette";
 
 export interface MetaBlockProps {
   block: NormalizedBlockFE;
@@ -63,7 +65,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
               ? `-${removed.length} agent`
               : "无变化";
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🤖 agent</span>
           <span className="meta-primary-text">{totalLabel}</span>
           {added.length > 0 && (
@@ -97,7 +99,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const names = (get("names") as string[]) ?? [];
       const count = Number(get("skillCount") ?? names.length);
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🛠 skill</span>
           <span className="meta-primary-text">{count} 个 skill</span>
           <div className="meta-list meta-list-scrollable" data-count={count}>
@@ -116,7 +118,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const reminder = String(get("reminderType") ?? "");
       const isFull = reminder === "full";
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📋 plan_mode</span>
           <span className="meta-primary-text">{hasPlan ? "活动计划已存在" : "无活动计划"}</span>
           {reminder && (
@@ -151,7 +153,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const url = String(get("prUrl") ?? "");
       const text = repo ? `${repo}#${prNum}` : `PR #${prNum}`;
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🔗 pr_link</span>
           {url ? (
             <a className="meta-link" href={url} target="_blank" rel="noreferrer">
@@ -167,7 +169,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
     case "agent-name": {
       const name = String(get("agentName") ?? "");
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🏷 agent_name</span>
           <span className="meta-primary-text">{name || "(未命名)"}</span>
         </div>
@@ -180,7 +182,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const completed = Number(get("completedCount") ?? 0);
       const content = (get("content") as Array<Record<string, unknown>>) ?? [];
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📝 task_reminder</span>
           <span className="meta-primary-text">
             {pending} 待办 · {inProgress} 进行 · {completed} 完成 · 共 {itemCount} 个
@@ -264,7 +266,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
     case "invoked_skills": {
       const skills = (get("skills") as Array<{ name?: string; path?: string }>) ?? [];
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">⚙ invoked_skills</span>
           <span className="meta-primary-text">{skills.length} 个 skill</span>
           <div className="meta-list">
@@ -282,7 +284,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const preview = String(get("planContentPreview") ?? "");
       const fileName = path.split("/").pop() ?? path;
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📋 plan_file_reference</span>
           <div className="meta-plan-block">
             <div className="meta-plan-path-row">
@@ -300,7 +302,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const filename = String(get("filename") ?? "");
       const displayPath = String(get("displayPath") ?? "");
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📦 compact_file_reference</span>
           {filename && (
             <div className="meta-plan-block">
@@ -320,7 +322,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const displayPath = String(get("displayPath") ?? "");
       const contentType = String(get("contentType") ?? "unknown");
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🗂 attached_file</span>
           <span className="meta-sub">type: {contentType}</span>
           {filename && (
@@ -340,7 +342,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const preview = String(get("promptPreview") ?? "");
       const mode = String(get("commandMode") ?? "");
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📤 queued_command</span>
           {mode && (
             <span className="meta-reminder-pill meta-reminder-full" title={`commandMode: ${mode}`}>
@@ -361,7 +363,7 @@ export function MetaBlock({ block, label, parentJsonlPath }: MetaBlockProps) {
       const ts = String(get("timestamp") ?? "");
       const isEnqueue = op === "enqueue";
       return (
-        <div className="block-meta-info meta-block-flat">
+        <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span
             className={`meta-reminder-pill ${isEnqueue ? "meta-reminder-full" : "meta-reminder-none"}`}
             title={ts}
@@ -1436,7 +1438,7 @@ function FileSnapshotBlock({
   const overflow = fileCount - FILE_SNAPSHOT_VISIBLE_DEFAULT;
   const showToggle = overflow > 0;
   return (
-    <div className="block-meta-info meta-block-flat">
+    <div className="block-meta-info meta-block-flat attachment-block-meta">
       <span className="meta-kind-badge">📁 file_snapshot</span>
       <span className="meta-primary-text">
         {fileCount > 0 ? `${fileCount} 个跟踪文件` : "空 snapshot (无文件)"}
