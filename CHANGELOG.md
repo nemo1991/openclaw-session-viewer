@@ -2,6 +2,140 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.19] - 2026-08-12
+
+v0.9.18 (M1) 把 accent palette 集中 + 13 attachment kind 统一 slate。
+本版 (v0.9.19) 落 **M2 — ChartBlock 抽象提取**:6 个 chart meta block
+的渲染从 `MetaBlock.tsx` (1692 行) 抽到独立 file,`MetaBlock` 只剩
+router + 13 attachment case + 共享 helper (~658 行,减肥 60%)。
+
+### 关键决策 — ChartBlock dispatcher pattern
+
+`MetaBlock.tsx` 之前既做 dispatcher 又内联 6 个 chart 渲染函数 (每个
+~150 行),3 层抽象混在一个文件。M2 按抽象层拆:
+
+- **`<ChartBlock>` dispatcher** (~30 行, `meta/ChartBlock.tsx`) —
+  纯 `switch (block.label)`,路由到 6 个 chart sub-component。
+- **6 个 chart sub-component** (`meta/charts/{Compaction,ToolsSnapshot,
+UsageChart,RequestChart,TodoChart,AiTitleChart}MetaBlock.tsx`,
+  各 < 300 行) — 每个只负责一个 chart kind 的 SVG + stats panel +
+  fallback 到 `UnknownBlockCard`。
+- **共享 utility** (`meta/charts/chart-utils.ts` ~70 行) — `num` /
+  `formatTokens` / `formatTokenShort` / `formatDurationMs` /
+  `readMetaField`(snake + camel 双查),6 个 sub-component 复用。
+
+之后 M3 拆 EventMetaBlock / AttachmentBlock 时,`<MetaBlock>` 顶层
+switch 路由会扩成 4 个 layer 之一(chart 已是其中之一),chart 这层
+不再需要重构。
+
+### 关键决策 — 命名一致性
+
+原 `MetaBlock.tsx` 里 6 个 chart 函数命名不统一:
+
+- `CompactionMetaBlock` (line 401) → 重命名为 `CompactionChartMetaBlock`
+- `ToolsSnapshotMetaBlock` (line 497) → 重命名为 `ToolsSnapshotChartMetaBlock`
+- `UsageChartMetaBlock` / `RequestChartMetaBlock` / `TodoChartMetaBlock` /
+  `AiTitleChartMetaBlock` 名称已统一,只移动位置
+
+新 file 名一律 `{Kind}ChartMetaBlock.tsx`(突出 "Chart" 前缀,跟
+后续 M3 的 `EventMetaBlock` / `AttachmentBlock` 视觉一致)。
+
+### 关键决策 — readMetaField 复用 + snake/camel 双查保留
+
+chart-utils 暴露 `readMetaField(block, ...keys)`,跟原 `MetaBlock` 内
+联 `get(...keys)` 同 pattern:
+
+1. 先查 `block[k]` (新 wire: 顶层 snake_case 平铺)
+2. 再查 `block.payload[k]` (老 wire / 老 DB 缓存)
+3. 都失败返回 `undefined`
+
+6 个 chart sub-component 共用,避免每个 file 重写 helper。M6 集中
+到 `lib/meta.ts.getMetaField` 后这里保留一份兼容调用即可。
+
+### Added
+
+- **`packages/frontend/src/components/meta/ChartBlock.tsx`** (~30 行)
+  — 纯 dispatcher,switch by `block.label`,未知 label 走
+  `UnknownBlockCard` 兜底。
+- **`packages/frontend/src/components/meta/charts/chart-utils.ts`**
+  (~70 行) — `num` / `formatTokens` / `formatTokenShort` /
+  `formatDurationMs` / `readMetaField` 5 个共享工具。
+- **`packages/frontend/src/components/meta/charts/CompactionChartMetaBlock.tsx`**
+  (~70 行) — 从 MetaBlock.tsx line 401-465 抽出,teal accent。
+- **`packages/frontend/src/components/meta/charts/ToolsSnapshotChartMetaBlock.tsx`**
+  (~80 行) — 从 line 497-568 抽出,indigo accent。
+- **`packages/frontend/src/components/meta/charts/UsageChartMetaBlock.tsx`**
+  (~155 行) — 从 line 590-748 抽出,amber accent,复用 `UsageChartSvg`。
+- **`packages/frontend/src/components/meta/charts/RequestChartMetaBlock.tsx`**
+  (~210 行) — 从 line 778-976 抽出,violet accent,复用
+  `RequestChartSvg`,含 drift events 折叠交互。
+- **`packages/frontend/src/components/meta/charts/TodoChartMetaBlock.tsx`**
+  (~180 行) — 从 line 1010-1187 抽出,emerald accent,含
+  completed tasks + churn events 双折叠交互。
+- **`packages/frontend/src/components/meta/charts/AiTitleChartMetaBlock.tsx`**
+  (~210 行) — 从 line 1232-1410 抽出,rose accent,含 top titles +
+  title timeline 双折叠交互。
+
+### Changed
+
+- **`packages/frontend/src/components/meta/MetaBlock.tsx`** —
+  1692 → 658 行 (减肥 60%)。删除:
+  - 6 个 in-file chart 函数 (`CompactionMetaBlock` /
+    `ToolsSnapshotMetaBlock` / `UsageChartMetaBlock` /
+    `RequestChartMetaBlock` / `TodoChartMetaBlock` /
+    `AiTitleChartMetaBlock`)
+  - 4 个 chart utility (`num` / `formatTokens` / `formatDurationMs` /
+    `formatTokenShort`)
+  - 4 个 SVG import (`UsageChartSvg` / `RequestChartSvg` /
+    `TodoChartSvg` / `AiTitleChartSvg`)
+  - 6 chart case (line 376-394) 合并为单一 `case` 块,统一调用
+    `<ChartBlock block={block} />`
+  - 13 attachment case + `FileSnapshotBlock` / `PlanFilePath` /
+    `RevealErrorActions` / `FilePathClickable` 保持原样
+
+### 不动
+
+- 13 attachment case 渲染逻辑(只 dispatch 路径变,行为不变)
+- `FileSnapshotBlock` / `PlanFilePath` / `RevealErrorActions` /
+  `FilePathClickable` 4 个 helper
+- 6 个 SVG 组件 (`UsageChart` / `RequestChart` / `TodoChart` /
+  `AiTitleChart` / 已存在的 `Compaction` 相关 / 已存在的
+  `ToolsSnapshot` 相关 — chart meta block 只引用不内嵌)
+- `UnknownBlockCard` / `SubagentMetaBlock` (独立组件)
+- Rust backend (chart builders 逻辑不变)
+- DB schema
+- export / analyze 路径
+- message bubble / routes / store
+
+### Tests
+
+- typecheck ✓
+- 47 个 MetaBlock 测试 ✓(路由逻辑不变,所有 attachment case 测
+  试照常通过;6 chart case 不在 MetaBlock.test.tsx 里直接测,而是
+  走 chart sub-component 内部 — 之前也没测,这次拆分不引入回归)
+- 15 个 SubagentMetaBlock 测试 ✓
+- 639 frontend tests 全过(0 回归)
+- 341 cargo tests 全过(0 回归)
+
+### Numbers
+
+- 新增 8 files (1 dispatcher + 1 utility + 6 chart sub-component)
+- 新增总行数 ~955 行 (6 chart sub-component + utility + dispatcher)
+- 删除 ~1023 行 (6 in-file chart 函数 + 4 utility + SVG imports)
+- MetaBlock.tsx: 1692 → 658 行(-1034 行, -61%)
+- meta/ 目录: 1 file → 9 files(职责分散化)
+
+### Notes
+
+- 6 chart sub-component 的 `data-testid` 保持不变,既有的 CSS
+  (`.compaction-meta` / `.usage-chart-meta` / 等) 也照常匹配,无
+  视觉回归
+- M3 (EventMetaBlock / AttachmentBlock 抽离) 会在 `MetaBlock.tsx`
+  顶层 router 之前先做,预计再减肥 ~250 行
+- M6 会把 `chart-utils.ts` 的 `readMetaField` / `num` /
+  `formatTokens` 等提到 `lib/meta.ts` 集中;当前 6 个 chart
+  sub-component 共用一份,已经满足 DRY 原则
+
 ## [0.9.18] - 2026-08-11
 
 v0.9.10-17 是 chart meta kind 逐个引入(共 6 种,都各自独立 accent)。本版
