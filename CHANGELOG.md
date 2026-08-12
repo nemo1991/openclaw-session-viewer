@@ -2,6 +2,66 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.25] - 2026-08-12
+
+v0.9.24 (M7) 完成 SessionHeader + SessionNotesPanel 抽出。本版
+(v0.9.25) 落 **M8 — snake/camel 第二阶段撤兼容**:撤掉 chart block
+payload 的 dead camel fallback,删 2 个无 caller 的 utility,退役
+ADR 0001 (chart block payload 部分)。
+
+### 关键反向发现
+
+ADR 0001 假设 "Rust 端统一加 `#[serde(rename_all="camelCase")]`,
+新 emit 全是 camelCase" — 只对 typed IPC struct (SessionMeta /
+StreamBatch / 等 37 处) 成立。对 chart block payload 实际不成立:
+`parser/kimi.rs` + `parser/claude.rs` 走手动 `data.insert("snake_key",
+...)` emit(不走 serde rename),输出始终 snake_case。
+
+意味着前端 `(snake, camel)` 双查的 ~53 处里, **camel 半边是 dead
+code** — 没有 emit 源,永远拿不到值。M8 撤掉 camel 半边。
+
+### 关键决策 — 3 件事
+
+**1. Frontend chart 调用简化 (~53 calls)**
+
+`UsageChartMetaBlock` (10) / `RequestChartMetaBlock` (15) /
+`TodoChartMetaBlock` (12) / `AiTitleChartMetaBlock` (10) /
+`CompactionChartMetaBlock` (8) / `ToolsSnapshotChartMetaBlock` (3) —
+全部从 `(snake, camel)` 简化为单 `snake`。**渲染行为 0 regression**
+(原来 camel 半边永远拿不到值,删了没影响)。
+
+**2. `lib/meta.ts::getPayloadField` + `unwrapPayload` 删**
+
+0 callsite,从 M6 (v0.9.21) 引入就没人用。`getMetaField` 内部已经
+吸收了 payload fallback 语义(`block[k] ?? block.payload[k]`),
+外部 caller 不需要 2 个独立 utility。
+
+**3. ADR 0001 退役 (chart block payload 部分)**
+
+Status 改 "superseded by v0.9.25 M8 (chart block payload)"。补充
+"Status (updated v0.9.25)" section 描述实际 emit 跟假设的反向
+差异 + 哪些 typed IPC struct 仍然 valid。
+
+### Latent bug 顺手修
+
+- **`contextSummary` → `context_summary`** — Rust emit `data.insert(
+"context_summary", ...)` (`kimi.rs:686`),前端查 `contextSummary`
+  (camel) 永远 undefined,`!summary && contextSummary` UI 分支从来没
+  渲染过。改 snake 后能正常显示 kimi 上下文压缩系统提示
+- **3-key `(snapshot_hash, snapshotHash, hash)` → 单 `snapshot_hash`** —
+  `hash` 是 inbound Kimi wire key(`kimi.rs:762` 读 `obj.get("hash")`),
+  re-emit 时 Rust 转 snake(`kimi.rs:764`),`"hash"` 永远不会出现在
+  block payload 里。`snapshotHash` + `hash` 都是 dead branch
+
+### 不在范围
+
+- **统一 chart block emit 到 camelCase** — 跟 attachment block 看齐
+  (后者 emit camelCase)。scope 大:rust parser 改 emit + frontend
+  bucket interface 改 + 所有 test fixture 改。留作 M9+
+- **`graph.rs::GraphNodeFE` / `EdgeFE` 的 `rename_all="snake_case"`**
+  — deliberate,镜像 SQLite column 名,不动
+- **typed IPC struct** — 早已单 camelCase emit + 读,无双查,不动
+
 ## [0.9.24] - 2026-08-12
 
 v0.9.23 (M5) 完成 L2 ChartsRegion。本版 (v0.9.24) 落 **M7 —

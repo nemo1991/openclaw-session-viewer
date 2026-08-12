@@ -18,16 +18,17 @@ export function CompactionChartMetaBlock({ block }: { block: NormalizedBlockFE }
     typeof readMetaField(block, "summary") === "string"
       ? (readMetaField(block, "summary") as string)
       : null;
+  // v0.9.25 (M8): 前端之前查 "contextSummary" (camel) 是 dead code —
+  // Rust emit "context_summary" (snake) (kimi.rs:686),`!summary &&
+  // contextSummary` UI 分支从来没渲染过。改回 snake key,顺手修 latent bug。
   const contextSummary =
-    typeof readMetaField(block, "contextSummary") === "string"
-      ? (readMetaField(block, "contextSummary") as string)
+    typeof readMetaField(block, "context_summary") === "string"
+      ? (readMetaField(block, "context_summary") as string)
       : null;
-  const tokensBefore = num(readMetaField(block, "tokens_before", "tokensBefore"));
-  const tokensAfter = num(readMetaField(block, "tokens_after", "tokensAfter"));
-  const compactedCount = num(readMetaField(block, "compacted_count", "compactedCount"));
-  const keptUserCount = num(
-    readMetaField(block, "kept_user_message_count", "keptUserMessageCount")
-  );
+  const tokensBefore = num(readMetaField(block, "tokens_before"));
+  const tokensAfter = num(readMetaField(block, "tokens_after"));
+  const compactedCount = num(readMetaField(block, "compacted_count"));
+  const keptUserCount = num(readMetaField(block, "kept_user_message_count"));
 
   // 缺 summary 也缺 stats — fallback 到 UnknownBlockCard,让老数据仍能看
   if (!summary && tokensBefore === null && tokensAfter === null) {

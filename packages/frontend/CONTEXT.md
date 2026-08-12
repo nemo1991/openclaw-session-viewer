@@ -132,15 +132,19 @@ aiTitleChart)各自独立配色;attachment (13 个 Claude attachment kind
 `--meta-accent-X-*` CSS variables 一一对应,改一处全局生效。
 _Avoid_: color palette, theme token
 
-**getMetaField** (v0.9.21, M6):
-meta 字段读取 utility,从 `lib/meta.ts` 导出。snake*case + camelCase
-双查 + 顶层 + payload 双源 fallback。4 个 chart SVG / 6 chart
-sub-component / `<AttachmentBlock>` / `<EventMetaBlock>` 共享。
-\_Avoid*: snake camel compat, dual lookup
+**getMetaField** (v0.9.21 M6 / v0.9.25 M8):
+meta 字段读取 utility,从 `lib/meta.ts` 导出。**v0.9.25 后**: 顶层
 
-**lib/meta.ts** (v0.9.21, M6):
-meta 子组件的 utility 集中,导出 `getMetaField` / `unwrapPayload` /
-`getPayloadField` / `numOrZero` / `numOrNull` / `formatPreviewValue`。
+- payload 双源 fallback (单 snake_case key)。M6 引入时是 snake +
+  camel + 顶层 + payload 四维双查,M8 发现 chart block payload 实际 emit
+  snake (Rust `data.insert("snake_key", ...)` 不走 serde rename),
+  camel 半边是 dead code,撤掉。
+  \_Avoid\*: snake camel compat, dual lookup
+
+**lib/meta.ts** (v0.9.21 M6 / v0.9.25 M8):
+meta 子组件的 utility 集中,导出 `getMetaField` / `numOrZero` /
+`numOrNull` / `formatPreviewValue` (4 个)。M6 引入时还有
+`unwrapPayload` + `getPayloadField` (各 7 行,0 caller),M8 删了。
 `charts/chart-utils.ts` 保留作为 re-export shim,内部组件仍然从
 `./chart-utils` import,行为不变。
 _Avoid_: meta utils, format helpers

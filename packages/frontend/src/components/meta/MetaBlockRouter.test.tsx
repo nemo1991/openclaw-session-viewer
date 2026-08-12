@@ -11,6 +11,10 @@
  * 而非 UnknownBlockCard),本测试只覆盖 router 路由正确性,具体 layer
  * 渲染细节在 `ChartBlock.test.tsx` / `AttachmentBlock.test.tsx` /
  * `EventMetaBlock.test.tsx` 里覆盖。
+ *
+ * v0.9.25 (M8): 加 2 个 regression test 验证 snake/camel 撤兼容 —
+ * chart 必须从 snake payload 渲染,只给 camelCase key 时 fallback 到
+ * UnknownBlockCard (camel 半边已 dead)。
  */
 
 // @vitest-environment jsdom
@@ -123,5 +127,41 @@ describe("MetaBlockRouter", () => {
       />
     );
     expect(container.querySelector(".attachment-block-meta")).toBeInTheDocument();
+  });
+
+  // ===== v0.9.25 (M8) regression: snake/camel 撤兼容 =====
+  // chart block payload 必须 snake (Rust `data.insert("snake", ...)`),
+  // camel 半边已 dead — 防止以后又有人加 camel fallback 搞反方向。
+
+  it("usage.chart 从 snake payload 正常 render (buckets/input_other/total_tokens)", () => {
+    const { container } = render(
+      <MetaBlockRouter
+        block={makeBlock("usage.chart", {
+          buckets: [{ input_other: 100, output: 50, input_cache_read: 25 }],
+          total_tokens: 175,
+        })}
+        label="usage.chart"
+      />
+    );
+    // UsageChartSvg 渲染 → bar 数 = buckets.length (1)
+    expect(container.querySelector(".usage-chart-svg")).toBeInTheDocument();
+    // 不应 fallback 到 UnknownBlockCard
+    expect(container.querySelector(".unknown-block-card")).not.toBeInTheDocument();
+  });
+
+  it("usage.chart 只给 camelCase key → fallback 到 UnknownBlockCard (camel 半边已 dead)", () => {
+    const { container } = render(
+      <MetaBlockRouter
+        block={makeBlock("usage.chart", {
+          buckets: [{ inputOther: 100, output: 50, inputCacheRead: 25 }],
+          totalTokens: 175,
+        })}
+        label="usage.chart"
+      />
+    );
+    // M8 后 camelCase-only payload 拿不到任何 snake key:
+    // total_tokens → undefined → UsageChartMetaBlock 走 UnknownBlockCard fallback
+    expect(container.querySelector(".unknown-block-card")).toBeInTheDocument();
+    expect(container.querySelector(".usage-chart-svg")).not.toBeInTheDocument();
   });
 });

@@ -21,21 +21,18 @@ import type { NormalizedBlockFE } from "../../../lib/api";
 import { num, formatDurationMs, readMetaField } from "./chart-utils";
 
 export function AiTitleChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
-  const eventCount = num(readMetaField(block, "event_count", "eventCount")) ?? 0;
-  const uniqueTitleCount = num(readMetaField(block, "unique_title_count", "uniqueTitleCount")) ?? 0;
-  const customTitleCount = num(readMetaField(block, "custom_title_count", "customTitleCount")) ?? 0;
-  const aiTitleCount = num(readMetaField(block, "ai_title_count", "aiTitleCount")) ?? 0;
-  const titleChangesCount =
-    num(readMetaField(block, "title_changes_count", "titleChangesCount")) ?? 0;
-  const currentTitle = String(readMetaField(block, "current_title", "currentTitle") ?? "");
-  const firstSeenTitle = String(readMetaField(block, "first_seen_title", "firstSeenTitle") ?? "");
-  const durationMs = num(readMetaField(block, "duration_ms", "durationMs")) ?? 0;
+  const eventCount = num(readMetaField(block, "event_count")) ?? 0;
+  const uniqueTitleCount = num(readMetaField(block, "unique_title_count")) ?? 0;
+  const customTitleCount = num(readMetaField(block, "custom_title_count")) ?? 0;
+  const aiTitleCount = num(readMetaField(block, "ai_title_count")) ?? 0;
+  const titleChangesCount = num(readMetaField(block, "title_changes_count")) ?? 0;
+  const currentTitle = String(readMetaField(block, "current_title") ?? "");
+  const firstSeenTitle = String(readMetaField(block, "first_seen_title") ?? "");
+  const durationMs = num(readMetaField(block, "duration_ms")) ?? 0;
   const buckets = (readMetaField(block, "buckets") as Array<Record<string, unknown>>) ?? [];
   const titleTimeline =
-    (readMetaField(block, "title_timeline", "titleTimeline") as Array<Record<string, unknown>>) ??
-    [];
-  const topTitles =
-    (readMetaField(block, "top_titles", "topTitles") as Array<Record<string, unknown>>) ?? [];
+    (readMetaField(block, "title_timeline") as Array<Record<string, unknown>>) ?? [];
+  const topTitles = (readMetaField(block, "top_titles") as Array<Record<string, unknown>>) ?? [];
   const pl = (block.payload ?? {}) as Record<string, unknown>;
   const rawEvents = (pl.raw_events as Array<Record<string, unknown>>) ?? [];
   const rawCount = (pl.raw_count as number) ?? rawEvents.length;

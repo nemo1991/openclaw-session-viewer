@@ -17,32 +17,26 @@ import { num, formatDurationMs, readMetaField } from "./chart-utils";
 
 export function RequestChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
   const pl = (block.payload ?? {}) as Record<string, unknown>;
-  const requestCount = num(readMetaField(block, "request_count", "requestCount"));
-  const kindLoop = num(readMetaField(block, "kind_loop", "kindLoop")) ?? 0;
-  const kindCompaction = num(readMetaField(block, "kind_compaction", "kindCompaction")) ?? 0;
-  const compactionPct = num(readMetaField(block, "compaction_pct", "compactionPct"));
-  const maxTokensMin = num(readMetaField(block, "max_tokens_min", "maxTokensMin")) ?? 0;
-  const maxTokensMax = num(readMetaField(block, "max_tokens_max", "maxTokensMax")) ?? 0;
-  const maxTokensAvg = num(readMetaField(block, "max_tokens_avg", "maxTokensAvg")) ?? 0;
-  const messageCountMin = num(readMetaField(block, "message_count_min", "messageCountMin")) ?? 0;
-  const messageCountMax = num(readMetaField(block, "message_count_max", "messageCountMax")) ?? 0;
-  const turnIndexMin = num(readMetaField(block, "turn_index_min", "turnIndexMin")) ?? 0;
-  const turnIndexMax = num(readMetaField(block, "turn_index_max", "turnIndexMax")) ?? 0;
-  const toolsHashBaseline = String(
-    readMetaField(block, "tools_hash_baseline", "toolsHashBaseline") ?? ""
-  );
-  const toolsHashDriftCount =
-    num(readMetaField(block, "tools_hash_drift_count", "toolsHashDriftCount")) ?? 0;
-  const systemPromptHashDistinct =
-    num(readMetaField(block, "system_prompt_hash_distinct", "systemPromptHashDistinct")) ?? 0;
+  const requestCount = num(readMetaField(block, "request_count"));
+  const kindLoop = num(readMetaField(block, "kind_loop")) ?? 0;
+  const kindCompaction = num(readMetaField(block, "kind_compaction")) ?? 0;
+  const compactionPct = num(readMetaField(block, "compaction_pct"));
+  const maxTokensMin = num(readMetaField(block, "max_tokens_min")) ?? 0;
+  const maxTokensMax = num(readMetaField(block, "max_tokens_max")) ?? 0;
+  const maxTokensAvg = num(readMetaField(block, "max_tokens_avg")) ?? 0;
+  const messageCountMin = num(readMetaField(block, "message_count_min")) ?? 0;
+  const messageCountMax = num(readMetaField(block, "message_count_max")) ?? 0;
+  const turnIndexMin = num(readMetaField(block, "turn_index_min")) ?? 0;
+  const turnIndexMax = num(readMetaField(block, "turn_index_max")) ?? 0;
+  const toolsHashBaseline = String(readMetaField(block, "tools_hash_baseline") ?? "");
+  const toolsHashDriftCount = num(readMetaField(block, "tools_hash_drift_count")) ?? 0;
+  const systemPromptHashDistinct = num(readMetaField(block, "system_prompt_hash_distinct")) ?? 0;
   const model = String(readMetaField(block, "model") ?? "");
   const provider = String(readMetaField(block, "provider") ?? "");
-  const durationMs = num(readMetaField(block, "duration_ms", "durationMs")) ?? 0;
+  const durationMs = num(readMetaField(block, "duration_ms")) ?? 0;
   const buckets = (readMetaField(block, "buckets") as Array<Record<string, unknown>>) ?? [];
   const driftEvents =
-    (readMetaField(block, "system_prompt_drift_events", "systemPromptDriftEvents") as Array<
-      Record<string, unknown>
-    >) ?? [];
+    (readMetaField(block, "system_prompt_drift_events") as Array<Record<string, unknown>>) ?? [];
   const rawEvents = (pl.raw_events as Array<Record<string, unknown>>) ?? [];
   const rawCount = (pl.raw_count as number) ?? rawEvents.length;
 

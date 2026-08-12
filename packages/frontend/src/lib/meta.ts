@@ -8,14 +8,19 @@
  * `charts/chart-utils.ts`,AttachmentBlock 又有自己的内联 `get`。
  *
  * M6 集中:
- * - `getMetaField(block, ...keys)`: snake + camel + 顶层 + payload 双查
- *   (历史包袱:Rust 早期 emit snake_case 平铺 + 老 wire / DB 缓存)
- * - `unwrapPayload(block)`: 返回 `block.payload ?? block`,安全 fallback
+ * - `getMetaField(block, ...keys)`: 顶层字段 + payload 双源 fallback
+ *   (历史包袱:Rust `data.insert("snake_key", ...)` 顶层平铺;部分老
+ *   emit 还会把字段塞 payload,2 个位置都查)
  * - `numOrZero(v)`: 跟原 SVG 内联 `num` 同语义(失败返 0)— 防御式
  * - `numOrNull(v)`: 跟原 chart-utils `num` 同语义(失败返 null)— 用来
  *   区分"缺失"和"零"
  * - `formatPreviewValue(v, opts)`: 跟 EventMetaBlock 内联 `previewValue`
  *   同语义,集中后给 EventMetaBlock 用
+ *
+ * v0.9.25 (M8): 删 `unwrapPayload` / `getPayloadField`(0 callsite);
+ * `getMetaField` 去掉 camel 双查 — chart block 实际 emit snake_case
+ * (Rust parser 用 `data.insert("snake", ...)` 不走 serde rename),
+ * camel 半边是 dead code。详见 ADR 0001 退役说明。
  *
  * chart-utils.ts 和 chart SVG 组件不再自己定义这些,改 re-export/import。
  * AttachmentBlock 内联 `get` 改用 `getMetaField`。
@@ -24,11 +29,10 @@
 import type { NormalizedBlockFE } from "./api";
 
 /**
- * snake_case + camelCase 双查 + 顶层字段 + payload 双源 fallback:
- * 1. 先查 `block[k]`(顶层 snake_case 平铺,新 wire)
- * 2. 再查 `block.payload[k]`(顶层没找到时,降级到 payload)
- * 3. 多 key 顺序:通常传 (snake, camel) 双 key,如
- *    `getMetaField(block, "tokens_before", "tokensBefore")`
+ * 顶层字段 + payload 双源 fallback:
+ * 1. 先查 `block[k]`(顶层 snake_case 平铺,Rust parser `data.insert` emit)
+ * 2. 再查 `block.payload[k]`(老 emit 把字段塞 payload 的 fallback)
+ * 3. 多 key 顺序:通常传单个 snake key,如 `getMetaField(block, "tokens_before")`
  *
  * 返回第一个非 null/undefined 的值;都没找到返回 undefined。
  */
@@ -40,23 +44,6 @@ export function getMetaField(block: NormalizedBlockFE, ...keys: string[]): unkno
     if (pl[k] !== undefined && pl[k] !== null) return pl[k];
   }
   return undefined;
-}
-
-/**
- * 解包 meta 分支里的 payload: meta 分支字段都在 payload 里,
- * 顶层平铺的为 BlockRenderer 入口用。统一返回 `Record<string, unknown>`。
- */
-export function unwrapPayload(block: NormalizedBlockFE): Record<string, unknown> {
-  return (block.payload ?? block) as Record<string, unknown>;
-}
-
-/**
- * 简化版 field 读取 — 只读 payload(没有 snake/camel 双查需求时更清晰):
- * `unwrapPayload(block)[key] ?? block[key]`。
- */
-export function getPayloadField(block: NormalizedBlockFE, key: string): unknown {
-  const pl = (block.payload ?? {}) as Record<string, unknown>;
-  return pl[key] ?? block[key];
 }
 
 /**

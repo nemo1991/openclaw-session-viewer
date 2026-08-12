@@ -17,23 +17,19 @@ import { num, formatTokenShort, formatDurationMs, readMetaField } from "./chart-
 
 export function UsageChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
   const pl = (block.payload ?? {}) as Record<string, unknown>;
-  const total = num(readMetaField(block, "total_tokens", "totalTokens"));
-  const inputOther = num(readMetaField(block, "input_other", "inputOther")) ?? 0;
+  const total = num(readMetaField(block, "total_tokens"));
+  const inputOther = num(readMetaField(block, "input_other")) ?? 0;
   const output = num(readMetaField(block, "output")) ?? 0;
-  const cacheRead = num(readMetaField(block, "input_cache_read", "inputCacheRead")) ?? 0;
-  const cacheCreation =
-    num(readMetaField(block, "input_cache_creation", "inputCacheCreation")) ?? 0;
-  const cacheHitRatio = num(readMetaField(block, "cache_hit_ratio", "cacheHitRatio"));
-  const turnCount = num(readMetaField(block, "turn_count", "turnCount")) ?? 0;
-  const sessionScopeCount =
-    num(readMetaField(block, "session_scope_count", "sessionScopeCount")) ?? 0;
-  const durationMs = num(readMetaField(block, "duration_ms", "durationMs")) ?? 0;
+  const cacheRead = num(readMetaField(block, "input_cache_read")) ?? 0;
+  const cacheCreation = num(readMetaField(block, "input_cache_creation")) ?? 0;
+  const cacheHitRatio = num(readMetaField(block, "cache_hit_ratio"));
+  const turnCount = num(readMetaField(block, "turn_count")) ?? 0;
+  const sessionScopeCount = num(readMetaField(block, "session_scope_count")) ?? 0;
+  const durationMs = num(readMetaField(block, "duration_ms")) ?? 0;
   const model = String(readMetaField(block, "model") ?? "");
   const buckets = (readMetaField(block, "buckets") as Array<Record<string, unknown>>) ?? [];
   const sessionScopeEvents =
-    (readMetaField(block, "session_scope_events", "sessionScopeEvents") as Array<
-      Record<string, unknown>
-    >) ?? [];
+    (readMetaField(block, "session_scope_events") as Array<Record<string, unknown>>) ?? [];
   const rawEvents = (pl.raw_events as Array<Record<string, unknown>>) ?? [];
   const rawCount = (pl.raw_count as number) ?? rawEvents.length;
 

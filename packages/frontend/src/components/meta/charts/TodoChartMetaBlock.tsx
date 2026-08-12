@@ -16,23 +16,21 @@ import type { NormalizedBlockFE } from "../../../lib/api";
 import { num, formatDurationMs, readMetaField } from "./chart-utils";
 
 export function TodoChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
-  const updateCount = num(readMetaField(block, "update_count", "updateCount"));
-  const uniqueTaskCount = num(readMetaField(block, "unique_task_count", "uniqueTaskCount")) ?? 0;
-  const currentDone = num(readMetaField(block, "current_done", "currentDone")) ?? 0;
-  const currentInProgress =
-    num(readMetaField(block, "current_in_progress", "currentInProgress")) ?? 0;
-  const currentPending = num(readMetaField(block, "current_pending", "currentPending")) ?? 0;
-  const totalDone = num(readMetaField(block, "total_done", "totalDone")) ?? 0;
-  const churnCount = num(readMetaField(block, "churn_count", "churnCount")) ?? 0;
-  const churnAddCount = num(readMetaField(block, "churn_add_count", "churnAddCount")) ?? 0;
-  const churnRemoveCount = num(readMetaField(block, "churn_remove_count", "churnRemoveCount")) ?? 0;
-  const durationMs = num(readMetaField(block, "duration_ms", "durationMs")) ?? 0;
+  const updateCount = num(readMetaField(block, "update_count"));
+  const uniqueTaskCount = num(readMetaField(block, "unique_task_count")) ?? 0;
+  const currentDone = num(readMetaField(block, "current_done")) ?? 0;
+  const currentInProgress = num(readMetaField(block, "current_in_progress")) ?? 0;
+  const currentPending = num(readMetaField(block, "current_pending")) ?? 0;
+  const totalDone = num(readMetaField(block, "total_done")) ?? 0;
+  const churnCount = num(readMetaField(block, "churn_count")) ?? 0;
+  const churnAddCount = num(readMetaField(block, "churn_add_count")) ?? 0;
+  const churnRemoveCount = num(readMetaField(block, "churn_remove_count")) ?? 0;
+  const durationMs = num(readMetaField(block, "duration_ms")) ?? 0;
   const buckets = (readMetaField(block, "buckets") as Array<Record<string, unknown>>) ?? [];
   const completedTasks =
-    (readMetaField(block, "completed_tasks", "completedTasks") as Array<Record<string, unknown>>) ??
-    [];
+    (readMetaField(block, "completed_tasks") as Array<Record<string, unknown>>) ?? [];
   const churnEvents =
-    (readMetaField(block, "churn_events", "churnEvents") as Array<Record<string, unknown>>) ?? [];
+    (readMetaField(block, "churn_events") as Array<Record<string, unknown>>) ?? [];
   const pl = (block.payload ?? {}) as Record<string, unknown>;
   const rawEvents = (pl.raw_events as Array<Record<string, unknown>>) ?? [];
   const rawCount = (pl.raw_count as number) ?? rawEvents.length;

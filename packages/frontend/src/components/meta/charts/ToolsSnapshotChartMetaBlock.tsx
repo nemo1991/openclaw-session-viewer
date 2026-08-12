@@ -14,13 +14,16 @@ import type { NormalizedBlockFE } from "../../../lib/api";
 import { readMetaField } from "./chart-utils";
 
 export function ToolsSnapshotChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+  // v0.9.25 (M8): snapshotHash (camel) 和 hash (inbound Kimi wire key)
+  // 都是 dead code — Rust emit "snapshot_hash" (snake) (kimi.rs:764),
+  // "hash" 是 inbound Kimi wire key,re-emit 时已转 snake。3-key 简化为
+  // 单 snake key。
   const hash =
-    typeof readMetaField(block, "snapshot_hash", "snapshotHash", "hash") === "string"
-      ? (readMetaField(block, "snapshot_hash", "snapshotHash", "hash") as string)
+    typeof readMetaField(block, "snapshot_hash") === "string"
+      ? (readMetaField(block, "snapshot_hash") as string)
       : null;
-  const toolNames = (readMetaField(block, "tool_names", "toolNames") as string[]) ?? [];
-  const toolDescs =
-    (readMetaField(block, "tool_descriptions", "toolDescriptions") as Record<string, string>) ?? {};
+  const toolNames = (readMetaField(block, "tool_names") as string[]) ?? [];
+  const toolDescs = (readMetaField(block, "tool_descriptions") as Record<string, string>) ?? {};
   const pl = (block.payload ?? {}) as Record<string, unknown>;
   const rawTools = (pl.tools as Array<{ name?: string }>) ?? [];
 
