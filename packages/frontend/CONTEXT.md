@@ -144,3 +144,41 @@ meta 子组件的 utility 集中,导出 `getMetaField` / `unwrapPayload` /
 `charts/chart-utils.ts` 保留作为 re-export shim,内部组件仍然从
 `./chart-utils` import,行为不变。
 _Avoid_: meta utils, format helpers
+
+**SessionHeader** (v0.9.24, M7-B):
+L0 层 chrome。SessionDetailRoute 头部 4 个职责 (`BackButton` +
+`HeaderInfo` + `ActionsRow`) 合并抽到 1 个组件。3 个 file-local
+子组件: `BackButton` (subCtx vs default 文案切换)、`HeaderInfo`
+(title 双击 / Enter / Escape 编辑 + badges + tags + stats row 10 类
+指标)、`ActionsRow` (12 个 button: reload ⌘R / search ⌘F / pin / hide
+/ archive / rename / notes / links / trajectory / export MD / export
+HTML / analyze)。内部 `useSessionActions(meta)` 拿 reload/export,
+0 prop drilling。route 只剩 6 个 props (meta + navigate + onNotesToggle
+
+- onLinkAdd + subagentContext + loadingProgress)。
+  _Avoid_: HeaderBar, header chrome, session toolbar
+
+**SessionNotesPanel** (v0.9.24, M7-C):
+L0 层 notes/links region。SessionDetailRoute 尾部 3 块 (notes 编辑
+
+- links 列表 + link dialog) 抽到 1 个组件。3 个 file-local 子组件:
+  `NotesPanel` (编辑/只读切换, 保存 → setNotes)、`LinksPanel`
+  (linksTo / linksFrom 两组, 删除 → removeLink)、`LinkDialog`
+  (modal backdrop, 提交 → addLink)。visibility 3 态: notes
+  (`notesEditing || notesContent` 非空) / links (任一 linksTo/linksFrom
+  非空) / link dialog (`linkDialogOpen`)。route 只持 2 个 visibility
+  1-bit state (notesEditing + linkDialogOpen), notesDraft / linkTarget
+  / linkNote 都在组件内部 (sessionId 切换 useEffect 同步)。
+  _Avoid_: Notes panel, links panel, override panel
+
+**useSessionActions** (v0.9.24, M7-A):
+`handleReload` + `handleExport` + `reloading` + `reloadModifier` 4 个
+cross-cutting 抽到 1 个 hook。`useState` (reloading) + `useCallback`
+
+- `useModifierLabel` 平台检测 + dynamic import `@tauri-apps/plugin-dialog`
+- `apiExportMarkdown/HTML` + 多 store mutation (`useSessionsStore.refresh`
+- `useTranscriptStore.reset/start`) + router `navigate` 全部内化。
+  `<SessionHeader>` 内部调用拿 `{ handleReload, handleExport, reloading,
+reloadModifier }` 直接用, route 仍持 `handleReload` 给 cmd+r 键位
+  (跟 cmd+f 同层)。
+  _Avoid_: session handlers, header actions hook

@@ -10,37 +10,21 @@
  * - data-testid 给 E2E 用
  */
 
-import { useMemo, useState, useEffect, useCallback } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import {
-  ArrowLeft,
-  Download,
-  Sparkles,
-  Search,
-  Activity,
-  Pin,
-  EyeOff,
-  Archive,
-  Edit2,
-  Link2,
-  StickyNote,
-  X,
-  Tag as TagIcon,
-  RefreshCw,
-} from "lucide-react";
 
 import { useTranscriptStore } from "../state/transcriptStore";
-import { useSessionsStore } from "../state/sessionsStore";
-import { useOverrides } from "../state/overridesStore";
-import { useLivePids } from "../hooks/useLivePids";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
 import { useTranscriptPipeline } from "../hooks/useTranscriptPipeline";
 import { useTranscriptScroll } from "../hooks/useTranscriptScroll";
 import { useSessionUrlSync } from "../hooks/useSessionUrlSync";
+// v0.9.24 (M7-A): 抽 handleReload + handleExport + reloading + reloadModifier
+// 到独立 hook, 消解 SessionHeader 提取时的 prop 压力。
+// 注意: route 仍用 `handleReload` 给 cmd+r 键位 — 跟 cmd+f 同层。
+import { useSessionActions } from "../hooks/useSessionActions";
 import { TranscriptView } from "../views/TranscriptView";
 import { SearchInSessionBar } from "../views/SearchInSessionBar";
-import { SubagentPanel } from "../components/SubagentPanel";
 // v0.9.22 (M4): SessionSummaryStrip + MetaBannerFold 抽到 <SessionOverview> (L1 layer)
 import { SessionOverview } from "../components/meta/SessionOverview";
 // v0.9.23 (M5): 6 chart blocks (context.apply_compaction / llm.tools_snapshot /
@@ -48,22 +32,21 @@ import { SessionOverview } from "../components/meta/SessionOverview";
 // timeline 抽离到独立 <ChartsRegion> (L2 layer),位置在 SessionOverview 下、
 // TranscriptView 上。
 import { ChartsRegion } from "../components/meta/ChartsRegion";
+// v0.9.24 (M7-B): header chrome + actions row 12 button 抽到 <SessionHeader>
+// (L0 层 chrome)。SessionHeader 内部 useSessionActions 拿 reload/export,
+// route 只剩 cmd+r/cmd+f 键位 + visibility (notesEditing) + meta 派生。
+import { SessionHeader } from "../components/session/SessionHeader";
+// v0.9.24 (M7-C): notes + links + link dialog 抽到 <SessionNotesPanel>
+// (L0 层 notes/links region)。SessionNotesPanel 内部 useOverrides 调
+// setNotes/addLink/removeLink mutation API, route 只剩 notesEditing 1 bit state。
+import { SessionNotesPanel } from "../components/session/SessionNotesPanel";
 import { useKey } from "../lib/keymap";
-import {
-  formatBytes,
-  formatNumber,
-  formatTimeExact,
-  formatDuration,
-  formatLatency,
-} from "../lib/format"; // v0.8.4 item 2/5
-import { useFormatOpts } from "../hooks/useFormatOpts";
-import { useModifierLabel } from "../hooks/useIsMac"; // v0.9.7: ⌘R / Ctrl+R 平台特定 label
-import { apiRevealInFinder } from "../lib/api";
 import type { SessionMeta } from "@ocsv/shared";
 import "./SessionDetailRoute.css";
 
-/** v0.5.0:从 location.state 读 subagentContext(由 SubagentPanel 跳来时填充) */
-interface SubagentContext {
+/** v0.5.0:从 location.state 读 subagentContext(由 SubagentPanel 跳来时填充)
+ * v0.9.24 (M7-B): 改为 export,让 <SessionHeader> 也用 (BackButton 文案切换) */
+export interface SubagentContext {
   parentSessionId: string;
   agentId: string;
   agentType?: string | null;
@@ -74,7 +57,6 @@ export default function SessionDetailRoute() {
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useTranslation();
-  const fmtOpts = useFormatOpts();
 
   // 4 个独立 selector(避免任一字段变化触发整页重渲染)
   const start = useTranscriptStore((s) => s.start);
@@ -84,9 +66,7 @@ export default function SessionDetailRoute() {
   const loading = useTranscriptStore((s) => s.loading);
   const totalCount = useTranscriptStore((s) => s.totalCount);
   const error = useTranscriptStore((s) => s.error);
-  const path = useTranscriptStore((s) => s.path);
 
-  const { livePids } = useLivePids();
   const showSearchBar = useSearchInSessionStore((s) => s.show);
 
   // v0.5.0:子代理跳转用 ?path=... 持久化(子代理不在 list_sessions 里,
@@ -128,12 +108,6 @@ export default function SessionDetailRoute() {
     if (targetPath) void start(targetPath);
   }, [targetPath, start]);
 
-  // 实时 PID(从 livePids 找本会话)
-  const liveInfo = useMemo(
-    () => (meta?.sessionId ? livePids.find((p) => p.sessionId === meta.sessionId) : undefined),
-    [meta, livePids]
-  );
-
   // ===== 聚合 + 去噪: v0.8.4 item 2' 起全部从 meta.* 读, 不再 O(n) 扫 entries =====
 
   // 当前搜索命中(传给 useTranscriptScroll)
@@ -160,60 +134,17 @@ export default function SessionDetailRoute() {
     []
   );
 
-  const handleExport = async (format: "md" | "html") => {
-    if (!targetPath) return;
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const ext = format === "md" ? "md" : "html";
-    const out = await save({
-      defaultPath: `${meta?.title ?? sessionId}.${ext}`,
-      filters: [{ name: format.toUpperCase(), extensions: [ext] }],
-    });
-    if (!out) return;
-    const { apiExportMarkdown, apiExportHtml } = await import("../lib/api");
-    if (format === "md") {
-      await apiExportMarkdown(targetPath, out);
-    } else {
-      await apiExportHtml(targetPath, out);
-    }
-    await apiRevealInFinder(out, null, true);
-  };
-
-  // v0.8.11: reload 按钮 — 触发后端 sync + 重读 transcript
-  // 流程: useSessionsStore.refresh() → apiRefreshSessions → 后端 notify sync_loop
-  //       sync_loop 跑完 emit sessions-updated → sessions list 已是最新 → 在 list 里
-  //       找到当前 sid 对应新 meta → reset transcript store + start(jsonlPath) 重解析
-  // 为什么要 reset transcript: transcriptStore.start 第一行有 `if (path === current) return`
-  // 短路,reload 同 path 不重 reset 不会重解析
-  const [reloading, setReloading] = useState(false);
-  const reloadModifier = useModifierLabel(); // v0.9.7: "Cmd" (mac) / "Ctrl" (其他)
-  const handleReload = useCallback(async () => {
-    if (!meta || reloading) return;
-    setReloading(true);
-    try {
-      await useSessionsStore.getState().refresh();
-      // sessions list 已更新 — 找当前 sid 对应新 meta
-      const refreshed = useSessionsStore
-        .getState()
-        .sessions.find((s) => s.sessionId === meta.sessionId);
-      if (refreshed) {
-        // 用新 meta 替换 location.state 触发 useMemo 重新派生
-        navigate(location.pathname + location.search, {
-          state: { session: refreshed },
-          replace: true,
-        });
-      }
-      // 重解析 transcript (必须先 reset 再 start,start 短路同 path)
-      const currentPath = useTranscriptStore.getState().path;
-      if (currentPath) {
-        useTranscriptStore.getState().reset();
-        await useTranscriptStore.getState().start(currentPath);
-      }
-    } catch (e) {
-      console.error("reload failed", e);
-    } finally {
-      setReloading(false);
-    }
-  }, [meta, reloading, navigate, location.pathname, location.search]);
+  // v0.9.24 (M7-B): route 只剩 cmd+r keybind 用 handleReload —
+  // handleExport / reloading / reloadModifier 已迁到 <SessionHeader>
+  // (内部 useSessionActions 调一次)。这样 route 跟 SessionHeader 都用
+  // 同一份 hook,reload 触发的 store mutation 跟 meta reload 完全一致。
+  const { handleReload } = useSessionActions({
+    meta,
+    targetPath,
+    sessionId,
+    navigate,
+    pathnameSearch: location.pathname + location.search,
+  });
 
   // v0.8.15: 跨平台 — Cmd+R / Ctrl+R 统一一个 useKey, 不再需要 band-aid。
   useKey(
@@ -234,377 +165,38 @@ export default function SessionDetailRoute() {
     );
   }
 
-  // v0.5.0:子会话识别 — 从 location.state 读 subagentContext
+  // v0.5.0:子会话识别 — 从 location.state 读 subagentContext (传给 <SessionHeader>)
   const subCtx = (location.state as { subagentContext?: SubagentContext } | null)?.subagentContext;
 
-  // v0.5.0 修复:back-to-parent 跳转时,从 sessionsStore 找父 jsonlPath,
-  // 通过 ?path= 持久化,避免父页 meta=undefined → notFound。
-  // sessions 可能在子会话详情页打开时尚未加载,此时 click 触发一次 load 再 navigate。
-  const sessions = useSessionsStore((s) => s.sessions);
-  const loadSessions = useSessionsStore((s) => s.load);
-
-  // v0.8.0: override (rename/hide/pin/archive/notes/tags/links)
-  const overrides = useOverrides();
-  const [titleEditing, setTitleEditing] = useState(false);
-  const [titleDraft, setTitleDraft] = useState("");
+  // v0.9.24 (M7-C): notes panel + link dialog 可见性 toggle — actions row
+  // sticky note / link button 调用对应 handler。state 在 route 层
+  // (1 bit each, 跟 region 显隐强相关, route 管 "现在显示哪些 region" 的
+  // 职责清晰)。<SessionNotesPanel> 内部管 notesDraft / linkTarget / linkNote,
+  // route 只剩 visibility toggles。
   const [notesEditing, setNotesEditing] = useState(false);
-  const [notesDraft, setNotesDraft] = useState("");
+  const toggleNotesEditing = () => setNotesEditing((v) => !v);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
-  const [linkTarget, setLinkTarget] = useState("");
-  const [linkNote, setLinkNote] = useState("");
+  const openLinkDialog = () => setLinkDialogOpen(true);
+  const closeLinkDialog = () => setLinkDialogOpen(false);
 
-  // sessionId 切换时重置 notes 草稿
-  useEffect(() => {
-    if (meta) {
-      setNotesDraft(overrides.snap.notes[meta.sessionId] ?? "");
-    }
-  }, [meta?.sessionId, overrides.snap.notes]);
-
-  const currentTitle = meta
-    ? (overrides.snap.renames[meta.sessionId] ?? meta.title ?? meta.sessionId.slice(0, 8))
-    : "";
-
-  const startTitleEdit = () => {
-    setTitleDraft(currentTitle);
-    setTitleEditing(true);
-  };
-  const commitTitle = async () => {
-    setTitleEditing(false);
-    if (!meta) return;
-    const trimmed = titleDraft.trim();
-    if (!trimmed || trimmed === currentTitle) return;
-    try {
-      await overrides.rename(meta.sessionId, trimmed);
-    } catch (e) {
-      console.error("rename failed", e);
-    }
-  };
-
-  const commitNotes = async () => {
-    setNotesEditing(false);
-    if (!meta) return;
-    try {
-      await overrides.setNotes(meta.sessionId, notesDraft);
-    } catch (e) {
-      console.error("setNotes failed", e);
-    }
-  };
-
-  const addLink = async () => {
-    if (!meta || !linkTarget.trim()) return;
-    try {
-      await overrides.addLink(meta.sessionId, linkTarget.trim(), linkNote.trim() || undefined);
-      setLinkDialogOpen(false);
-      setLinkTarget("");
-      setLinkNote("");
-    } catch (e) {
-      console.error("addLink failed", e);
-    }
-  };
-
-  const sessionTags = meta ? (overrides.snap.tags[meta.sessionId] ?? []) : [];
-  const linksTo = meta ? (overrides.snap.linksTo[meta.sessionId] ?? []) : [];
-  const linksFrom = meta ? (overrides.snap.linksFrom[meta.sessionId] ?? []) : [];
-  const handleBackToParent = async () => {
-    if (!subCtx) return;
-    // 先确保 sessions 列表有数据(若没 mount 过,load 一次)
-    let allSessions = sessions;
-    if (allSessions.length === 0) {
-      await loadSessions();
-      allSessions = useSessionsStore.getState().sessions;
-    }
-    const parent = allSessions.find((s) => s.sessionId === subCtx.parentSessionId);
-    if (parent) {
-      // 走 ?path= 持久化路径 — 父页能正常加载
-      navigate(
-        `/session/${encodeURIComponent(parent.sessionId)}?path=${encodeURIComponent(parent.jsonlPath)}`,
-        { state: { session: parent } }
-      );
-    } else {
-      // 父 session 不在 list_sessions 里(罕见,如被删) — 至少 navigate 不带 state,
-      // 父页会显示 notFound,但 URL 至少是合理的
-      navigate(`/session/${encodeURIComponent(subCtx.parentSessionId)}`);
-    }
-  };
-
-  // v0.5.0:返回按钮逻辑 — 子会话场景下"返回"回父会话,否则回列表。
-  // 复用同一按钮,不再单独渲染顶部 back-to-parent 条,避免视觉重复。
-  const handleBack = () => {
-    if (subCtx) {
-      void handleBackToParent();
-    } else {
-      navigate("/");
-    }
-  };
+  // v0.9.24 (M7-B): transcript 加载进度, 给 <SessionHeader> stats row 显示
+  // "messages (loaded/total)"。loading=true 才传, 否则 null (无 progress 显示)
+  const loadingProgress = loading ? { loaded: entries.length, total: totalCount } : null;
 
   return (
     <div className="session-detail">
-      <header className="session-header" data-testid="session-header">
-        <button
-          onClick={handleBack}
-          className="back-btn"
-          data-testid={subCtx ? "back-to-parent" : "back-to-list"}
-          title={subCtx ? t("detail.subagentPanel.backToParent") : t("detail.back")}
-        >
-          <ArrowLeft size={16} />{" "}
-          {subCtx ? (
-            <>
-              {t("detail.subagentPanel.backToParent")} ({subCtx.parentSessionId.slice(0, 12)}…)
-            </>
-          ) : (
-            t("detail.back")
-          )}
-        </button>
-        <div className="session-header-info">
-          <h1>
-            {titleEditing ? (
-              <input
-                className="title-rename-input"
-                autoFocus
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void commitTitle();
-                  if (e.key === "Escape") setTitleEditing(false);
-                }}
-                onBlur={() => void commitTitle()}
-                maxLength={80}
-              />
-            ) : (
-              <span onDoubleClick={startTitleEdit} title="双击重命名">
-                {currentTitle}
-              </span>
-            )}
-            {meta.archived && (
-              <span className="badge-archived" title="已归档">
-                🗄️ 已归档
-              </span>
-            )}
-            {meta.pinned && (
-              <span className="badge-pinned" title="已置顶">
-                📌
-              </span>
-            )}
-            {meta.hidden && (
-              <span className="badge-hidden" title="已隐藏">
-                🙈
-              </span>
-            )}
-            {/* v0.8.4 item 5: agent-name 静态 pill, 无跳转 (本会话自己的别名) */}
-            {meta.agentName && (
-              <span
-                className="agent-name-pill"
-                title={`jsonl agent-name envelope: ${meta.agentName}`}
-                data-testid="agent-name-pill"
-              >
-                🤖 {meta.agentName}
-              </span>
-            )}
-          </h1>
-          {sessionTags.length > 0 && (
-            <div className="session-tags-row">
-              {sessionTags.map((t: { id: number; name: string; color: string | null }) => (
-                <span key={t.id} className="tag-chip" title={`tag: ${t.name}`}>
-                  {t.name}
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="session-header-meta">
-            <span>{meta.workspaceGuess || meta.projectKey}</span>
-            {meta.primaryModel && <span className="model-pill">{meta.primaryModel}</span>}
-            {liveInfo && (
-              <span className="live-pill">
-                ● {t("detail.pid", { pid: liveInfo.pid })} · {liveInfo.status}
-              </span>
-            )}
-            {meta.subagentDir && meta.subagentCount && meta.subagentCount > 0 && (
-              <SubagentPanel parentSession={meta} />
-            )}
-          </div>
-          <div className="session-header-stats">
-            <span>
-              {t("detail.messages", { count: meta.messageCount })}
-              {loading && ` (${entries.length}/${totalCount})`}
-            </span>
-            <span>·</span>
-            <span>{formatBytes(meta.sizeBytes)}</span>
-            {meta.firstTimestamp && (
-              <>
-                <span>·</span>
-                <span title={formatTimeExact(meta.firstTimestamp, fmtOpts)}>
-                  {formatTimeExact(meta.firstTimestamp, fmtOpts)}
-                </span>
-              </>
-            )}
-            {meta.totalTokens && (
-              <>
-                <span>·</span>
-                <span>
-                  Tokens{" "}
-                  {formatNumber(
-                    meta.totalTokens.input +
-                      meta.totalTokens.output +
-                      meta.totalTokens.cacheRead +
-                      meta.totalTokens.cacheWrite
-                  )}
-                </span>
-              </>
-            )}
-            {/* v0.8.4 item 2: 固化指标直接从 meta.* 读, 不再 recompute */}
-            {meta.durationSeconds !== undefined && meta.durationSeconds !== null && (
-              <>
-                <span>·</span>
-                <span title="last_ts - first_ts">{formatDuration(meta.durationSeconds)}</span>
-              </>
-            )}
-            {meta.firstResponseLatencyMs !== undefined && meta.firstResponseLatencyMs !== null && (
-              <>
-                <span>·</span>
-                <span title="first assistant - first user">
-                  first↔resp {formatLatency(meta.firstResponseLatencyMs)}
-                </span>
-              </>
-            )}
-            {meta.userMessageCount !== undefined &&
-              meta.userMessageCount !== null &&
-              meta.assistantMessageCount !== undefined && (
-                <>
-                  <span>·</span>
-                  <span title="user / assistant 顶层消息计数 (排除 sidechain)">
-                    {meta.userMessageCount}u / {meta.assistantMessageCount}a
-                  </span>
-                </>
-              )}
-            {meta.errorCount !== undefined && meta.errorCount !== null && meta.errorCount > 0 && (
-              <>
-                <span>·</span>
-                <span className="stat-error" title="assistant stop_reason==error 或 is_error==true">
-                  ❌ {meta.errorCount} errors
-                </span>
-              </>
-            )}
-            {/* v0.8.5 A: per-tool 失败 — 取 toolError[0] 显示"失败最多: Bash × 5"
-             * 跟上面 errorCount 是 message 级不同,这里是 tool-level(单个 tool_result.is_error) */}
-            {meta.toolError && meta.toolError.length > 0 && (
-              <>
-                <span>·</span>
-                <span
-                  className="stat-tool-error"
-                  title={
-                    meta.toolError.length === 1
-                      ? `${meta.toolError[0]?.[0] ?? "?"} 失败 ${meta.toolError[0]?.[1] ?? 0} 次 (tool_result.is_error)`
-                      : `${meta.toolError[0]?.[0] ?? "?"} 失败最多 (${meta.toolError[0]?.[1] ?? 0} 次); 其它: ${meta.toolError
-                          .slice(1)
-                          .map(([t, c]) => `${t} × ${c}`)
-                          .join(", ")}`
-                  }
-                  data-testid="stat-tool-error"
-                >
-                  🔴 失败最多: {meta.toolError[0]?.[0] ?? "?"} × {meta.toolError[0]?.[1] ?? 0}
-                </span>
-              </>
-            )}
-            {/* v0.8.4 item 4: meta 计数 (skills / plans / compact / files / queued) */}
-            {(meta.invokedSkillsCount ||
-              meta.planFileRefCount ||
-              meta.compactFileRefCount ||
-              meta.attachedFileCount ||
-              meta.queuedCommandCount) && (
-              <>
-                <span>·</span>
-                <span className="meta-counts">
-                  {meta.invokedSkillsCount ? `⚙${meta.invokedSkillsCount} skills ` : ""}
-                  {meta.planFileRefCount ? `📋${meta.planFileRefCount} plans ` : ""}
-                  {meta.compactFileRefCount ? `📦${meta.compactFileRefCount} compact ` : ""}
-                  {meta.attachedFileCount ? `🗂${meta.attachedFileCount} files ` : ""}
-                  {meta.queuedCommandCount ? `📤${meta.queuedCommandCount} queued ` : ""}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
-        <div className="session-header-actions">
-          <button
-            onClick={() => void handleReload()}
-            disabled={reloading}
-            className={reloading ? "reloading" : ""}
-            data-testid="reload-btn"
-            title={`重新解析 jsonl + 触发后端 sync (${reloadModifier}+R)`}
-          >
-            <RefreshCw size={14} className={reloading ? "spin" : ""} />
-          </button>
-          <button onClick={() => showSearchBar()} title={t("search.inSession")}>
-            <Search size={14} />
-          </button>
-          <button
-            onClick={() => overrides.togglePinned(meta.sessionId, !meta.pinned)}
-            className={meta.pinned ? "primary" : ""}
-            title={meta.pinned ? "取消置顶" : "置顶"}
-          >
-            <Pin size={14} />
-          </button>
-          <button
-            onClick={() => overrides.toggleHide(meta.sessionId, !meta.hidden)}
-            className={meta.hidden ? "primary" : ""}
-            title={meta.hidden ? "取消隐藏" : "隐藏"}
-          >
-            <EyeOff size={14} />
-          </button>
-          <button
-            onClick={() => overrides.setArchived(meta.sessionId, !meta.archived)}
-            className={meta.archived ? "primary" : ""}
-            title={meta.archived ? "取消归档" : "归档"}
-          >
-            <Archive size={14} />
-          </button>
-          <button onClick={startTitleEdit} title="重命名">
-            <Edit2 size={14} />
-          </button>
-          <button onClick={() => setNotesEditing((v) => !v)} title="笔记">
-            <StickyNote size={14} />
-          </button>
-          <button onClick={() => setLinkDialogOpen(true)} title="链接到其他 session">
-            <Link2 size={14} />
-          </button>
-          {meta.hasTrajectory && (
-            <button
-              onClick={() =>
-                navigate(`/session/${encodeURIComponent(meta.sessionId)}/trajectory`, {
-                  state: { session: meta },
-                })
-              }
-              title={t("detail.trajectory")}
-            >
-              <Activity size={14} /> {t("detail.trajectory")}
-            </button>
-          )}
-          <button
-            onClick={() => handleExport("md")}
-            data-testid="export-md"
-            title={t("detail.exportMd")}
-          >
-            <Download size={14} /> MD
-          </button>
-          <button
-            onClick={() => handleExport("html")}
-            data-testid="export-html"
-            title={t("detail.exportHtml")}
-          >
-            <Download size={14} /> HTML
-          </button>
-          <button
-            onClick={() =>
-              navigate(`/analyze/${encodeURIComponent(meta.sessionId)}`, {
-                state: { session: meta },
-              })
-            }
-            className="primary"
-          >
-            <Sparkles size={14} /> {t("detail.analyze")}
-          </button>
-        </div>
-      </header>
+      {/* v0.9.24 (M7-B): header chrome + actions row 12 button 全部迁到
+       * <SessionHeader> (L0 层 chrome)。route 只剩 cmd+r keybind +
+       * visibility (notesEditing) + meta 派生 + TranscriptView mount。
+       * SessionHeader 内部 useSessionActions(meta) 拿 reload/export。 */}
+      <SessionHeader
+        meta={meta}
+        navigate={navigate}
+        onNotesToggle={toggleNotesEditing}
+        onLinkAdd={openLinkDialog}
+        subagentContext={subCtx}
+        loadingProgress={loadingProgress}
+      />
 
       <SearchInSessionBar />
 
@@ -622,99 +214,17 @@ export default function SessionDetailRoute() {
        * 后端 StreamBatch 字段 `charts` 兜底 []:老 wire 兼容。 */}
       <ChartsRegion charts={charts} />
 
-      {/* v0.8.0: notes 编辑面板 + links 列表 */}
-      {(notesEditing || overrides.snap.notes[meta.sessionId]) && (
-        <div className="session-notes-panel" data-testid="session-notes-panel">
-          <div className="notes-header">
-            <StickyNote size={14} />
-            <span>笔记</span>
-            {notesEditing && (
-              <button onClick={() => void commitNotes()} className="notes-save">
-                保存
-              </button>
-            )}
-            {!notesEditing && (
-              <button
-                onClick={() => {
-                  setNotesDraft(overrides.snap.notes[meta.sessionId] ?? "");
-                  setNotesEditing(true);
-                }}
-              >
-                编辑
-              </button>
-            )}
-          </div>
-          {notesEditing ? (
-            <textarea
-              autoFocus
-              value={notesDraft}
-              onChange={(e) => setNotesDraft(e.target.value)}
-              placeholder="Markdown 笔记..."
-              rows={6}
-            />
-          ) : (
-            <pre className="notes-display">{overrides.snap.notes[meta.sessionId]}</pre>
-          )}
-        </div>
-      )}
-
-      {(linksTo.length > 0 || linksFrom.length > 0) && (
-        <div className="session-links-panel">
-          {linksTo.length > 0 && (
-            <div className="links-group">
-              <h4>链接到 →</h4>
-              {linksTo.map((l: any) => (
-                <div key={l.toSession} className="link-item">
-                  <span>{l.toSession.slice(0, 12)}…</span>
-                  {l.note && <span className="link-note">({l.note})</span>}
-                  <button
-                    onClick={() => overrides.removeLink(meta.sessionId, l.toSession)}
-                    title="删除链接"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {linksFrom.length > 0 && (
-            <div className="links-group">
-              <h4>被链接 ←</h4>
-              {linksFrom.map((l: any) => (
-                <div key={l.fromSession} className="link-item">
-                  <span>{l.fromSession.slice(0, 12)}…</span>
-                  {l.note && <span className="link-note">({l.note})</span>}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {linkDialogOpen && (
-        <div className="link-dialog-backdrop" onClick={() => setLinkDialogOpen(false)}>
-          <div className="link-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3>链接到其他 session</h3>
-            <input
-              autoFocus
-              placeholder="目标 session id"
-              value={linkTarget}
-              onChange={(e) => setLinkTarget(e.target.value)}
-            />
-            <input
-              placeholder="备注(可选)"
-              value={linkNote}
-              onChange={(e) => setLinkNote(e.target.value)}
-            />
-            <div className="link-dialog-actions">
-              <button onClick={() => setLinkDialogOpen(false)}>取消</button>
-              <button onClick={() => void addLink()} className="primary">
-                添加
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* v0.9.24 (M7-C): notes + links + link dialog 全部迁到 <SessionNotesPanel>
+       * (L0 层 notes/links region)。内部 useOverrides 调 setNotes/addLink/removeLink,
+       * route 只剩 notesEditing 1 bit visibility toggle。 */}
+      <SessionNotesPanel
+        meta={meta}
+        notesEditing={notesEditing}
+        onNotesToggle={toggleNotesEditing}
+        linkDialogOpen={linkDialogOpen}
+        onLinkAdd={openLinkDialog}
+        onLinkDialogClose={closeLinkDialog}
+      />
 
       {error && (
         <div className="error">

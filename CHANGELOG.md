@@ -2,6 +2,89 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.24] - 2026-08-12
+
+v0.9.23 (M5) 完成 L2 ChartsRegion。本版 (v0.9.24) 落 **M7 —
+SessionDetailRoute 后续小型 refactor**: header chrome + actions row +
+notes + links + link dialog 全部抽到独立组件, route 从 692 → 234 行
+(-458 / -66%)。
+
+### 关键决策 — 3 个抽取目标
+
+`SessionDetailRoute` 在 v0.9.22/23 抽出 L1/L2 抽象后, 仍残留 3 块
+chrome + cross-cutting concerns:
+
+- **Header chrome** (185 行):back button + title 编辑 + 4 个 badge +
+  tags + workspaceGuess/primaryModel/live PID + SubagentPanel +
+  stats row 5+ 类指标
+- **Actions row** (80 行):12 个 button (reload / search / pin / hide
+  / archive / rename / notes / links / trajectory / export MD /
+  export HTML / analyze)
+- **Notes panel** (91 行):notes 编辑 + links 列表 + link dialog
+
+抽取后 **route 只剩 ~234 行**, 职责清晰: "路由 + meta 派生 +
+transcript 加载 + URL 同步 + TranscriptView mount"。
+
+### 关键决策 — M7-A: useSessionActions hook (先抽最重的)
+
+handleReload + handleExport 2 个 callback 都是 cross-cutting 集中点:
+
+- `useState` (reloading) + `useCallback` 闭包
+- `useModifierLabel` 平台检测
+- dynamic import `@tauri-apps/plugin-dialog` + `apiExportMarkdown/HTML`
+- 多 store mutation (`useSessionsStore.refresh` +
+  `useTranscriptStore.reset/start`)
+- router `navigate` + `location` 引用
+
+抽到 `useSessionActions(meta)` hook, `<SessionHeader>` 内部调用
+拿 `{ handleReload, handleExport, reloading, reloadModifier }` 直接
+用, 0 prop drilling。**route 仍保留 `handleReload` 给 cmd+r 键位** —
+跟 cmd+f 同层。7 个新 test 覆盖 reload/export 各种边界。
+
+### 关键决策 — M7-B: SessionHeader 组件
+
+把 header chrome + actions row 合并为 1 个 `<SessionHeader>` 组件
+(共享 ~90% props, 分开 prop surface 翻倍)。3 个 file-local 子组件:
+
+- `BackButton` (28 行) — subCtx vs default 文案切换 + 父 sessionId
+  截断显示
+- `HeaderInfo` (175 行) — controlled 子组件, titleEditing 由
+  SessionHeader 统管, 双击 / actions row rename button 共享同一状态
+- `ActionsRow` (90 行) — 12 个 button, 内部 useSessionActions 拿
+  reload/export
+
+props surface: `meta` + `navigate` + `onNotesToggle` + `onLinkAdd?` +
+`subagentContext?` + `loadingProgress?` (6 个)。`useOverrides` +
+`useLivePids` + `useFormatOpts` 内部 hook 全收敛到 SessionHeader,
+route 不再关心这些 store 细节。13 个新 test 覆盖 back button 文案 /
+title edit 双击 + 按钮 / 5 类 badge 条件渲染 / tags / stats 5 类
+指标 / actions row 12 button 全部触发。
+
+### 关键决策 — M7-C: SessionNotesPanel 组件
+
+notes + links + link dialog 共享 state 强相关 (notesEditing /
+linkDialogOpen / addLink / override.snap share `meta.sessionId`),
+合成 1 个组件。3 个 file-local 子组件:
+
+- `NotesPanel` (35 行) — 编辑/只读切换, 保存 → setNotes
+- `LinksPanel` (35 行) — linksTo / linksFrom 两组, 删除 → removeLink
+- `LinkDialog` (40 行) — modal backdrop, 提交 → addLink
+
+visibility 规则: notes (`notesEditing || notesContent` 非空) / links
+(任一 linksTo/linksFrom 非空) / link dialog (linkDialogOpen)。route
+只持 2 个 visibility 1-bit state (notesEditing + linkDialogOpen),
+内部 notesDraft / linkTarget / linkNote 状态都在 SessionNotesPanel
+内部 (sessionId 切换时 useEffect 同步)。14 个新 test 覆盖 visibility
+3 态 / 编辑 / 保存 / link dialog 提交流程 + 删除 link。
+
+### 后续
+
+`SessionDetailRoute` 从 692 → ~234 行 (-458 / -66%)。3 个新组件:
+`SessionHeader` (515 行含注释 + 子组件) + `SessionNotesPanel` (180 行)
+
+- `useSessionActions` hook (115 行)。+34 新 test (7 + 13 + 14),
+  0 回归。
+
 ## [0.9.23] - 2026-08-12
 
 v0.9.22 (M4) 完成 L1 SessionOverview 抽出。本版 (v0.9.23) 落
