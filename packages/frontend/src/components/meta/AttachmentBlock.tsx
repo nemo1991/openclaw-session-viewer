@@ -35,6 +35,7 @@ import { useNavigate } from "react-router-dom";
 import { useFileReveal } from "../../hooks/useFileReveal";
 import { useSettingsStore } from "../../state/settingsStore";
 import type { NormalizedBlockFE } from "../../lib/api";
+import { getMetaField } from "../../lib/meta";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 
 export interface AttachmentBlockProps {
@@ -46,9 +47,9 @@ export interface AttachmentBlockProps {
 const FILE_SNAPSHOT_VISIBLE_DEFAULT = 5;
 
 export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlockProps) {
-  // 解包:meta 分支里字段都在 payload 里,顶层平铺的为 BlockRenderer 入口用
-  const payload = (block.payload ?? block) as Record<string, unknown>;
-  const get = (key: string): unknown => payload[key] ?? block[key];
+  // v0.9.21 (M6): 用 lib/meta.ts.getMetaField 替代内联 get helper —
+  // snake + camel + 顶层 + payload 双查逻辑集中。
+  const get = (key: string): unknown => getMetaField(block, key);
 
   switch (label) {
     case "agent_listing":

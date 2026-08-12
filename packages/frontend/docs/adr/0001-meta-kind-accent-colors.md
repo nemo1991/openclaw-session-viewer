@@ -83,3 +83,20 @@ queue_operation)之前共用 generic wrapper,无 accent。v0.9.18 决策:
 - palette 仍是 6 chart + 1 slate,饱和度可控。
 - 改 accent 一处生效(TS token 跟 CSS variable 双向 sync),未来深色
   主题适配只需加 `[data-theme="dark"]` 块覆盖 CSS variables。
+
+## v0.9.21 update (M6) — 4 层抽象落到 palette 配合
+
+v0.9.18 集中 accent token 之后,v0.9.20 (M3) 引入 4 层 meta 抽象
+(`SessionOverview` / `ChartBlock` / `EventMetaBlock` /
+`AttachmentBlock`),`MessageBubble` 路由"L3 inline meta 用
+`META_ACCENT.eventMeta`" 这一档从设计走到 runtime 实现:
+
+- **chart kind (6 种)**:仍然 `META_ACCENT.{compaction,toolsSnapshot,
+usageChart,requestChart,todoChart,aiTitleChart}` 各自 accent
+- **attachment kind (13 种)**:`META_ACCENT.attachment` 统一 slate
+- **event meta (L3 兜底)**:`META_ACCENT.eventMeta` 弱 slate
+  (border 0.4 < attachment 0.6 < chart 0.6 但有更强主色 + icon)
+  — 单事件 inline meta 不抢 chart 视觉重量
+
+M6 没改配色,只是把 `numOrZero` / `numOrNull` / `getMetaField` /
+`formatPreviewValue` 集中到 `lib/meta.ts`,chart sub-component (`UsageChartMetaBlock` / `RequestChartMetaBlock` / `TodoChartMetaBlock` / `AiTitleChartMetaBlock` / `CompactionChartMetaBlock` / `ToolsSnapshotChartMetaBlock`) 和 chart SVG (UsageChart / RequestChart / TodoChart / AiTitleChart) 共享 `META_ACCENT` 跟 utility,确保 accent 跟计算逻辑对齐。

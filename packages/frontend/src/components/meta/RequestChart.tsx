@@ -14,6 +14,8 @@
  */
 
 import { useMemo } from "react";
+// v0.9.21 (M6): numOrZero 从 lib/meta.ts 集中,删本地 num 函数
+import { numOrZero } from "../../lib/meta";
 
 interface Bucket {
   bucket_start?: number;
@@ -29,23 +31,14 @@ const W = 600;
 const H = 80;
 const PAD = 4;
 
-function num(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
 export function RequestChartSvg({ buckets }: { buckets: Bucket[] }) {
   const data = useMemo(
     () =>
       buckets.map((b) => ({
-        min: num(b.max_tokens_min),
-        max: num(b.max_tokens_max),
-        avg: num(b.max_tokens_avg),
-        compactionCount: num(b.kind_compaction_count),
+        min: numOrZero(b.max_tokens_min),
+        max: numOrZero(b.max_tokens_max),
+        avg: numOrZero(b.max_tokens_avg),
+        compactionCount: numOrZero(b.kind_compaction_count),
       })),
     [buckets]
   );

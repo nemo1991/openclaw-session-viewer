@@ -1,16 +1,19 @@
 /**
  * MessageBubble — Container 角色
  *
- * 拆分历程(v0.4.5):
+ * 拆分历程(v0.4.5 → v0.9.21):
  * - role 派发(user / assistant / meta / 系统):本文件
  * - block 派发(text / thinking / tool_use / ...):delegate 到 blocks/*Block.tsx
- * - meta label 派发(7 种已知 label):delegate 到 meta/MetaBlock.tsx
+ * - meta label 派发(19 种已知 label):delegate 到 meta/MetaBlockRouter.tsx
  * - header(TZ/lang 依赖):delegate 到 MessageHeader.tsx(memo 包裹)
+ *
+ * v0.9.21 (M6): MetaBlock → MetaBlockRouter rename,消除它历史上作为
+ *               "monolithic meta renderer" 的歧义;实质不变(4 路 router)
  *
  * 设计要点:
  * - 本组件用 React.memo 包裹,entries 数量变化但单个 entry 引用未变时跳过重渲染
  * - BLOCK_RENDERERS 用 useMemo 稳定 map 引用
- * - meta 分支直接走 MetaBlock,block 分支走 BlockRenderer
+ * - meta 分支直接走 MetaBlockRouter,block 分支走 BlockRenderer
  */
 
 import { memo } from "react";
@@ -21,7 +24,8 @@ import { useTranscriptStore } from "../state/transcriptStore";
 import { MessageHeader } from "./MessageHeader";
 import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { UnknownBlockCard } from "./UnknownBlockCard";
-import { MetaBlock } from "./meta/MetaBlock";
+// v0.9.21 (M6): MetaBlock → MetaBlockRouter rename
+import { MetaBlockRouter } from "./meta/MetaBlockRouter";
 // v0.9.20 (M3): 用统一的 label Set 替代 v0.4.1 hardcoded isKnownMetaLabel / isMetaKind
 import { ATTACHMENT_META_LABELS, CHART_META_LABELS } from "../theme/meta-palette";
 import { TextBlock } from "./blocks/TextBlock";
@@ -67,10 +71,15 @@ function MessageBubbleInner({ entry, parentJsonlPath, parentSessionId }: Props) 
           if (isSubagentMetaLabel(labelStr)) {
             return <SubagentMetaBlock key={i} block={b} />;
           }
-          // 已知 meta label → MetaBlock 专属样式
+          // 已知 meta label → MetaBlockRouter 专属样式
           if (isKnownMetaLabel(labelStr)) {
             return (
-              <MetaBlock key={i} block={b} label={labelStr} parentJsonlPath={parentJsonlPath} />
+              <MetaBlockRouter
+                key={i}
+                block={b}
+                label={labelStr}
+                parentJsonlPath={parentJsonlPath}
+              />
             );
           }
           // 有 payload 且字段丰富时使用完整 UnknownBlockCard
@@ -130,7 +139,7 @@ export const MessageBubble = memo(MessageBubbleInner);
 /**
  * BlockRenderer — 单 block 派发
  *
- * 1. meta 类的 7 个 kind(后端 kind="meta",label=具体类型)走 MetaBlock
+ * 1. meta 类 kind(后端 kind="meta",label=具体类型)走 MetaBlockRouter
  * 2. 已知 5 种 block kind 走 blocks/*Block
  * 3. 兜底 UnknownBlock(走 UnknownBlockCard)
  */
@@ -145,10 +154,10 @@ export function BlockRenderer({
 }) {
   const kind = block.kind as string;
 
-  // meta 类 kind 统一走 MetaBlock
+  // meta 类 kind 统一走 MetaBlockRouter
   if (isMetaKind(kind)) {
     return (
-      <MetaBlock
+      <MetaBlockRouter
         block={block}
         label={String(block.label ?? kind)}
         parentJsonlPath={parentJsonlPath}
@@ -191,7 +200,7 @@ function isSubagentMetaLabel(label: string): boolean {
 /** v0.9.20 (M3): meta 分支里已知有专属样式的 block label
  *
  * 19 个 label(13+4 attachment + 6 chart)来自 `theme/meta-palette.ts` 的
- * 两个 Set。MetaBlock 内部路由:chart → ChartBlock / attachment →
+ * 两个 Set。MetaBlockRouter 内部路由:chart → ChartBlock / attachment →
  * AttachmentBlock / 其他 → EventMetaBlock。
  *
  * 之前 v0.4.1 — v0.9.17 之间 inline 罗列 19 个 label,每次新增 chart /
@@ -205,8 +214,8 @@ function isKnownMetaLabel(label: string): boolean {
 /** v0.9.20 (M3): BlockRenderer meta 入口要识别的 kind(顶层 kind 形式)
  *
  * 顶层 kind 形式(后端 v0.6.x 之前可能直接 emit kind=agent_listing / 等)
- * 也归 MetaBlock 处理。`kind === "meta"` 是新 wire 形式(后端把 label
- * 平铺,顶层 kind 固定为 "meta")。两种 entry 都走 MetaBlock 路由。
+ * 也归 MetaBlockRouter 处理。`kind === "meta"` 是新 wire 形式(后端把 label
+ * 平铺,顶层 kind 固定为 "meta")。两种 entry 都走 MetaBlockRouter 路由。
  */
 function isMetaKind(kind: string): boolean {
   if (kind === "meta") return true;

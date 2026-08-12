@@ -15,6 +15,8 @@
  */
 
 import { useMemo } from "react";
+// v0.9.21 (M6): numOrZero 从 lib/meta.ts 集中,删本地 num 函数
+import { numOrZero } from "../../lib/meta";
 
 interface Bucket {
   bucket_start?: number;
@@ -37,24 +39,18 @@ const COLORS = {
   cacheCreation: "rgba(16, 185, 129, 0.9)", // green — cache write (rare)
 };
 
-function num(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
 export function UsageChartSvg({ buckets }: { buckets: Bucket[] }) {
   const data = useMemo(() => {
     return buckets.map((b) => ({
-      inputOther: num(b.input_other),
-      output: num(b.output),
-      cacheRead: num(b.input_cache_read),
-      cacheCreation: num(b.input_cache_creation),
+      inputOther: numOrZero(b.input_other),
+      output: numOrZero(b.output),
+      cacheRead: numOrZero(b.input_cache_read),
+      cacheCreation: numOrZero(b.input_cache_creation),
       total:
-        num(b.input_other) + num(b.output) + num(b.input_cache_read) + num(b.input_cache_creation),
+        numOrZero(b.input_other) +
+        numOrZero(b.output) +
+        numOrZero(b.input_cache_read) +
+        numOrZero(b.input_cache_creation),
     }));
   }, [buckets]);
 

@@ -12,6 +12,8 @@
  */
 
 import { useMemo } from "react";
+// v0.9.21 (M6): numOrZero 从 lib/meta.ts 集中,删本地 num 函数
+import { numOrZero } from "../../lib/meta";
 
 interface Bucket {
   bucket_start?: number;
@@ -25,17 +27,11 @@ const W = 600;
 const H = 80;
 const BAR_PAD = 1;
 
-function num(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
 export function AiTitleChartSvg({ buckets }: { buckets: Bucket[] }) {
-  const maxTotal = useMemo(() => Math.max(1, ...buckets.map((b) => num(b.event_count))), [buckets]);
+  const maxTotal = useMemo(
+    () => Math.max(1, ...buckets.map((b) => numOrZero(b.event_count))),
+    [buckets]
+  );
 
   if (buckets.length === 0) {
     return null;
@@ -53,8 +49,8 @@ export function AiTitleChartSvg({ buckets }: { buckets: Bucket[] }) {
       aria-label={`${buckets.length} 个 bucket 的 ai-title 密度,峰值 ${maxTotal}`}
     >
       {buckets.map((b, i) => {
-        const aiCount = num(b.ai_count);
-        const customCount = num(b.custom_count);
+        const aiCount = numOrZero(b.ai_count);
+        const customCount = numOrZero(b.custom_count);
         const aiH = (aiCount / maxTotal) * H;
         const customH = (customCount / maxTotal) * H;
         const x = i * (barW + BAR_PAD);

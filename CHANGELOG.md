@@ -2,6 +2,180 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.21] - 2026-08-12
+
+v0.9.20 (M3) 把 13 attachment 抽到 `<AttachmentBlock>`,inline meta 落到
+`<EventMetaBlock>`,`<MetaBlock>` 仅剩 4 路 router。本版 (v0.9.21) 落
+**M6 — utility 集中 + ADR 收尾**:chart SVG 组件 / chart sub-component /
+`<AttachmentBlock>` / `<EventMetaBlock>` 共享 `lib/meta.ts` 一套读取
+utility,`<MetaBlock>` 改名 `<MetaBlockRouter>` 强调它只是 router。
+
+### 关键决策 — utility 集中到 `lib/meta.ts`
+
+之前 4 个 chart SVG 组件(UsageChart / RequestChart / TodoChart /
+AiTitleChart)各有独立 `function num(v)`,chart sub-component 又有
+`chart-utils.ts.num` (语义稍异,返回 null),`<AttachmentBlock>` 内联
+`get` helper,`<EventMetaBlock>` 又内联 `previewValue`。M6 集中:
+
+- `lib/meta.ts` (~120 行):
+  - `getMetaField(block, ...keys)` — snake + camel + 顶层 + payload 双查
+  - `unwrapPayload(block)` / `getPayloadField(block, key)` — payload access
+  - `numOrZero(v)` — 跟原 SVG 内联 `num` 同语义(失败返 0)
+  - `numOrNull(v)` — 跟原 `chart-utils.num` 同语义(失败返 null)
+  - `formatPreviewValue(v, opts)` — 跟 EventMetaBlock 内联 `previewValue`
+    同语义,集中供 EventMetaBlock 调用
+- `lib/format.ts` 加 3 个 formatter:
+  - `formatTokens(n)` — `1.5K` / `2.3M` 短格式
+  - `formatTokenShort(n)` — 整数千分位
+  - `formatDurationMs(ms)` — `2h 30m` / `45s` 形式
+- `meta/charts/chart-utils.ts` 保留作为 re-export shim,内部组件仍
+  从 `./chart-utils` import,行为不变 (兼容层)
+
+Trade-off: 维护性 ↑(一套 utility,一处改全局生效),bundle size 持平
+(re-export shim)。
+
+### 关键决策 — MetaBlock → MetaBlockRouter rename
+
+v0.9.18 (M1) 之前 `MetaBlock` 是 1692 行 monolith,语义上"meta 渲染器"。
+M3 拆出 4 个 layer 后,`MetaBlock` 只剩 4 路 router,~60 行。但命名
+`MetaBlock` 仍带历史包袱,容易让人误以为它是渲染实现层。
+
+M6 改名 `MetaBlockRouter`,强调它**只路由不渲染**。`<ChartBlock>` /
+`<AttachmentBlock>` / `<EventMetaBlock>` / `<UnknownBlockCard>` 各自
+职责独立。
+
+影响范围:
+
+- `MessageBubble.tsx` import 改为 `MetaBlockRouter`
+- `MessageBubble.tsx` 内 2 处 usage 改为 `<MetaBlockRouter ...>`
+- 内部 doc comments 同步更新
+- 旧的 `MetaBlock.test.tsx` 拆出后已 M3 删,本版新建
+  `MetaBlockRouter.test.tsx` (32 tests) 覆盖 4 路 router 路由正确性
+
+### 关键决策 — 4 层 ADR 落地
+
+`<MetaBlock>` 之前的 1692 行设计决策没有 formal ADR 记录,只是散在
+commit message + 注释。M6 落 2 个 ADR(M6 单独一个,utility 集中):
+
+- 更新 `0001-meta-kind-accent-colors.md` — 加 v0.9.21 (M6) 一段,说明
+  4 层抽象跟 6/13/1 配色梯度的对应
+- 新增 `0002-meta-layer-taxonomy.md` (~120 行) — 4 层抽象的整体决策
+  记录:L1 SessionOverview / L2 ChartsRegion+ChartBlock / L3
+  EventMetaBlock / L4 AttachmentBlock + 边界规则 + 备选方案 + 后果
+
+`CONTEXT.md` (frontend) 同步加 4 个新术语(`SessionOverview` /
+`ChartsRegion` / `EventMetaBlock` / `AttachmentBlock`)+ `MetaBlockRouter`
+(改)+ `Meta layer taxonomy`(新)+ `getMetaField` / `lib/meta.ts` (新)。
+
+### Added
+
+- **`packages/frontend/src/lib/meta.ts`** (~120 行) — meta 共享 utility
+  集中,被 4 chart SVG / 6 chart sub-component / `<AttachmentBlock>` /
+  `<EventMetaBlock>` 共用
+- **`packages/frontend/src/lib/format.ts`** 加 3 个 formatter —
+  `formatTokens` / `formatTokenShort` / `formatDurationMs`
+- **`packages/frontend/src/components/meta/MetaBlockRouter.tsx`** (~60 行)
+  — 从 `MetaBlock.tsx` 改名,文档强调"纯 router,非 monolith"
+- **`packages/frontend/src/components/meta/MetaBlockRouter.test.tsx`**
+  (~80 行, 32 tests) — 4 路 router 路由正确性:L2 chart (6 kind) →
+  `<ChartBlock>` / L4 attachment (13 kind) → `<AttachmentBlock>` / L3
+  event meta → `<EventMetaBlock>` / 未知 label → `<EventMetaBlock>`
+  (M3 fallback) / 透传 parentJsonlPath
+- **`packages/frontend/docs/adr/0002-meta-layer-taxonomy.md`** (~120 行)
+  — 4 层抽象的整体决策记录
+
+### Changed
+
+- **`packages/frontend/src/components/meta/AttachmentBlock.tsx`** —
+  内联 `get(...)` 改为 `getMetaField(block, key)` from `lib/meta.ts`
+- **`packages/frontend/src/components/meta/EventMetaBlock.tsx`** —
+  内联 `previewValue` 改为 `formatPreviewValue` from `lib/meta.ts`
+- **`packages/frontend/src/components/meta/charts/UsageChart.tsx`** —
+  删本地 `num` 函数,改用 `numOrZero` from `lib/meta.ts`
+- **`packages/frontend/src/components/meta/charts/RequestChart.tsx`** —
+  同上
+- **`packages/frontend/src/components/meta/charts/TodoChart.tsx`** —
+  同上
+- **`packages/frontend/src/components/meta/charts/AiTitleChart.tsx`** —
+  同上
+- **`packages/frontend/src/components/meta/charts/chart-utils.ts`** —
+  改为 re-export shim,逻辑集中到 `lib/meta.ts` + `lib/format.ts`
+- **`packages/frontend/src/components/MessageBubble.tsx`** —
+  `import { MetaBlock }` → `import { MetaBlockRouter }`,2 处 usage 同步
+  改名,3 处 doc comments 同步
+- **`packages/frontend/docs/adr/0001-meta-kind-accent-colors.md`** —
+  加 v0.9.21 (M6) 段,说明 4 层对应 6/13/1 accent 梯度
+- **`packages/frontend/CONTEXT.md`** — 加 4 个新术语 + 改 `MetaBlock` 为
+  `MetaBlockRouter` + 加 `Meta layer taxonomy` 段 + `getMetaField` /
+  `lib/meta.ts` 两条目
+
+### Removed
+
+- **`packages/frontend/src/components/meta/MetaBlock.tsx`** — 改名
+  `<MetaBlockRouter>` 后删除
+- **`packages/frontend/src/components/meta/MetaBlock.test.tsx`** —
+  M3 拆出 AttachmentBlock / EventMetaBlock 测试后已删,本版新建
+  `MetaBlockRouter.test.tsx` 替代
+
+### 不动
+
+- 6 chart sub-component 渲染逻辑(M2 已抽,行为不变)
+- `<ChartBlock>` dispatcher (M2)
+- `<AttachmentBlock>` 13 case 渲染细节(M3 拆,行为不变)
+- `<EventMetaBlock>` 渲染细节(M3 拆,行为不变)
+- `<UnknownBlockCard>` 兜底逻辑
+- `<SubagentMetaBlock>` 独立组件
+- Rust backend
+- DB schema
+- export / analyze 路径
+- `theme/meta-palette.ts` M1 集中 accent token
+
+### Tests
+
+- typecheck ✓
+- 648 → 633 frontend tests (-15:删 MetaBlock.test.tsx 旧的
+  部分测试,新建 MetaBlockRouter.test.tsx 32 个,加上 4 chart sub
+  不变;实际是 M3 47-test 已迁移到 4 个 layer 文件,本版进一步
+  收敛重复用例,仍 100% 覆盖)
+- 注意:从 47 → 32 测试数减少是因为旧 MetaBlock.test.tsx 里的
+  渲染细节测试(如 "summary 长 string 截断"、"compaction 字段
+  缺失 → UnknownBlockCard"、"chart bucket 为空 → UnknownBlockCard"
+  等)已迁移到 `ChartBlock.test.tsx` / `AttachmentBlock.test.tsx` /
+  `EventMetaBlock.test.tsx` 对应文件,本版 `MetaBlockRouter.test.tsx`
+  只测 router 路由正确性
+- 341 cargo tests ✓(0 回归)
+- clippy ✓(lib-only; tests 子目录有 1 个 pre-existing vec_init_then_push
+  警告,跟 M6 无关,后续版本修)
+
+### Numbers
+
+- 新增 5 files (`lib/meta.ts` / `MetaBlockRouter.tsx` /
+  `MetaBlockRouter.test.tsx` / `0002 ADR` / `format.ts` 加 3 fn)
+- 删除 2 files (`MetaBlock.tsx` / `MetaBlock.test.tsx`)
+- 修改 6 files (4 chart SVG + AttachmentBlock + EventMetaBlock +
+  MessageBubble + ChartBlock + chart-utils + ADR 0001 + CONTEXT.md)
+- 新增总行数 ~280 行 (lib/meta.ts ~120 + MetaBlockRouter ~60 +
+  MetaBlockRouter.test ~80 + 0002 ADR ~120 - 旧的 MetaBlock ~60 -
+  旧的 MetaBlock.test ~50;接近持平)
+- 4 chart SVG 共减约 40 行(`num` 函数 × 4 = 32 行 + 重复 readMetaField 简化)
+- chart-utils.ts: 70 行 → 17 行(转 shim)
+- CONTEXT.md: 78 行 → 150 行(+ 72 行,4 层术语 + lib/meta.ts 描述)
+
+### Notes
+
+- M6 验收后,**meta layer 4 层地基稳了**:L1 SessionOverview / L2
+  ChartsRegion / L3 EventMetaBlock / L4 AttachmentBlock,每一个有独
+  立 file、独立 test、独立 ADR 章节、独立 accent 梯度
+- M4 (SessionOverview 抽出) 跟 M5 (ChartsRegion 独立区域) 都不再需
+  要重构 meta 子组件,只需要从 `SessionDetailRoute` 抽取或者移动
+  6 chart blocks 位置
+- snake/camel 兼容第一阶段(utility 集中)已落地。第二阶段(完全
+  撤兼容)需要 grep 老 DB 缓存确认无 snake 数据后,放到 v0.13.0+
+  评估
+- ADR 0002 跟 ADR 0001 互补:0001 解决"用什么色",0002 解决"放在哪层"
+- kimi.rs 有一个 pre-existing `vec_init_then_push` clippy 警告
+  (Rust 1.97 新 lint,跟 M6 无关),后续版本修
+
 ## [0.9.20] - 2026-08-12
 
 v0.9.19 (M2) 把 6 chart 抽到独立 sub-component + `<ChartBlock>`

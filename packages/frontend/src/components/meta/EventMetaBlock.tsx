@@ -29,6 +29,7 @@
 
 import { useState } from "react";
 import type { NormalizedBlockFE } from "../../lib/api";
+import { formatPreviewValue } from "../../lib/meta";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 
 export interface EventMetaBlockProps {
@@ -36,28 +37,6 @@ export interface EventMetaBlockProps {
 }
 
 const MAX_TABLE_ROWS = 16;
-const MAX_STRING_PREVIEW = 240;
-const ARRAY_PREVIEW_COUNT = 8;
-
-function previewValue(v: unknown): string {
-  if (v === null) return "null";
-  if (v === undefined) return "undefined";
-  if (typeof v === "string") {
-    return v.length > MAX_STRING_PREVIEW ? `${v.slice(0, MAX_STRING_PREVIEW)}…` : v;
-  }
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (Array.isArray(v)) {
-    const head = v.slice(0, ARRAY_PREVIEW_COUNT).map(previewValue).join(", ");
-    return v.length > ARRAY_PREVIEW_COUNT
-      ? `[${head}, … (+${v.length - ARRAY_PREVIEW_COUNT})]`
-      : `[${head}]`;
-  }
-  if (typeof v === "object") {
-    const keys = Object.keys(v as Record<string, unknown>);
-    return `{${keys.length} 字段: ${keys.slice(0, 6).join(", ")}${keys.length > 6 ? ", …" : ""}}`;
-  }
-  return String(v);
-}
 
 export function EventMetaBlock({ block }: EventMetaBlockProps) {
   const label = String(block.label ?? block.kind ?? "(无 label)");
@@ -95,9 +74,9 @@ export function EventMetaBlock({ block }: EventMetaBlockProps) {
       </span>
       <span
         className="meta-event-value"
-        title={typeof value === "string" ? value : previewValue(value)}
+        title={typeof value === "string" ? value : formatPreviewValue(value)}
       >
-        {previewValue(value)}
+        {formatPreviewValue(value)}
       </span>
     </div>
   );

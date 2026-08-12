@@ -97,6 +97,34 @@ export function formatLatency(ms: number): string {
 }
 
 /**
+ * v0.9.21 (M6): 把 token 数格式化为短文本:1.2M / 3.4K / 567。
+ * 跟 chart-utils 的 formatTokens 等价,集中到 lib/format.ts 便于复用。
+ */
+export function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+/** v0.9.21 (M6): formatTokens 的轻量版,无小数:3M / 4K / 567 */
+export function formatTokenShort(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+/**
+ * v0.9.21 (M6): 把毫秒格式化为短文本:1.2 min / 4.5 s / 800 ms。
+ * 跟 chart-utils 的 formatDurationMs 等价,集中到 lib/format.ts。
+ */
+export function formatDurationMs(ms: number): string {
+  if (ms >= 3_600_000_000) return `${(ms / 3_600_000_000).toFixed(1)}M ms`;
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)} min`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)} s`;
+  return `${ms} ms`;
+}
+
+/**
  * v0.4.2: 把 `<input type="datetime-local">` 的 naive 字符串("YYYY-MM-DDTHH:mm")
  * 按指定 TZ 解析成 UTC ISO 字符串。
  *

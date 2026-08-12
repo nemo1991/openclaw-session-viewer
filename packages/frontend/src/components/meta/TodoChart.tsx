@@ -14,6 +14,8 @@
  */
 
 import { useMemo } from "react";
+// v0.9.21 (M6): numOrZero 从 lib/meta.ts 集中,删本地 num 函数
+import { numOrZero } from "../../lib/meta";
 
 interface Bucket {
   bucket_start?: number;
@@ -28,21 +30,15 @@ const W = 600;
 const H = 80;
 const BAR_PAD = 1;
 
-function num(v: unknown): number {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
-  }
-  return 0;
-}
-
 export function TodoChartSvg({ buckets }: { buckets: Bucket[] }) {
   const maxTotal = useMemo(
     () =>
       Math.max(
         1,
-        ...buckets.map((b) => num(b.done_count) + num(b.in_progress_count) + num(b.pending_count))
+        ...buckets.map(
+          (b) =>
+            numOrZero(b.done_count) + numOrZero(b.in_progress_count) + numOrZero(b.pending_count)
+        )
       ),
     [buckets]
   );
@@ -63,9 +59,9 @@ export function TodoChartSvg({ buckets }: { buckets: Bucket[] }) {
       aria-label={`${buckets.length} 个 bucket 的 todo 状态趋势,峰值 ${maxTotal}`}
     >
       {buckets.map((b, i) => {
-        const done = num(b.done_count);
-        const inProgress = num(b.in_progress_count);
-        const pending = num(b.pending_count);
+        const done = numOrZero(b.done_count);
+        const inProgress = numOrZero(b.in_progress_count);
+        const pending = numOrZero(b.pending_count);
         const doneH = (done / maxTotal) * H;
         const inProgressH = (inProgress / maxTotal) * H;
         const pendingH = (pending / maxTotal) * H;
