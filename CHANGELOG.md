@@ -2,6 +2,137 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.23] - 2026-08-12
+
+v0.9.22 (M4) 完成 L1 SessionOverview 抽出。本版 (v0.9.23) 落
+**M5 — ChartsRegion 独立区域**:6 个 chart blocks 从 transcript
+timeline 抽离到独立 `<ChartsRegion>` 组件。贯穿前后端 + 跨 M3 抽象
+基础 (复用 `<ChartBlock>` dispatcher)。
+
+### 关键决策 — Chart blocks 抽离到 L2 ChartsRegion
+
+`SessionDetailRoute` 之前把 6 chart meta blocks (context.apply_compaction /
+llm.tools_snapshot / usage.chart / request.chart / todos.chart /
+ai-title.chart) 跟普通 meta event 一起塞在 transcript timeline 末尾,
+视觉混排语义不清。用户角度看 chart blocks 跟 event meta block 是
+两个不同维度的东西:
+
+- **Chart** = 全局过程可视化 (跨 transcript 整体)
+- **Event meta** = 单条消息的元数据 (timeline 内联)
+
+M5 把 chart blocks 抽到独立 L2 区域, 位置在 `<SessionOverview>` 下、
+`<TranscriptView>` 上。**两套抽象** (L2) + (L3/L4) 同台呈现:
+
+- **L2 `<ChartsRegion>`** — 6 chart blocks, 2 列 responsive grid,
+  各自保留独立 accent (compaction=teal / tools_snapshot=indigo /
+  usage.chart=amber / request.chart=violet / todos.chart=emerald /
+  ai-title.chart=rose)
+- **L3`<EventMetaBlock>`** + **L4 `<AttachmentBlock>`** — 单条消息
+  的 inline meta + Claude attachment envelope, 仍在 transcript
+  timeline 内
+
+### 关键决策 — 后端 StreamBatch 加 `charts` 字段
+
+后端 `commands/transcript.rs::StreamBatch` 加 `charts: Vec<TranscriptEntryOut>`
+字段, emit 时按 `is_chart_meta_block` 把 6 chart label 抽离到 `charts`,
+其他 entries 保留在 `entries`。三大分支:
+
+- **kimi** (batch normalize) — 末尾 emit 5 chart blocks (apply_compaction /
+  tools_snapshot / usage.chart / request.chart / todos.chart) 全部
+  抽到 `charts`
+- **claude** (batch normalize) — 末尾 emit 1 个 ai-title.chart 抽到
+  `charts`
+- **openclaw** (legacy streaming) — 无 chart blocks, `charts` 始终
+  `vec![]`
+
+前端 `transcriptStore` 同步加 `charts` state, 监听 `transcript-batch`
+事件时同时 append entries + charts。老 wire 兼容: 老 payload 没
+`charts` 字段 → 前端 `?? []` 兜底, ChartsRegion 渲染空状态 (不显示
+占位)。
+
+### 关键决策 — ChartsRegion 0 chart 不渲染
+
+`<ChartsRegion>` 内部 `if (charts.length === 0) return null`。理由:
+
+- 老 wire 兼容 — 老 session 文件没有 `charts` 字段
+- OpenClaw session — 走 legacy streaming, 永远 `charts: []`
+- 0 用量的 session — 比如 kimi session 没 `usage.record` 时
+  usage.chart 不 emit
+
+不显示 "暂无 chart" 占位, 整 region 折叠, 视觉上没有负担。
+
+### 关键决策 — 2 列 responsive grid
+
+`<ChartsRegion>` 网格用 `grid-template-columns: repeat(2, minmax(0, 1fr))`。
+窄屏 (< 720px) 单列。每个 chart cell `min-width: 0` 防止 SVG
+撑爆 grid item。
+
+6 chart 在 6 个 layout 里 (kimi 5 chart / claude 1 chart) 都不撑
+详情页主区域。
+
+### Added
+
+- **`packages/frontend/src/components/meta/ChartsRegion.tsx`** (~120 行)
+  — L2 layer, 接收 `charts: TranscriptEntryOut[]` props, 内部 2 列
+  responsive grid 渲染 6 `<ChartBlock>` 实例
+- **`packages/frontend/src/components/meta/ChartsRegion.test.tsx`** (~150 行,
+  5 tests) — 覆盖 0 chart 不渲染 / 1 chart / 6 chart / 6 chart dispatch
+  路由 / 非 meta block skip
+
+### Changed
+
+- **`src-tauri/src/commands/transcript.rs`** — `StreamBatch` 加 `charts`
+  字段 (~20 行 doc comment); 加 `is_chart_meta_block` helper (~25 行);
+  kimi / claude 两处 emit 路径重构成 partition entries + charts (~50 行)
+- **`packages/frontend/src/state/transcriptStore.ts`** — 加 `charts` state
+  - reset / batch handler append + start 3 处更新 (~15 行)
+- **`packages/frontend/src/lib/api.ts`** — `listenTranscriptBatches` 签名
+  加 `charts` 字段 (~3 行)
+- **`packages/frontend/src/routes/SessionDetailRoute.tsx`** — 715 → 720 行
+  (+5): 1 行 import + 1 行 charts selector + 4 行 `<ChartsRegion>` JSX
+- **`packages/frontend/src/routes/SessionDetailRoute.css`** — 末尾
+  加 `.charts-region-*` 5 个 CSS rule (~45 行)
+- **`packages/frontend/src/components/meta/SessionOverview.test.tsx`** —
+  修 M4 遗留 typecheck 错误: `protocolVersion: 1` → `"1"`, `lastCompactionDurationMs: null` → `undefined`
+  (类型契约跟前面对齐)
+
+### 不动
+
+- backend 6 chart builder 函数 (kimi.rs / claude.rs) — 内部逻辑不变
+- `theme/meta-palette.ts` — 6 chart accent 保持 (M2/M3 决策)
+- `lib/meta.ts` — M6 utility 集中
+- SessionOverview.tsx — L1 layer (M4)
+- ChartBlock.tsx + 6 chart sub-component — 复用, 没改
+- export / analyze / trajectory 路径 — 走 streaming normalize,
+  不 emit chart blocks (行为不变)
+- DB schema
+
+### Tests
+
+- typecheck ✓
+- 646 → 651 frontend tests (+5, 0 回归)
+- 341 cargo tests ✓
+- clippy --lib ✓
+
+### Numbers
+
+- 新增 2 files (ChartsRegion.tsx + ChartsRegion.test.tsx)
+- 改 6 files (1 backend + 5 frontend)
+- 跨前后端, 跨 stream-batch wire, 跨 store, 跨 L1/L2 集成
+
+### Notes
+
+- M5 落地后 4 层抽象全 stack 通: L1 SessionOverview / L2
+  ChartsRegion (M5) + ChartBlock (M2) / L3 EventMetaBlock (M3) / L4
+  AttachmentBlock (M3)
+- 后续 (非本里程碑):
+  - Header chrome (~150 行) → `<SessionHeader>` 子组件
+  - Notes panel (~80 行) → `<SessionNotesPanel>` 子组件
+  - 入口 button group (~80 行) → `<SessionActions>` 子组件
+  - 完成后 SessionDetailRoute 预计能到 ~400 行
+  - Snake/camel 第二阶段撤兼容 (需要 grep 验证老 DB 缓存)
+  - meta_extras 部分字段迁移到 batch normalize (重复 scan 优化)
+
 ## [0.9.22] - 2026-08-12
 
 v0.9.21 (M6) 完成 utility 集中 + MetaBlockRouter rename + ADR 0002。

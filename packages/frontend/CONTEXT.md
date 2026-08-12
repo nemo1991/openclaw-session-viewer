@@ -31,10 +31,13 @@ fold。"这是什么 session?" 问题的答案。接收 `SessionMeta` props,从
 `SessionDetailRoute` 抽出(M4 计划)。
 _Avoid_: header panel, summary card, overview pane
 
-**ChartsRegion** (v0.9.21, M5):
-L2 层 container。在 SessionOverview 下方、TranscriptView 上方,2-3 column
-grid 渲染 6 个 `<ChartBlock>`。"过程可视化?" 问题的答案。chart blocks
-从 transcript timeline 抽离后放在这里。M5 落地。
+**ChartsRegion** (v0.9.23, M5):
+L2 层 container。在 SessionOverview 下方、TranscriptView 上方,2 列
+responsive grid 渲染 6 个 `<ChartBlock>`。"过程可视化?" 问题的答案。
+chart blocks 从 transcript timeline 抽离后放在这里。M5 落地。
+数据源: `transcriptStore.charts` (来自后端 `StreamBatch.charts` 字段,
+后端按 `is_chart_meta_block` 把 6 chart label 抽离)。
+0 chart → 不渲染 (老 wire / openclaw / 0 用量 session)。
 _Avoid_: chart grid, chart section, chart dashboard
 
 **ChartBlock**:

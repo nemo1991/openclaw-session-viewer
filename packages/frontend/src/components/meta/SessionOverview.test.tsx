@@ -122,7 +122,7 @@ describe("SessionOverview", () => {
         meta={{
           ...baseMeta,
           metaBanner: {
-            protocolVersion: 1,
+            protocolVersion: "1",
             profileName: "default",
             modelAlias: "kimi-k2",
             thinkingEffort: "high",
@@ -131,7 +131,7 @@ describe("SessionOverview", () => {
             configChangeCount: 1,
             approvalCount: 2,
             compactionCount: 0,
-            lastCompactionDurationMs: null,
+            lastCompactionDurationMs: undefined,
           },
         }}
       />
@@ -150,12 +150,12 @@ describe("SessionOverview", () => {
         meta={{
           ...baseMeta,
           metaBanner: {
-            protocolVersion: 1,
+            protocolVersion: "1",
             modelAlias: "kimi-k2",
             configChangeCount: 1,
             approvalCount: 2,
             compactionCount: 0,
-            lastCompactionDurationMs: null,
+            lastCompactionDurationMs: undefined,
           },
         }}
       />

@@ -100,3 +100,22 @@ usageChart,requestChart,todoChart,aiTitleChart}` 各自 accent
 
 M6 没改配色,只是把 `numOrZero` / `numOrNull` / `getMetaField` /
 `formatPreviewValue` 集中到 `lib/meta.ts`,chart sub-component (`UsageChartMetaBlock` / `RequestChartMetaBlock` / `TodoChartMetaBlock` / `AiTitleChartMetaBlock` / `CompactionChartMetaBlock` / `ToolsSnapshotChartMetaBlock`) 和 chart SVG (UsageChart / RequestChart / TodoChart / AiTitleChart) 共享 `META_ACCENT` 跟 utility,确保 accent 跟计算逻辑对齐。
+
+## v0.9.23 update (M5) — ChartsRegion 独立区域 (color 保持)
+
+M5 把 6 chart blocks 从 transcript timeline 抽离到独立
+`<ChartsRegion>` 组件。配色**完全不变** — 6 chart 各自 accent
+(`META_ACCENT.{compaction,toolsSnapshot,usageChart,requestChart,
+todoChart,aiTitleChart}`) 跟 v0.9.18 集中化决策一致。
+
+视觉变化: chart blocks 不再跟普通 meta event 混排, 集中到详情页
+顶部一个 2 列 responsive grid (L2 层) , 视觉权重跟 L3/L4
+inline meta 区分更明显。
+
+数据流: 后端 `commands/transcript.rs::StreamBatch` 加 `charts` 字段,
+后端按 `is_chart_meta_block` (6 chart label union) 把 chart blocks
+从 `entries` 抽离到 `charts`。前端 `transcriptStore.charts` 同步
+state, `<ChartsRegion>` 读 `charts` 渲染 grid。
+
+老 wire 兼容 (老 session 文件没有 `charts` 字段): 前端 `?? []` 兜底,
+`<ChartsRegion>` 0 chart 时不渲染 region (不显示占位)。

@@ -6,7 +6,8 @@ top-down 设计 meta layer,把单个 overloaded "meta" 概念拆成 4 层抽象,
 给 dispatch / 渲染 / 未来扩展一个清晰的模块边界。
 
 **Status**: accepted(v0.9.18 palette 集中化 → v0.9.19 chart 抽出 →
-v0.9.20 L3/L4 抽出 → v0.9.21 utility 集中化,本 ADR 记录整体决策)
+v0.9.20 L3/L4 抽出 → v0.9.21 utility 集中化 → v0.9.22 L1 SessionOverview
+抽出 → v0.9.23 L2 ChartsRegion 独立区域落地,本 ADR 记录整体决策)
 
 ## Context
 

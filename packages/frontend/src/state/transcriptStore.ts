@@ -10,6 +10,16 @@ import { listenTranscriptBatches, apiCountEntries } from "../lib/api";
 interface TranscriptStore {
   path: string | null;
   entries: TranscriptEntryOut[];
+  /**
+   * v0.9.23 (M5): 6 个 chart meta blocks (context.apply_compaction /
+   * llm.tools_snapshot / usage.chart / request.chart / todos.chart /
+   * ai-title.chart)。从 transcript timeline 抽离到独立 `<ChartsRegion>`
+   * 组件(在 SessionOverview 下、TranscriptView 上)。
+   *
+   * 老 wire 兼容: 老 payload 没 `charts` 字段 → `?? []` 兜底。
+   * 永远有值(空数组即"session 无 chart"),store reset 同步清空。
+   */
+  charts: TranscriptEntryOut[];
   loading: boolean;
   totalCount: number;
   loadedCount: number;
@@ -34,6 +44,7 @@ interface TranscriptStore {
 export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
   path: null,
   entries: [],
+  charts: [],
   loading: false,
   totalCount: 0,
   loadedCount: 0,
@@ -45,6 +56,7 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
     set({
       path: null,
       entries: [],
+      charts: [],
       loading: false,
       totalCount: 0,
       loadedCount: 0,
@@ -64,10 +76,15 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
     // 之前 count_entries 在 listen 和 invoke 之间,backend 一发
     // transcript-batch 可能早于 listener 注册完成 → 前几批丢失。
     // count 只是 progress UI hint,移到 invoke 之后即可。
+    // v0.9.23 (M5): batch 里多带 `charts` 字段 — 6 chart blocks 由后端
+    // 抽离,前端同时 append 到 `charts` state。timeline 不会渲染 chart blocks。
     const unlisteners = await listenTranscriptBatches(
       (batch) => {
+        // 老 wire 兼容: 老 batch payload 没有 charts 字段 → 按 [] 处理
+        const newCharts = batch.charts ?? [];
         set((s) => ({
           entries: [...s.entries, ...batch.entries],
+          charts: [...s.charts, ...newCharts],
           loadedCount: s.entries.length + batch.entries.length,
         }));
       },

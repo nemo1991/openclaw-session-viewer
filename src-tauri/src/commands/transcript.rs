@@ -18,6 +18,39 @@ use crate::parser::kimi::normalize_session as normalize_kimi_session;
 use crate::parser::openclaw::normalize_entry;
 use crate::AppState;
 
+/// v0.9.23 (M5): 判断 normalized message 是否是 chart meta block (6 个 chart kind 之一).
+///
+/// 6 chart label (跟 packages/frontend/src/theme/meta-palette.ts CHART_META_LABELS 一一对应):
+/// - context.apply_compaction (kimi)
+/// - llm.tools_snapshot (kimi)
+/// - usage.chart (kimi)
+/// - request.chart (kimi)
+/// - todos.chart (kimi)
+/// - ai-title.chart (claude)
+///
+/// block.label 存放在 `blocks[0].data.label` (跟 v0.9.18+ 一致);fallback
+/// 到 raw_type 应对历史 wire。
+fn is_chart_meta_block(msg: &NormalizedMessage) -> bool {
+    let block = match msg.blocks.first() {
+        Some(b) => b,
+        None => return false,
+    };
+    let label = block
+        .data
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    matches!(
+        label,
+        "context.apply_compaction"
+            | "llm.tools_snapshot"
+            | "usage.chart"
+            | "request.chart"
+            | "todos.chart"
+            | "ai-title.chart"
+    )
+}
+
 /// 计数 JSONL 记录数
 #[tauri::command]
 pub async fn count_entries(path: String) -> AppResult<u64> {
@@ -72,23 +105,32 @@ pub async fn stream_transcript(
                 // 2) 跑 normalize_session state machine → collapsed NormalizedMessage
                 let messages = normalize_kimi_session(records);
                 // 3) 按 200 条一组分包,避免单 batch payload 太大
+                // v0.9.23 (M5): 同一批内提取 chart blocks 到 `charts` 字段,
+                // transcript timeline 只保留非 chart blocks。
                 const SUB_BATCH: usize = 200;
                 let mut global_idx: usize = 0;
                 for chunk in messages.chunks(SUB_BATCH) {
-                    let entries: Vec<TranscriptEntryOut> = chunk
-                        .iter()
-                        .map(|norm| TranscriptEntryOut {
+                    let mut entries: Vec<TranscriptEntryOut> = Vec::new();
+                    let mut charts: Vec<TranscriptEntryOut> = Vec::new();
+                    for norm in chunk {
+                        let out = TranscriptEntryOut {
                             index: global_idx,
                             byte_offset: 0,
                             raw: serde_json::Value::Null, // collapsed 后无对应 raw
                             normalized: norm.clone(),
-                        })
-                        .collect();
-                    let start = global_idx;
-                    global_idx += entries.len();
+                        };
+                        if is_chart_meta_block(norm) {
+                            charts.push(out);
+                        } else {
+                            entries.push(out);
+                        }
+                        global_idx += 1;
+                    }
+                    let start = global_idx - entries.len() - charts.len();
                     let _ = tx.blocking_send(StreamBatch {
                         start_index: start,
                         entries,
+                        charts,
                     });
                 }
                 Ok(())
@@ -101,6 +143,7 @@ pub async fn stream_transcript(
             // v0.9.17: claude 走 batch normalize_session — 聚合 1185 个 ai-title /
             // custom-title events 为 1 个 ai-title.chart meta,避免详情页撑爆。
             // streaming normalize() 保留给 export/analyze/subagent jsonls (scope 不同)。
+            // v0.9.23 (M5): chart blocks 同 kimi 抽到 `charts` 字段。
             let result: Result<(), String> = (|| {
                 // 1) 一次性读完所有 records
                 let mut records: Vec<serde_json::Value> = Vec::new();
@@ -114,20 +157,27 @@ pub async fn stream_transcript(
                 const SUB_BATCH: usize = 200;
                 let mut global_idx: usize = 0;
                 for chunk in messages.chunks(SUB_BATCH) {
-                    let entries: Vec<TranscriptEntryOut> = chunk
-                        .iter()
-                        .map(|norm| TranscriptEntryOut {
+                    let mut entries: Vec<TranscriptEntryOut> = Vec::new();
+                    let mut charts: Vec<TranscriptEntryOut> = Vec::new();
+                    for norm in chunk {
+                        let out = TranscriptEntryOut {
                             index: global_idx,
                             byte_offset: 0,
                             raw: serde_json::Value::Null, // collapsed 后无对应 raw
                             normalized: norm.clone(),
-                        })
-                        .collect();
-                    let start = global_idx;
-                    global_idx += entries.len();
+                        };
+                        if is_chart_meta_block(norm) {
+                            charts.push(out);
+                        } else {
+                            entries.push(out);
+                        }
+                        global_idx += 1;
+                    }
+                    let start = global_idx - entries.len() - charts.len();
                     let _ = tx.blocking_send(StreamBatch {
                         start_index: start,
                         entries,
+                        charts,
                     });
                 }
                 Ok(())
@@ -138,7 +188,8 @@ pub async fn stream_transcript(
             }
         } else if let Err(e) = jsonl::stream_batches(&p, 500, |batch| {
             // v0.9.17: claude 走 batch (上方 src == "claude" 分支), 这里只剩 openclaw
-            // (legacy streaming path)
+            // (legacy streaming path)。openclaw 当前不 emit chart blocks,
+            // charts 始终 vec![]。
             let entries: Vec<TranscriptEntryOut> = batch
                 .records
                 .iter()
@@ -160,6 +211,7 @@ pub async fn stream_transcript(
             let _ = tx.blocking_send(StreamBatch {
                 start_index: batch.start_index,
                 entries,
+                charts: Vec::new(),
             });
         }) {
             log::error!("stream_transcript 失败 ({}): {}", path_for_log, e);
@@ -192,6 +244,20 @@ pub async fn stream_transcript(
 pub struct StreamBatch {
     pub start_index: usize,
     pub entries: Vec<TranscriptEntryOut>,
+    /// v0.9.23 (M5): 6 个 chart meta blocks (context.apply_compaction /
+    /// llm.tools_snapshot / usage.chart / request.chart / todos.chart /
+    /// ai-title.chart) 从 entries 抽离。前端把 charts 渲染到独立
+    /// `<ChartsRegion>` 组件(在 SessionOverview 下、TranscriptView 上),
+    /// 而不是塞在 transcript timeline 末尾。
+    ///
+    /// 老 wire 兼容: 旧 batch payload 没 `charts` 字段 → 前端按 `[]` 处理,
+    /// ChartsRegion 渲染空状态。Rust 端 emit 永远带 `charts` 字段
+    /// (vec![] 也 emit 空 JSON 数组,前端 `?? []` 兜底)。
+    ///
+    /// 抽取时机: batch normalize 时 (kimi / claude 分支),chart blocks
+    /// 同时 emit 到 `entries` **和** `charts`,前端 store 收到 batch 后
+    /// 把 chart entries filter 掉避免 timeline 重复渲染。
+    pub charts: Vec<TranscriptEntryOut>,
 }
 
 #[derive(Serialize, Clone)]

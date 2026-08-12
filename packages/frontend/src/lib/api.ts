@@ -20,12 +20,17 @@ export const apiCountEntries = (path: string): Promise<number> => invoke("count_
 
 /** 订阅流式转录批次 */
 export function listenTranscriptBatches(
-  onBatch: (batch: { startIndex: number; entries: TranscriptEntryOut[] }) => void,
+  onBatch: (batch: {
+    startIndex: number;
+    entries: TranscriptEntryOut[];
+    charts: TranscriptEntryOut[];
+  }) => void,
   onDone: (errorMsg: string | null) => void
 ): Promise<UnlistenFn[]> {
   return Promise.all([
-    listen<{ startIndex: number; entries: TranscriptEntryOut[] }>("transcript-batch", (e) =>
-      onBatch(e.payload)
+    listen<{ startIndex: number; entries: TranscriptEntryOut[]; charts: TranscriptEntryOut[] }>(
+      "transcript-batch",
+      (e) => onBatch(e.payload)
     ),
     // v0.8.14 item D: done 事件 payload 现在带 `{ error?: string }` —
     // 后端 stream_batches 失败时把错误信息塞进 error,前端 store 据此

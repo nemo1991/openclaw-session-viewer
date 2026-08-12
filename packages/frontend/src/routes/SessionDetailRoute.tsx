@@ -43,6 +43,11 @@ import { SearchInSessionBar } from "../views/SearchInSessionBar";
 import { SubagentPanel } from "../components/SubagentPanel";
 // v0.9.22 (M4): SessionSummaryStrip + MetaBannerFold 抽到 <SessionOverview> (L1 layer)
 import { SessionOverview } from "../components/meta/SessionOverview";
+// v0.9.23 (M5): 6 chart blocks (context.apply_compaction / llm.tools_snapshot /
+// usage.chart / request.chart / todos.chart / ai-title.chart) 从 transcript
+// timeline 抽离到独立 <ChartsRegion> (L2 layer),位置在 SessionOverview 下、
+// TranscriptView 上。
+import { ChartsRegion } from "../components/meta/ChartsRegion";
 import { useKey } from "../lib/keymap";
 import {
   formatBytes,
@@ -74,6 +79,8 @@ export default function SessionDetailRoute() {
   // 4 个独立 selector(避免任一字段变化触发整页重渲染)
   const start = useTranscriptStore((s) => s.start);
   const entries = useTranscriptStore((s) => s.entries);
+  // v0.9.23 (M5): charts — 6 chart meta blocks 抽离后的 L2 数据源
+  const charts = useTranscriptStore((s) => s.charts);
   const loading = useTranscriptStore((s) => s.loading);
   const totalCount = useTranscriptStore((s) => s.totalCount);
   const error = useTranscriptStore((s) => s.error);
@@ -606,6 +613,14 @@ export default function SessionDetailRoute() {
        * 内联函数 + formatIdleGapFromMs helper, 全部 inline 在 SessionDetailRoute,
        * 抽出到 <SessionOverview> 后 route 减到 < 500 行 */}
       <SessionOverview meta={meta} />
+
+      {/* v0.9.23 (M5): L2 ChartsRegion — 6 chart blocks (compaction / tools /
+       * usage / request / todos / ai-title) 之前是塞在 transcript timeline 末尾
+       * 跟普通 meta event 混排,视觉混排语义不清。现在抽到独立区域,位置在
+       * Overview 下、TranscriptView 上。0 chart 时由 ChartsRegion 内部不渲染
+       * (老 wire / openclaw / 无 chart session 不显示占位)。
+       * 后端 StreamBatch 字段 `charts` 兜底 []:老 wire 兼容。 */}
+      <ChartsRegion charts={charts} />
 
       {/* v0.8.0: notes 编辑面板 + links 列表 */}
       {(notesEditing || overrides.snap.notes[meta.sessionId]) && (
