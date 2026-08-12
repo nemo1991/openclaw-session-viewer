@@ -2,6 +2,122 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.22] - 2026-08-12
+
+v0.9.21 (M6) 完成 utility 集中 + MetaBlockRouter rename + ADR 0002。
+本版 (v0.9.22) 落 **M4 — SessionOverview 抽出**:L1 层从 `SessionDetailRoute`
+inline 实现抽到独立 `SessionOverview` 组件,SessionSummaryStrip +
+MetaBannerFold + formatIdleGapFromMs 3 个 helper 跟 SessionDetailRoute
+解耦。
+
+### 关键决策 — L1 SessionOverview 独立组件
+
+`SessionDetailRoute.tsx` 是 951 行的 container route,聚合了 5 个 area
+(header chrome / summary strip / meta banner fold / notes panel /
+TranscriptView mount)。M4 抽出 L1 层:
+
+- **`<SessionOverview>`** (~270 行) — 接收 `SessionMeta` props, 渲染
+  `SessionSummaryStrip` + (kimi) `MetaBannerFold`
+- **`<SessionSummaryStrip>`** — 一行聚合 chip, 9 个 DB-derived 字段
+  (phaseHint / phaseDetail / topTools / otherTools / subagentCount /
+  thinkingCount / errorCount / repeatRunCount / idleGapCount)
+- **`<MetaBannerFold>`** — kimi-only config/perm/tools 历史折叠面板
+- **`formatIdleGapFromMs`** — ms → "5 分钟" / "2 小时" formatter
+
+`SessionDetailRoute` 从 951 → 715 行 (-236,-25%)。L1 layer 现在跟
+L2 (`ChartBlock`) / L3 (`EventMetaBlock`) / L4 (`AttachmentBlock`) 同
+级,4 层抽象都各有独立 file + 独立 test + 独立 ADR 章节。
+
+### 关键决策 — SessionSummaryStrip 空数据 3 重 guard
+
+`<SessionSummaryStrip>` 内部 3 重 guard 决定是否渲染:
+
+1. `textMessageCount === 0` → 不渲染 (避免加载中闪烁)
+2. `toolUsage.length === 0 && textMsg < 3` → 不渲染 (空 session)
+3. `!phaseHint` → 不渲染 (enrich 还没跑完, 等 ~1s)
+
+这 3 个 guard 是从 v0.8.4 沿用到现在的核心可见性逻辑, M4 抽出时
+完整保留。
+
+### 关键决策 — MetaBannerFold kimi-only
+
+`<MetaBannerFold>` 仅在 `meta.metaBanner` 存在时渲染。claude /
+openclaw session 没有这个字段 (他们的 wire 不发 metaBanner), 所以
+自动 fallback 到只渲染 SessionSummaryStrip。
+
+`<MetaBannerFold>` 内部 `useState` 折叠交互, 默认折叠显示
+protocol_version + 4 count 的简略 tag, 点 chevron 展开看完整
+snapshot。
+
+### Added
+
+- **`packages/frontend/src/components/meta/SessionOverview.tsx`** (~270 行)
+  — L1 layer, 接收 SessionMeta props, 渲染 SessionSummaryStrip +
+  (kimi) MetaBannerFold
+- **`packages/frontend/src/components/meta/SessionOverview.test.tsx`**
+  (~150 行, 13 tests) — 覆盖 9 个 DB-derived 字段 + metaBanner 条件
+  渲染 + empty data 三重 guard + 折叠交互
+
+### Changed
+
+- **`packages/frontend/src/routes/SessionDetailRoute.tsx`** — 951 → 715
+  行 (-236, -25%):
+  - 删 `function SessionSummaryStrip` (110 行函数 + 13 行 doc comment)
+  - 删 `function formatIdleGapFromMs` (10 行 helper)
+  - 删 `function MetaBannerFold` (82 行函数 + 13 行 doc comment)
+  - 加 `import { SessionOverview }` (1 行)
+  - 加 `<SessionOverview meta={meta} />` 替换 2 处 usage (5 行)
+  - 1 行 doc comment 简化 (关于 SessionSummaryStrip 的 inline note 已移走)
+- **`packages/frontend/src/components/meta/SessionOverview.tsx`** 内部
+  dual-export:`export function SessionOverview` (L1 entry) + 内部
+  `function SessionSummaryStrip` / `function MetaBannerFold` (private —
+  file-local,外部不直接 import, 走 SessionOverview)
+
+### 不动
+
+- meta 子组件 (ChartBlock / EventMetaBlock / AttachmentBlock) — M4
+  跟它们解耦,互不依赖
+- kimi.rs / claude.rs / openclaw.rs / meta_extras.rs (Rust backend)
+- DB schema
+- export / analyze / trajectory 路径
+- TranscriptView 渲染逻辑
+- `theme/meta-palette.ts` (META_ACCENT token)
+- `lib/meta.ts` (M6 utility 集中)
+
+### Tests
+
+- typecheck ✓
+- 633 → 646 frontend tests (+13, 0 回归)
+- 341 cargo tests ✓
+- clippy --lib ✓
+
+### Numbers
+
+- 新增 2 files (SessionOverview.tsx + SessionOverview.test.tsx)
+- 删除 0 files (3 个函数从 SessionDetailRoute 移走, 文件本身保留)
+- SessionDetailRoute: 951 → 715 行 (-236, -25%)
+- SessionOverview.tsx: 286 行 (含 16 行 doc comment + 16 行内部
+  SessionSummaryStrip doc + 14 行 MetaBannerFold doc)
+- meta/ 目录: 11 files → 12 files (M2/M3/M6 加 5 file + M4 加 1 file)
+- main entry `<SessionOverview>` 调用方减少 2 处 → 1 处
+- 注意: SessionDetailRoute 仍 > 500 行 (目标), 残留 715 行主要是
+  header chrome (~150 行) + inline notes panel (~80 行) +
+  analyze/export buttons (~80 行) + TranscriptView mount (~30 行)
+  - hook 调用密集 (~250 行)。这些是 M4 之外的提取工作, 后续
+    小型 refactor 再做。本次 M4 聚焦 L1 抽出本身。
+
+### Notes
+
+- L1 抽完后 4 层抽象地基全稳: L1 SessionOverview / L2 ChartBlock +
+  (M5) ChartsRegion / L3 EventMetaBlock / L4 AttachmentBlock
+- M5 (ChartsRegion 独立区域) 现在落地更容易 — SessionOverview 下方
+  只需加 `<ChartsRegion charts={charts} />`, 跟 SessionOverview 同级
+- 后续小型 refactor (非本里程碑):
+  - Header chrome (~150 行) → `<SessionHeader>` 子组件
+  - Notes panel (~80 行) → `<SessionNotesPanel>` 子组件
+  - 入口 button group (~80 行) → `<SessionActions>` 子组件
+  - 完成后 SessionDetailRoute 预计能到 ~400 行
+
 ## [0.9.21] - 2026-08-12
 
 v0.9.20 (M3) 把 13 attachment 抽到 `<AttachmentBlock>`,inline meta 落到
