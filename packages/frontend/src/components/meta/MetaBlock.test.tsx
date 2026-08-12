@@ -522,14 +522,24 @@ describe("MetaBlock (v0.6.x 默认展开)", () => {
   });
 
   describe("fallback", () => {
-    it("未知 label → 走 UnknownBlockCard(<details>)", () => {
+    // v0.9.20 (M3): 未知 label 走 `<EventMetaBlock>` (轻量 label + 字段表),
+    // 不再走 `<UnknownBlockCard>` (重型 <details> 折叠)。M3 之前是
+    // UnknownBlockCard 兜底,现在统一 inline meta 渲染。
+    it("未知 label → 走 EventMetaBlock (key-value 字段表)", () => {
       const block: NormalizedBlockFE = {
         kind: "meta",
         label: "totally-future",
         payload: { foo: "bar" },
       };
-      renderInRoute(<MetaBlock block={block} label="totally-future" />);
-      expect(document.querySelector("details")).toBeInTheDocument();
+      const { container } = renderInRoute(<MetaBlock block={block} label="totally-future" />);
+      // EventMetaBlock wrapper class
+      expect(container.querySelector(".event-meta-block-meta")).toBeInTheDocument();
+      // label 显示为 kind badge
+      expect(screen.getByText(/📄 totally-future/)).toBeInTheDocument();
+      // payload 字段 foo 渲染为 row
+      expect(screen.getByTestId("event-meta-row-foo")).toBeInTheDocument();
+      // 不再渲染 <details>
+      expect(document.querySelector("details")).toBeNull();
     });
   });
 

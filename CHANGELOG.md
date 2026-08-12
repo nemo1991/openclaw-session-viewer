@@ -2,6 +2,143 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.20] - 2026-08-12
+
+v0.9.19 (M2) 把 6 chart 抽到独立 sub-component + `<ChartBlock>`
+dispatcher。本版 (v0.9.20) 落 **M3 — EventMetaBlock / AttachmentBlock
+抽象**:MetaBlock 顶层从 13 attachment case 内联 + 4 helper + 1692 行
+缩减为 4 路 router,13 attachment 抽到 `<AttachmentBlock>`,inline meta
+(Kimi metadata / config.update / OpenClaw model_change / 等) 落到新建
+`<EventMetaBlock>` 通用渲染。
+
+### 关键决策 — 4 路 router 替代 13 case 内联
+
+`<MetaBlock>` 之前是 L2 (chart) + L4 (attachment) + L3 (?) 混在一起的
+1692 行上帝组件。M3 把路由拆成 4 路,基于 `theme/meta-palette.ts` 的
+两个 Set:
+
+```
+CHART_META_LABELS.has(label)      → <ChartBlock>        // 6 kind
+ATTACHMENT_META_LABELS.has(label) → <AttachmentBlock>   // 13+4 kind
+否则                              → <EventMetaBlock>    // inline meta
+兜底                              → <UnknownBlockCard>  // 解析失败
+```
+
+`EventMetaBlock` 是新建的 L3 层 — 之前 Kimi metadata / config.update /
+OpenClaw model_change 等 inline meta 走 `<UnknownBlockCard>` (重型
+details 折叠),现在改用轻量的 label + payload 字段表(slate accent,
+border 0.4 比 attachment 弱),视觉上三层梯度:chart > attachment > eventMeta。
+
+### 关键决策 — AttachmentBlock 抽离 + 4 helper 跟随
+
+13 个 attachment case 整体从 MetaBlock.tsx 抽出到 `AttachmentBlock.tsx`,
+4 个 helper 跟随搬过来(同一文件内联):
+
+- `FileSnapshotBlock` (file_snapshot 默认 5 行 + 折叠)
+- `FilePathClickable` (任意路径点击 reveal + 可操作错误 UI)
+- `PlanFilePath` (plan_mode reveal 入口)
+- `RevealErrorActions` (reveal 失败时三个按钮)
+
+这些 helper 之前散在 MetaBlock.tsx 末尾,只服务于 attachment 渲染,
+不应当污染 `<ChartBlock>` / `<EventMetaBlock>` 的 namespace。
+
+### 关键决策 — MessageBubble 简化 isKnownMetaLabel
+
+`MessageBubble.tsx` 的 `isKnownMetaLabel` / `isMetaKind` 之前是 19 个
+label 的硬编码列表(M1 之前 13 个 + v0.9.12-17 加 6 个 chart = 19 个)。
+M3 改为两个 Set 的 `has()` 调用:
+
+```ts
+function isKnownMetaLabel(label: string): boolean {
+  return CHART_META_LABELS.has(label) || ATTACHMENT_META_LABELS.has(label);
+}
+```
+
+新增 chart / attachment kind 只需在 `meta-palette.ts` 加一行 Set 条目,
+不再动 `MessageBubble.tsx`。
+
+### Added
+
+- **`packages/frontend/src/components/meta/AttachmentBlock.tsx`**
+  (~500 行) — L4 layer,13 attachment case + 4 helper
+  (FileSnapshotBlock / FilePathClickable / PlanFilePath / RevealErrorActions)
+- **`packages/frontend/src/components/meta/AttachmentBlock.test.tsx`**
+  (~75 行) — 抽样测试 11 个 attachment kind 走统一
+  `.attachment-block-meta` wrapper + 未知 kind → UnknownBlockCard + hyphen
+  twin 共 case
+- **`packages/frontend/src/components/meta/EventMetaBlock.tsx`** (~135 行)
+  — L3 layer,label + payload 字段表 + 顶层字段双源 +
+  `previewValue` (string 240 字符截断 / array 前 8 项 + 溢出标记 /
+  object `{N 字段: key1, key2, ...}`)
+- **`packages/frontend/src/components/meta/EventMetaBlock.test.tsx`** (~115 行)
+  — 6 个测试(label badge / 双源字段 / 完全空 → UnknownBlockCard /
+  array preview / string 截断 / 折叠交互)
+- **`packages/frontend/src/components/MessageBubble.css`** 新增
+  `.meta-event-table` / `.meta-event-row` / `.meta-event-key` /
+  `.meta-event-value` 4 个 CSS class(字段表 grid 布局)。
+
+### Changed
+
+- **`packages/frontend/src/components/meta/MetaBlock.tsx`** —
+  658 → 60 行(-90%)。删除:
+  - 13 个 in-file attachment case (line 51-374)
+  - 4 个 helper (FileSnapshotBlock / FilePathClickable / PlanFilePath /
+    RevealErrorActions) ~270 行
+  - 6 chart case 已 M2 抽走
+  - 大段 unused imports (`useNavigate` / `useFileReveal` / `useSettingsStore`)
+    现在是 4 路 router,基于 `CHART_META_LABELS` / `ATTACHMENT_META_LABELS`
+    Set 路由。
+- **`packages/frontend/src/components/MessageBubble.tsx`** —
+  `isKnownMetaLabel` / `isMetaKind` 简化为两个 Set 合并判断,从 30 行
+  hardcoded 列表缩到 3 行。
+- **`packages/frontend/src/components/meta/MetaBlock.test.tsx`** —
+  "fallback > 未知 label → UnknownBlockCard" 测试更新为新行为:
+  未知 label 走 `<EventMetaBlock>` (key-value 字段表 + `.event-meta-block-meta`
+  wrapper),不再是 `<details>` 折叠。
+
+### 不动
+
+- 6 chart sub-component (M2 已抽,行为不变)
+- `<ChartBlock>` dispatcher
+- `<UnknownBlockCard>` 兜底逻辑
+- 13 attachment 渲染细节(纯搬位置,无功能改动)
+- Rust backend
+- DB schema
+- SubagentMetaBlock (独立组件,处理 mode:_ / permission:_ / title / last-prompt)
+- export / analyze 路径
+
+### Tests
+
+- typecheck ✓
+- 47 个 MetaBlock 测试 ✓(1 个 fallback 测试更新以反映新行为)
+- 9 个新 M3 测试(3 AttachmentBlock + 6 EventMetaBlock) ✓
+- 639 → 648 frontend tests (+9,0 回归)
+- 341 cargo tests ✓(0 回归)
+
+### Numbers
+
+- 新增 4 files (AttachmentBlock + AttachmentBlock.test +
+  EventMetaBlock + EventMetaBlock.test)
+- 新增总行数 ~825 行 (AttachmentBlock ~500 + EventMetaBlock ~135 +
+  2 test files ~190)
+- 删除 ~600 行(13 case + 4 helper + 大段 imports)
+- MetaBlock.tsx: 658 → 60 行(-598 行,-91%)
+- meta/ 目录: 9 files → 11 files(M3 加 2 layer)
+- MessageBubble.tsx isKnownMetaLabel / isMetaKind: 30 行 → 3 行
+- 新增 CSS class: 4 (`.meta-event-table` / `.meta-event-row` /
+  `.meta-event-key` / `.meta-event-value`)
+
+### Notes
+
+- 13 attachment 渲染零功能改动,纯搬位置 + 抽象层级分离
+- M3 之后 `<MetaBlock>` 自身只有 4 路 router,~60 行,M4 抽 SessionOverview
+  后这个 router 可以原地不动
+- `<EventMetaBlock>` 之前 inline meta 走 UnknownBlockCard,现在改用轻量
+  字段表 — 视觉上三层梯度 chart > attachment > eventMeta(slate accent
+  border 0.6 / 0.4 / 弱化的 0.4)
+- M6 会再把 `<EventMetaBlock>` 里的 `previewValue` 提到
+  `lib/meta.ts.formatPreviewValue` 集中(目前只有 EventMetaBlock 用)
+
 ## [0.9.19] - 2026-08-12
 
 v0.9.18 (M1) 把 accent palette 集中 + 13 attachment kind 统一 slate。

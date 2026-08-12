@@ -22,6 +22,8 @@ import { MessageHeader } from "./MessageHeader";
 import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { UnknownBlockCard } from "./UnknownBlockCard";
 import { MetaBlock } from "./meta/MetaBlock";
+// v0.9.20 (M3): 用统一的 label Set 替代 v0.4.1 hardcoded isKnownMetaLabel / isMetaKind
+import { ATTACHMENT_META_LABELS, CHART_META_LABELS } from "../theme/meta-palette";
 import { TextBlock } from "./blocks/TextBlock";
 import { ThinkingBlockWrap } from "./blocks/ThinkingBlockWrap";
 import { ToolUseBlock } from "./blocks/ToolUseBlock";
@@ -186,62 +188,27 @@ function isSubagentMetaLabel(label: string): boolean {
   );
 }
 
-/** v0.4.1: meta 分支里已知有专属样式的 block label */
+/** v0.9.20 (M3): meta 分支里已知有专属样式的 block label
+ *
+ * 19 个 label(13+4 attachment + 6 chart)来自 `theme/meta-palette.ts` 的
+ * 两个 Set。MetaBlock 内部路由:chart → ChartBlock / attachment →
+ * AttachmentBlock / 其他 → EventMetaBlock。
+ *
+ * 之前 v0.4.1 — v0.9.17 之间 inline 罗列 19 个 label,每次新增 chart /
+ * attachment 都要改两处(isKnownMetaLabel + isMetaKind)。M3 集中到
+ * meta-palette.ts 后,这里只剩 Set 合并判断。
+ */
 function isKnownMetaLabel(label: string): boolean {
-  return (
-    label === "file-history-snapshot" ||
-    label === "agent_listing_delta" ||
-    label === "skill_listing" ||
-    label === "plan_mode" ||
-    label === "task_reminder" ||
-    label === "pr-link" ||
-    label === "agent_name" ||
-    label === "agent-name" ||
-    label === "agent_listing" ||
-    label === "file_snapshot" ||
-    // v0.8.4 item 4:
-    label === "invoked_skills" ||
-    label === "plan_file_reference" ||
-    label === "compact_file_reference" ||
-    label === "attached_file" ||
-    label === "queued_command" ||
-    label === "queue_operation" ||
-    // v0.9.12: kimi context.apply_compaction — LLM 交接笔记 + 压缩统计
-    label === "context.apply_compaction" ||
-    // v0.9.13: kimi llm.tools_snapshot — session 启动时 dump 的 24 个 tool 配置
-    label === "llm.tools_snapshot" ||
-    // v0.9.14: kimi usage.chart — 645 个 usage.record 聚合 1 个 per-turn chart meta
-    label === "usage.chart" ||
-    // v0.9.15: kimi request.chart — 648 个 llm.request 聚合 1 个 context headroom + drift chart
-    label === "request.chart" ||
-    // v0.9.16: kimi todos.chart — 57 个 tools.update_store 聚合 1 个 plan execution narrative
-    label === "todos.chart" ||
-    // v0.9.17: claude ai-title.chart — 1185 个 ai-title + custom-title 聚合 1 个 identity chart
-    label === "ai-title.chart"
-  );
+  return CHART_META_LABELS.has(label) || ATTACHMENT_META_LABELS.has(label);
 }
 
-/** v0.4.1: BlockRenderer meta 入口要识别的 kind(顶层 kind 形式) */
+/** v0.9.20 (M3): BlockRenderer meta 入口要识别的 kind(顶层 kind 形式)
+ *
+ * 顶层 kind 形式(后端 v0.6.x 之前可能直接 emit kind=agent_listing / 等)
+ * 也归 MetaBlock 处理。`kind === "meta"` 是新 wire 形式(后端把 label
+ * 平铺,顶层 kind 固定为 "meta")。两种 entry 都走 MetaBlock 路由。
+ */
 function isMetaKind(kind: string): boolean {
-  return (
-    kind === "meta" ||
-    kind === "agent_listing" ||
-    kind === "skill_listing" ||
-    kind === "plan_mode" ||
-    kind === "file_snapshot" ||
-    kind === "pr_link" ||
-    kind === "agent_name" ||
-    kind === "task_reminder" ||
-    // v0.8.4 item 4:
-    kind === "invoked_skills" ||
-    kind === "plan_file_reference" ||
-    kind === "compact_file_reference" ||
-    kind === "attached_file" ||
-    kind === "queued_command" ||
-    kind === "queue_operation" ||
-    // v0.9.13: kimi llm.tools_snapshot
-    kind === "llm.tools_snapshot" ||
-    // v0.9.16: kimi todos.chart
-    kind === "todos.chart"
-  );
+  if (kind === "meta") return true;
+  return CHART_META_LABELS.has(kind) || ATTACHMENT_META_LABELS.has(kind);
 }

@@ -1544,3 +1544,43 @@
   border-left: 3px solid var(--meta-accent-event-meta-border, rgba(100, 116, 139, 0.4));
   background: var(--meta-accent-event-meta-bg, rgba(100, 116, 139, 0.03));
 }
+
+/* v0.9.20 (M3): EventMetaBlock 字段表
+ *
+ * 跟 attachment kind 的 inline 字段表同 pattern:
+ * - .meta-event-table: 字段表容器,1px grid
+ * - .meta-event-row: 单行(左 key 右 value)
+ * - .meta-event-key: 字段名(等宽字体 + 灰)
+ * - .meta-event-value: 字段值(默认 fg,可截断)
+ */
+.meta-event-table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px dashed rgba(100, 116, 139, 0.18);
+  padding-top: 4px;
+}
+.meta-event-row {
+  display: grid;
+  grid-template-columns: minmax(80px, max-content) 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+.meta-event-key {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  color: rgba(71, 85, 105, 0.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.meta-event-value {
+  color: var(--fg, inherit);
+  word-break: break-word;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
