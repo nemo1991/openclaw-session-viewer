@@ -260,110 +260,6 @@ pub(crate) fn scan_full_stats(
     Ok((first, last, count))
 }
 
-/// v0.9.3: 扫 kimi wire.jsonl 聚合 `usage.record` 事件。
-///
-/// v0.9.26 (M9-A): 返回扩成 4-tuple,加 available_models + thinking_count 字段
-/// (mirror `parser/meta_extras.rs:578-584` thinking_count + `:810` available_models),
-/// 为 M9 parallel-run 验证 Pass 1/Pass 2 byte-identity 用。M9 完成后再删 `meta_extras.rs`。
-///
-/// 返回 `(Option<TokenUsage>, Vec<String>, u32, Option<String>)`:
-/// - TokenUsage: 累加 `usageScope=="turn"` 的 4 个字段 (input/output/cache_read/cache_write)
-///   跳过 `usageScope=="session"` — 是 cache pool snapshot (~80K 不随时间变),
-///   sum 全部会重复计入 cache 池。
-/// - available_models: 全 model 去重 + 字典序 (BTreeSet→Vec),
-///   跟 Pass 2 `meta_extras.rs:810` 同 order,parallel-run 对齐
-/// - thinking_count: `context.append_loop_event.event.type=="content.part"` 且
-///   `event.part.type=="think"` 累加,kimi 字段名 "think" (非 "thinking")
-/// - primary_model: 首个 usage.record.model (单 model,可作为 fallback)
-// v0.9.26 (M9-A): 4-tuple 含 Vec<String> + Option<...>,clippy::type_complexity 警告,
-// 跟 plan 一致 — 没拆成新 struct,#[allow] 即可。
-#[allow(clippy::type_complexity)]
-pub(crate) fn scan_kimi_usage(
-    jsonl_path: &Path,
-) -> AppResult<(
-    Option<crate::model::TokenUsage>,
-    Vec<String>,
-    u32,
-    Option<String>,
-)> {
-    let mut input: u64 = 0;
-    let mut output: u64 = 0;
-    let mut cache_read: u64 = 0;
-    let mut cache_write: u64 = 0;
-    let mut model_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut primary_model: Option<String> = None;
-    let mut saw_any: bool = false;
-    let mut thinking_count: u32 = 0;
-
-    jsonl::for_each_line(jsonl_path, |_, _, v| {
-        let obj = match v.as_object() {
-            Some(o) => o,
-            None => return,
-        };
-        match obj.get("type").and_then(|x| x.as_str()) {
-            Some("usage.record") => {
-                // v0.9.3: usageScope=='session' 跳过 — 是 cache pool snapshot,
-                // 不是 per-turn delta。turn-scope 是确定进出。
-                let scope = obj.get("usageScope").and_then(|x| x.as_str()).unwrap_or("");
-                if scope != "turn" {
-                    return;
-                }
-                saw_any = true;
-                if let Some(m) = obj.get("model").and_then(|x| x.as_str()) {
-                    if primary_model.is_none() {
-                        primary_model = Some(m.to_string());
-                    }
-                    model_set.insert(m.to_string());
-                }
-                let u = match obj.get("usage") {
-                    Some(u) => u,
-                    None => return,
-                };
-                input =
-                    input.saturating_add(u.get("inputOther").and_then(|x| x.as_u64()).unwrap_or(0));
-                output =
-                    output.saturating_add(u.get("output").and_then(|x| x.as_u64()).unwrap_or(0));
-                cache_read = cache_read.saturating_add(
-                    u.get("inputCacheRead")
-                        .and_then(|x| x.as_u64())
-                        .unwrap_or(0),
-                );
-                cache_write = cache_write.saturating_add(
-                    u.get("inputCacheCreation")
-                        .and_then(|x| x.as_u64())
-                        .unwrap_or(0),
-                );
-            }
-            Some("context.append_loop_event") => {
-                // v0.9.26 (M9-A): mirror meta_extras.rs:578-584
-                if let Some(ev) = obj.get("event") {
-                    if ev.get("type").and_then(|x| x.as_str()) == Some("content.part") {
-                        if let Some(part) = ev.get("part") {
-                            if part.get("type").and_then(|x| x.as_str()) == Some("think") {
-                                thinking_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    })?;
-
-    let usage = if saw_any {
-        Some(crate::model::TokenUsage {
-            input,
-            output,
-            cache_read,
-            cache_write,
-        })
-    } else {
-        None
-    };
-    let available_models: Vec<String> = model_set.into_iter().collect();
-    Ok((usage, available_models, thinking_count, primary_model))
-}
-
 pub(crate) fn build_claude_session_meta(
     jsonl_path: &Path,
     state: &AppState,
@@ -398,7 +294,7 @@ pub(crate) fn build_claude_session_meta(
     let mut first_user_text: Option<String> = None;
     let mut token_total = TokenUsage::default();
     let mut model_count: HashMap<String, u32> = HashMap::new();
-    let mut thinking_count: u32 = 0;
+    // v0.9.27 (M10): thinking_count 局部累加删除 — aggregator 一次性算全文件
     let mut tool_use_count: u32 = 0;
     let mut tool_name_count: HashMap<String, u32> = HashMap::new();
 
@@ -459,9 +355,9 @@ pub(crate) fn build_claude_session_meta(
                     if let Some(arr) = msg.get("content").and_then(|x| x.as_array()) {
                         for item in arr {
                             let bt = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
-                            if bt == "thinking" {
-                                thinking_count += 1;
-                            } else if bt == "tool_use" {
+                            // v0.9.27 (M10): thinking block 计数由 aggregator 算 (扫全文件,更准)
+                            // — 之前 head 50 行累加的局部变量已删
+                            if bt == "tool_use" {
                                 tool_use_count += 1;
                                 if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
                                     *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
@@ -556,6 +452,11 @@ pub(crate) fn build_claude_session_meta(
 
     let _ = state; // 暂不缓存读取
 
+    // v0.9.27 (M10): Pass 2 没了, build_meta_full 26 列派生指标在 Pass 1 算 (Plan B)。
+    // 失败 (e.g. 文件锁/IO 错) 时用 default — 跟之前 quick-path 留 None 行为类似,前端消费端 None 不渲染。
+    let extras =
+        crate::parser::meta_aggregator::aggregate_claude_openclaw(jsonl_path).unwrap_or_default();
+
     Ok(SessionMeta {
         session_id: session_id.clone(),
         project_key: project_key.clone(),
@@ -578,7 +479,9 @@ pub(crate) fn build_claude_session_meta(
         agent_target: None,
         first_prompt: first_user_text.clone(),
         last_message_at: last_ts.clone(),
-        thinking_count: Some(thinking_count),
+        // v0.9.27 (M10): thinking_count 由 aggregator 算 (claude: message.content[].type=="thinking" 累加,
+        // 跟 quick path 50 行的局部累加一样,aggregator 扫全文件 → 数字更准)
+        thinking_count: Some(extras.thinking_count),
         tool_use_count: Some(tool_use_count),
         top_tools: if top_tools.is_empty() {
             None
@@ -598,35 +501,51 @@ pub(crate) fn build_claude_session_meta(
         archived: false,
         notes: None,
         tags: None,
-        // v0.8.4 item 2: 派生指标由 build_meta_full 二阶段填; quick path 留 None
-        error_count: None,
-        user_message_count: None,
-        assistant_message_count: None,
-        duration_seconds: None,
-        first_response_latency_ms: None,
-        agent_name: None,
-        invoked_skills_count: None,
-        plan_file_ref_count: None,
-        compact_file_ref_count: None,
-        queued_command_count: None,
-        attached_file_count: None,
+        // v0.9.27 (M10): 26 列派生指标从 aggregator 填
+        error_count: Some(extras.error_count),
+        user_message_count: Some(extras.user_message_count),
+        assistant_message_count: Some(extras.assistant_message_count),
+        duration_seconds: extras.duration_seconds,
+        first_response_latency_ms: extras.first_response_latency_ms,
+        agent_name: extras.agent_name,
+        invoked_skills_count: Some(extras.invoked_skills_count),
+        plan_file_ref_count: Some(extras.plan_file_ref_count),
+        compact_file_ref_count: Some(extras.compact_file_ref_count),
+        queued_command_count: Some(extras.queued_command_count),
+        attached_file_count: Some(extras.attached_file_count),
         // v0.8.4 item 2': SessionSummaryStrip 全固化
-        // quick path 50 行不算这些, 等 enrich 二阶段填
-        text_message_count: None,
-        tool_usage: None,
-        phase_hint: None,
-        phase_detail: None,
-        repeat_run_count: None,
-        repeat_run_max_tool: None,
-        repeat_run_max_count: None,
-        idle_gap_count: None,
-        idle_gap_max_ms: None,
-        available_models: None,
-        // v0.8.5 A: quick path (50 行头部解析) 不算 per-tool error, 留给 enrich 二阶段
-        tool_error: None,
-        // v0.8.7 A: quick path 不算 parent_uuids, 留给 enrich 二阶段
-        parent_uuids_text: None,
-        // v0.9.8: kimi 专属聚合字段,quick path 不算,留给 enrich 二阶段
+        text_message_count: Some(extras.text_message_count),
+        tool_usage: if extras.tool_usage.is_empty() {
+            None
+        } else {
+            Some(extras.tool_usage)
+        },
+        phase_hint: extras.phase_hint,
+        phase_detail: extras.phase_detail,
+        repeat_run_count: Some(extras.repeat_run_count),
+        repeat_run_max_tool: extras.repeat_run_max_tool,
+        repeat_run_max_count: extras.repeat_run_max_count,
+        idle_gap_count: Some(extras.idle_gap_count),
+        idle_gap_max_ms: extras.idle_gap_max_ms,
+        // v0.8.4 item 2'': ContentFilterPanel Model chip
+        available_models: if extras.available_models.is_empty() {
+            None
+        } else {
+            Some(extras.available_models)
+        },
+        // v0.8.5 A: per-tool 失败计数
+        tool_error: if extras.tool_error.is_empty() {
+            None
+        } else {
+            Some(extras.tool_error)
+        },
+        // v0.8.7 A: parent_uuids newline-separated
+        parent_uuids_text: if extras.parent_uuids.is_empty() {
+            None
+        } else {
+            Some(extras.parent_uuids.join("\n"))
+        },
+        // v0.9.8: kimi 专属聚合字段,claude 路径全 None
         todo_summary: None,
         kimi_token_usage: None,
         meta_banner: None,
@@ -657,7 +576,7 @@ pub(crate) fn build_openclaw_session_meta(
     let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
     let mut name: Option<String> = None;
     let mut first_user_text: Option<String> = None;
-    let mut thinking_count: u32 = 0;
+    // v0.9.27 (M10): thinking_count 局部累加删除 — aggregator 一次性算全文件
     let mut tool_use_count: u32 = 0;
     let mut tool_name_count: HashMap<String, u32> = HashMap::new();
 
@@ -690,9 +609,9 @@ pub(crate) fn build_openclaw_session_meta(
                         if let Some(arr) = content.as_array() {
                             for item in arr {
                                 let bt = item.get("type").and_then(|x| x.as_str()).unwrap_or("");
-                                if bt == "thinking" {
-                                    thinking_count += 1;
-                                } else if bt == "tool_use" {
+                                // v0.9.27 (M10): thinking block 计数由 aggregator 算 (扫全文件,更准)
+                                // — 之前 head 50 行累加的局部变量已删
+                                if bt == "tool_use" {
                                     tool_use_count += 1;
                                     if let Some(n) = item.get("name").and_then(|x| x.as_str()) {
                                         *tool_name_count.entry(n.to_string()).or_insert(0) += 1;
@@ -728,6 +647,10 @@ pub(crate) fn build_openclaw_session_meta(
     // (例如 Claude 恰好有 projectKey="main" 的目录)
     let project_key = format!("openclaw:{}", agent_id);
 
+    // v0.9.27 (M10): openclaw 用同 claude aggregator (wire 跟 claude 兼容)
+    let extras =
+        crate::parser::meta_aggregator::aggregate_claude_openclaw(jsonl_path).unwrap_or_default();
+
     Ok(SessionMeta {
         session_id,
         project_key,
@@ -750,7 +673,7 @@ pub(crate) fn build_openclaw_session_meta(
         agent_target,
         first_prompt: first_user_text,
         last_message_at: last_ts,
-        thinking_count: Some(thinking_count),
+        thinking_count: Some(extras.thinking_count),
         tool_use_count: Some(tool_use_count),
         top_tools: if top_tools.is_empty() {
             None
@@ -770,35 +693,51 @@ pub(crate) fn build_openclaw_session_meta(
         archived: false,
         notes: None,
         tags: None,
-        // v0.8.4 item 2: 派生指标由 build_meta_full 二阶段填; quick path 留 None
-        error_count: None,
-        user_message_count: None,
-        assistant_message_count: None,
-        duration_seconds: None,
-        first_response_latency_ms: None,
-        agent_name: None,
-        invoked_skills_count: None,
-        plan_file_ref_count: None,
-        compact_file_ref_count: None,
-        queued_command_count: None,
-        attached_file_count: None,
+        // v0.9.27 (M10): 26 列派生指标从 aggregator 填
+        error_count: Some(extras.error_count),
+        user_message_count: Some(extras.user_message_count),
+        assistant_message_count: Some(extras.assistant_message_count),
+        duration_seconds: extras.duration_seconds,
+        first_response_latency_ms: extras.first_response_latency_ms,
+        agent_name: extras.agent_name,
+        invoked_skills_count: Some(extras.invoked_skills_count),
+        plan_file_ref_count: Some(extras.plan_file_ref_count),
+        compact_file_ref_count: Some(extras.compact_file_ref_count),
+        queued_command_count: Some(extras.queued_command_count),
+        attached_file_count: Some(extras.attached_file_count),
         // v0.8.4 item 2': SessionSummaryStrip 全固化
-        // quick path 50 行不算这些, 等 enrich 二阶段填
-        text_message_count: None,
-        tool_usage: None,
-        phase_hint: None,
-        phase_detail: None,
-        repeat_run_count: None,
-        repeat_run_max_tool: None,
-        repeat_run_max_count: None,
-        idle_gap_count: None,
-        idle_gap_max_ms: None,
-        available_models: None,
-        // v0.8.5 A: quick path (50 行头部解析) 不算 per-tool error, 留给 enrich 二阶段
-        tool_error: None,
-        // v0.8.7 A: quick path 不算 parent_uuids, 留给 enrich 二阶段
-        parent_uuids_text: None,
-        // v0.9.8: kimi 专属聚合字段,quick path 不算,留给 enrich 二阶段
+        text_message_count: Some(extras.text_message_count),
+        tool_usage: if extras.tool_usage.is_empty() {
+            None
+        } else {
+            Some(extras.tool_usage)
+        },
+        phase_hint: extras.phase_hint,
+        phase_detail: extras.phase_detail,
+        repeat_run_count: Some(extras.repeat_run_count),
+        repeat_run_max_tool: extras.repeat_run_max_tool,
+        repeat_run_max_count: extras.repeat_run_max_count,
+        idle_gap_count: Some(extras.idle_gap_count),
+        idle_gap_max_ms: extras.idle_gap_max_ms,
+        // v0.8.4 item 2'': ContentFilterPanel Model chip
+        available_models: if extras.available_models.is_empty() {
+            None
+        } else {
+            Some(extras.available_models)
+        },
+        // v0.8.5 A: per-tool 失败计数
+        tool_error: if extras.tool_error.is_empty() {
+            None
+        } else {
+            Some(extras.tool_error)
+        },
+        // v0.8.7 A: parent_uuids newline-separated
+        parent_uuids_text: if extras.parent_uuids.is_empty() {
+            None
+        } else {
+            Some(extras.parent_uuids.join("\n"))
+        },
+        // v0.9.8: kimi 专属聚合字段,openclaw 路径全 None
         todo_summary: None,
         kimi_token_usage: None,
         meta_banner: None,
@@ -905,49 +844,13 @@ pub(crate) fn build_kimi_session_meta_from_path(
 /// v0.9.0: kimi wire.jsonl → SessionMeta
 ///
 /// 字段映射见 v0.9.0 plan §B.2。subagent 计数含 main(跟 OpenClaw 对齐)。
+///
+/// v0.9.27 (M10): 调 `aggregate_kimi` 取代 `scan_kimi_usage` + Pass 2 enrichment。
+/// aggregator 一次性算齐 26 列派生指标 + kimi 专属聚合 (todo_summary / kimi_token_usage /
+/// meta_banner) — 单 Pass 同步架构。
 pub(crate) fn build_kimi_session_meta(
     ks: &crate::fs::walker::KimiSession,
 ) -> AppResult<SessionMeta> {
-    let meta = build_kimi_session_meta_impl(ks)?;
-    // v0.9.26 (M9-C): debug-only parallel-run check — 跟 Pass 2 (meta_extras.rs::build_meta_full_kimi)
-    // 比对 3 字段,kimi_token_usage / available_models / thinking_count。release build 不编译,
-    // 0 生产开销。预期两边 byte-identical (scan_kimi_usage 跟 build_meta_full_kimi 扫全文件且同逻辑)。
-    // 若发现 mismatch,记日志 → 检查 kimi.rs wire event 形状漂移或 meta_extras.rs 计数逻辑偏移。
-    #[cfg(debug_assertions)]
-    {
-        if let Ok(pass2) =
-            crate::parser::meta_extras::build_meta_full(std::path::Path::new(&meta.jsonl_path))
-        {
-            if pass2.kimi_token_usage != meta.kimi_token_usage {
-                log::warn!(
-                    "[M9 parallel-run] kimi_token_usage mismatch @ {:?}: pass1={:?} pass2={:?}",
-                    meta.jsonl_path,
-                    meta.kimi_token_usage,
-                    pass2.kimi_token_usage,
-                );
-            }
-            if pass2.available_models != meta.available_models.clone().unwrap_or_default() {
-                log::warn!(
-                    "[M9 parallel-run] available_models mismatch @ {:?}: pass1={:?} pass2={:?}",
-                    meta.jsonl_path,
-                    meta.available_models,
-                    pass2.available_models,
-                );
-            }
-            if pass2.thinking_count != meta.thinking_count.unwrap_or(0) {
-                log::warn!(
-                    "[M9 parallel-run] thinking_count mismatch @ {:?}: pass1={:?} pass2={:?}",
-                    meta.jsonl_path,
-                    meta.thinking_count,
-                    pass2.thinking_count,
-                );
-            }
-        }
-    }
-    Ok(meta)
-}
-
-fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResult<SessionMeta> {
     let jsonl_path = ks.main_wire.as_ref().ok_or_else(|| {
         AppError::Invalid(format!("kimi session 缺 main wire: {:?}", ks.session_dir))
     })?;
@@ -978,12 +881,9 @@ fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResul
     // 流式扫全文件 — first_ts/last_ts/message_count
     let (first_ts, last_ts, message_count) = scan_full_stats(jsonl_path, "kimi")?;
 
-    // v0.9.3: 聚合 usage.record (turn-scope only) → total_tokens + primary_model fallback
-    // v0.9.26 (M9-B): wire 3 字段 — thinking_count 走 upsert_session_meta 写入,
-    // available_models + kimi_token_usage 仅写到 SessionMeta struct(upsert 不写这俩列),
-    // 等 M9-C 的 debug-build parallel-check 跟 meta_extras.rs Pass 2 比对
-    let (kimi_total_tokens, kimi_available_models, kimi_thinking_count, kimi_model_from_usage) =
-        scan_kimi_usage(jsonl_path)?;
+    // v0.9.27 (M10): aggregator 一次性算齐 26 列 + kimi 专属 (todo_summary /
+    // kimi_token_usage / meta_banner)。失败 (IO/parse 错) 时用 default — 前端消费端 None 不渲染。
+    let extras = crate::parser::meta_aggregator::aggregate_kimi(jsonl_path).unwrap_or_default();
 
     // quick path 50 行: title / first_prompt / primary_model / thinking/tool_use
     let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
@@ -1046,9 +946,11 @@ fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResul
     tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
 
-    // v0.9.3: head 50 行没拿到 primary_model 时,fallback 到 usage.record.model
+    // v0.9.3: head 50 行没拿到 primary_model 时, fallback 到 aggregator 的 model 列表第一个
+    // (aggregator 从 BTreeSet 排 lex, 跟之前 scan_kimi_usage.first_record_model 语义一致 —
+    // 取 wire event 第一次出现的 model id)
     if primary_model.is_none() {
-        primary_model = kimi_model_from_usage;
+        primary_model = extras.available_models.first().cloned();
     }
 
     // title: state.json.title → fallback state.json.lastPrompt → fallback first_prompt
@@ -1092,7 +994,10 @@ fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResul
         title,
         live_pid, // v0.9.7: mtime heuristic
         subagent_dir,
-        total_tokens: kimi_total_tokens.clone(), // v0.9.3: 聚合 usage.record (turn-scope only) — v0.9.26 M9-B 也给 kimi_token_usage 用
+        // total_tokens (alias of kimi_token_usage) 沿用 v0.9.3 聚合 (turn-scope only)
+        // 跟 kimi_token_usage 语义一致 — 详情页 token chip 既可读 total_tokens 也可读 kimi_token_usage,
+        // 同一份 JSON 避免 double-aggregate。
+        total_tokens: extras.kimi_token_usage.clone(),
         primary_model,
         agent_id: Some("main".to_string()),
         agent_label: None,
@@ -1100,7 +1005,8 @@ fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResul
         agent_target: None,
         first_prompt: first_prompt.clone(),
         last_message_at: last_ts.clone(),
-        thinking_count: Some(kimi_thinking_count), // v0.9.26 (M9-B): pass-1 直接算
+        // v0.9.27 (M10): thinking_count 由 aggregator 算 (kimi: content.part.part.type=="think" 累加)
+        thinking_count: Some(extras.thinking_count),
         tool_use_count: Some(tool_use_count),
         top_tools: if top_tools.is_empty() {
             None
@@ -1117,35 +1023,54 @@ fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResul
         archived: false,
         notes: None,
         tags: None,
-        // enrich 阶段全 None (meta_extras 早 return for kimi)
-        error_count: None,
-        user_message_count: None,
-        assistant_message_count: None,
-        duration_seconds: None,
-        first_response_latency_ms: None,
-        agent_name: None,
-        invoked_skills_count: None,
-        plan_file_ref_count: None,
-        compact_file_ref_count: None,
-        queued_command_count: None,
-        attached_file_count: None,
-        text_message_count: None,
-        tool_usage: None,
-        phase_hint: None,
-        phase_detail: None,
-        repeat_run_count: None,
-        repeat_run_max_tool: None,
-        repeat_run_max_count: None,
-        idle_gap_count: None,
-        idle_gap_max_ms: None,
-        available_models: Some(kimi_available_models), // v0.9.26 (M9-B): pass-1 BTreeSet lex 序
-        tool_error: None,
-        parent_uuids_text: None,
-        // v0.9.8: kimi 专属聚合字段 — todo_summary + meta_banner quick path 不算,
-        // 留给 enrich 二阶段。kimi_token_usage v0.9.26 (M9-B) 由 pass-1 写入 SessionMeta。
-        todo_summary: None,
-        kimi_token_usage: kimi_total_tokens.clone(), // v0.9.26 (M9-B): pass-1 写入 struct(等 debug-check 比对)
-        meta_banner: None,
+        // v0.9.27 (M10): 26 列派生指标从 aggregator 填 (kimi 路径全填,跟 claude/openclaw 同 shape)
+        error_count: Some(extras.error_count),
+        user_message_count: Some(extras.user_message_count),
+        assistant_message_count: Some(extras.assistant_message_count),
+        duration_seconds: extras.duration_seconds,
+        first_response_latency_ms: extras.first_response_latency_ms,
+        agent_name: extras.agent_name,
+        invoked_skills_count: Some(extras.invoked_skills_count),
+        plan_file_ref_count: Some(extras.plan_file_ref_count),
+        compact_file_ref_count: Some(extras.compact_file_ref_count),
+        queued_command_count: Some(extras.queued_command_count),
+        attached_file_count: Some(extras.attached_file_count),
+        // v0.8.4 item 2': SessionSummaryStrip 全固化
+        text_message_count: Some(extras.text_message_count),
+        tool_usage: if extras.tool_usage.is_empty() {
+            None
+        } else {
+            Some(extras.tool_usage)
+        },
+        phase_hint: extras.phase_hint,
+        phase_detail: extras.phase_detail,
+        repeat_run_count: Some(extras.repeat_run_count),
+        repeat_run_max_tool: extras.repeat_run_max_tool,
+        repeat_run_max_count: extras.repeat_run_max_count,
+        idle_gap_count: Some(extras.idle_gap_count),
+        idle_gap_max_ms: extras.idle_gap_max_ms,
+        // v0.8.4 item 2'': ContentFilterPanel Model chip (kimi 走 aggregator BTreeSet lex 序)
+        available_models: if extras.available_models.is_empty() {
+            None
+        } else {
+            Some(extras.available_models.clone())
+        },
+        // v0.8.5 A: per-tool 失败计数
+        tool_error: if extras.tool_error.is_empty() {
+            None
+        } else {
+            Some(extras.tool_error)
+        },
+        // v0.8.7 A: parent_uuids newline-separated
+        parent_uuids_text: if extras.parent_uuids.is_empty() {
+            None
+        } else {
+            Some(extras.parent_uuids.join("\n"))
+        },
+        // v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner) — aggregator 一次算齐
+        todo_summary: extras.todo_summary,
+        kimi_token_usage: extras.kimi_token_usage,
+        meta_banner: extras.meta_banner,
     })
 }
 
@@ -1882,62 +1807,6 @@ mod tests {
         assert_eq!(ks.work_dir.as_deref(), Some("C:/Users/dc/test"));
     }
 
-    // ===== v0.9.3: scan_kimi_usage tests =====
-
-    /// turn-scope 累加正确;session-scope 跳过;primary_model 取首个
-    #[test]
-    fn scan_kimi_usage_aggregates_turn_scope_skips_session_scope() {
-        // 2 turn + 1 session — 预期只 sum turn 的 2 条
-        // turn A: inputOther=100, output=50, inputCacheRead=20, inputCacheCreation=5 → 175
-        // turn B: inputOther=200, output=80, inputCacheRead=0,   inputCacheCreation=0 → 280
-        // session: inputOther=1000, output=500, inputCacheRead=100, inputCacheCreation=0 → 1600 (跳过)
-        let wire = write_temp(
-            "{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":20,\"inputCacheCreation\":5},\"usageScope\":\"turn\",\"time\":1}\n\
-             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":200,\"output\":80,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
-             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":1000,\"output\":500,\"inputCacheRead\":100,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":3}\n",
-        );
-        let (usage, models, thinking_count, model) = scan_kimi_usage(wire.path()).expect("scan");
-        let u = usage.expect("saw turn records");
-        // total = 175 + 280 = 455
-        assert_eq!(u.input, 300);
-        assert_eq!(u.output, 130);
-        assert_eq!(u.cache_read, 20);
-        assert_eq!(u.cache_write, 5);
-        assert_eq!(model.as_deref(), Some("deepseek-v4-flash"));
-        // v0.9.26 (M9-A): 新字段 — fixture 只有 1 个 model,无 think events
-        assert_eq!(models, vec!["deepseek-v4-flash".to_string()]);
-        assert_eq!(thinking_count, 0);
-    }
-
-    /// 无 usage.record → None (兼容 v0.9.0 老 session)
-    #[test]
-    fn scan_kimi_usage_returns_none_when_no_records() {
-        let wire = write_temp(
-            "{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\"}}\n\
-             {\"type\":\"context.append_message\",\"message\":{\"role\":\"assistant\"}}\n",
-        );
-        let (usage, models, thinking_count, model) = scan_kimi_usage(wire.path()).expect("scan");
-        assert!(usage.is_none(), "no usage.record → total_tokens None");
-        assert!(model.is_none());
-        // v0.9.26 (M9-A): 新字段 — 无 usage.record + 无 think events
-        assert!(models.is_empty());
-        assert_eq!(thinking_count, 0);
-    }
-
-    /// primary_model 在多 model 时取首个
-    #[test]
-    fn scan_kimi_usage_uses_first_record_model() {
-        let wire = write_temp(
-            "{\"type\":\"usage.record\",\"model\":\"model-A\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":1}\n\
-             {\"type\":\"usage.record\",\"model\":\"model-B\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n",
-        );
-        let (_usage, models, thinking_count, model) = scan_kimi_usage(wire.path()).expect("scan");
-        assert_eq!(model.as_deref(), Some("model-A"));
-        // v0.9.26 (M9-A): 新字段 — 2 个 model,BTreeSet lex 序
-        assert_eq!(models, vec!["model-A".to_string(), "model-B".to_string()]);
-        assert_eq!(thinking_count, 0);
-    }
-
     /// build_kimi_session_meta 集成:total_tokens 透传 usage.record 数字
     #[test]
     fn build_kimi_session_meta_populates_total_tokens_from_usage_record() {
@@ -2032,132 +1901,5 @@ mod tests {
 
         // 4. primary_model: 首个 usage.record.model (deepseek-v4-flash)
         assert_eq!(sm.primary_model.as_deref(), Some("deepseek-v4-flash"));
-    }
-
-    // ===== v0.9.26 (M9-C): parallel-run validation =====
-    //
-    // 验证 scan_kimi_usage (Pass 1) 与 meta_extras::build_meta_full_kimi (Pass 2)
-    // 对 3 字段 (kimi_token_usage / available_models / thinking_count) 输出 byte-identical。
-    // 两者都扫全文件 (Pass 1 in commands/sessions.rs,Pass 2 in parser/meta_extras.rs),
-    // 镜像逻辑 (BTreeSet lex,turn-scope only,content.part think)。
-    //
-    // Note: 原计划放 src-tauri/tests/m9_kimi_parallel.rs (integration test),因
-    // build_kimi_session_meta 是 pub(crate) — 改 integration test 需要重新 expose
-    // 内部 module,scope 太大。改放 unit test (本 mod),效果一致。
-    //
-    // 因 build_meta_full 用 `source_from_path` 判定 kimi 分支,fixture 路径必须含
-    // `.kimi` 子串 (看 fs/source.rs:15)。write_kimi_temp 在 tempdir 下<redacted>
-    // `.kimi/wire.jsonl` 文件绕过。
-
-    /// v0.9.26 (M9-C): 在 tempdir 下<redacted> `.kimi/wire.jsonl`,dispatch 到 kimi 分支
-    fn write_kimi_temp(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let kimi_dir = tmp.path().join(".kimi");
-        std::fs::create_dir_all(&kimi_dir).expect("mkdir .kimi");
-        let path = kimi_dir.join("wire.jsonl");
-        std::fs::write(&path, content).expect("write");
-        (tmp, path)
-    }
-
-    /// Pass 1 vs Pass 2:典型 session — 2 turn + 1 session-scope skip + 3 think + 2 model
-    #[test]
-    fn parallel_run_kimi_three_fields_match_for_typical_session() {
-        let (_tmp, wire) = write_kimi_temp(
-            // 2 turn-scope (deepseek + kimi-k2) + 1 session-scope (skipped)
-            "{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":20,\"inputCacheCreation\":5},\"usageScope\":\"turn\",\"time\":1}\n\
-             {\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":200,\"output\":80,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
-             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":9999,\"output\":9999,\"inputCacheRead\":9999,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":3}\n\
-             // 3 think parts (混合 deepseek/kimi session)
-             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"r1\"}},\"time\":4}\n\
-             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"hi\"}},\"time\":5}\n\
-             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"r2\"}},\"time\":6}\n\
-             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"r3\"}},\"time\":7}\n",
-        );
-        // Pass 1: scan_kimi_usage 4-tuple
-        let (pass1_usage, pass1_models, pass1_thinking, _) =
-            scan_kimi_usage(&wire).expect("pass1 scan");
-        // Pass 2: build_meta_full dispatch 到 build_meta_full_kimi (因路径含 ".kimi")
-        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2 build");
-
-        // 1. kimi_token_usage: turn-scope 累加 → (300, 130, 20, 5)
-        assert_eq!(
-            pass1_usage,
-            Some(crate::model::TokenUsage {
-                input: 300,
-                output: 130,
-                cache_read: 20,
-                cache_write: 5,
-            }),
-            "Pass 1 token_usage 应 = Pass 2"
-        );
-        assert_eq!(pass2.kimi_token_usage, pass1_usage);
-
-        // 2. available_models: BTreeSet lex → [deepseek-v4-flash, kimi-k2]
-        assert_eq!(
-            pass1_models,
-            vec!["deepseek-v4-flash".to_string(), "kimi-k2".to_string()],
-            "Pass 1 models 应 = Pass 2"
-        );
-        assert_eq!(pass2.available_models, pass1_models);
-
-        // 3. thinking_count: 3 个 content.part type=think
-        assert_eq!(pass1_thinking, 3, "Pass 1 thinking 应 = Pass 2");
-        assert_eq!(pass2.thinking_count, pass1_thinking);
-    }
-
-    /// Pass 1 vs Pass 2:空 thinking — 0 think parts → both 0
-    #[test]
-    fn parallel_run_kimi_handles_empty_thinking() {
-        let (_tmp, wire) = write_kimi_temp(
-            "{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"hi\"}},\"time\":1}\n\
-             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"hello\"}},\"time\":2}\n\
-             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":3}\n",
-        );
-        let (_, _, pass1_thinking, _) = scan_kimi_usage(&wire).expect("pass1");
-        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2");
-
-        assert_eq!(pass1_thinking, 0);
-        assert_eq!(pass2.thinking_count, 0);
-        assert_eq!(pass2.thinking_count, pass1_thinking);
-    }
-
-    /// Pass 1 vs Pass 2:单 model across records
-    #[test]
-    fn parallel_run_kimi_handles_single_model() {
-        let (_tmp, wire) = write_kimi_temp(
-            "{\"type\":\"usage.record\",\"model\":\"only-model\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":1}\n\
-             {\"type\":\"usage.record\",\"model\":\"only-model\",\"usage\":{\"inputOther\":2,\"output\":2,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n",
-        );
-        let (_, pass1_models, _, _) = scan_kimi_usage(&wire).expect("pass1");
-        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2");
-
-        assert_eq!(pass1_models, vec!["only-model".to_string()]);
-        assert_eq!(pass2.available_models, vec!["only-model".to_string()]);
-        assert_eq!(pass2.available_models, pass1_models);
-    }
-
-    /// Pass 1 vs Pass 2:无 usage.record → both None / empty
-    #[test]
-    fn parallel_run_kimi_handles_no_usage_records() {
-        let (_tmp, wire) = write_kimi_temp(
-            "{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n\
-             {\"type\":\"context.append_message\",\"message\":{\"role\":\"assistant\",\"content\":\"hello\"}}\n",
-        );
-        let (pass1_usage, pass1_models, pass1_thinking, pass1_primary) =
-            scan_kimi_usage(&wire).expect("pass1");
-        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2");
-
-        assert!(pass1_usage.is_none());
-        assert!(pass1_models.is_empty());
-        assert_eq!(pass1_thinking, 0);
-        assert!(pass1_primary.is_none());
-
-        assert!(pass2.kimi_token_usage.is_none());
-        assert!(pass2.available_models.is_empty());
-        assert_eq!(pass2.thinking_count, 0);
-
-        assert_eq!(pass2.kimi_token_usage, pass1_usage);
-        assert_eq!(pass2.available_models, pass1_models);
-        assert_eq!(pass2.thinking_count, pass1_thinking);
     }
 }

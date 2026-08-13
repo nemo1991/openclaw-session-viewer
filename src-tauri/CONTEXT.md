@@ -37,19 +37,19 @@ M 条消息出(M ≤ N);可以在 run 末尾 emit 合成 chart meta。给 kimi �
 transcript 路径用(v0.9.0+、v0.9.17+)。
 _Avoid_: Session normalize, aggregate normalize, whole-file normalize
 
-**Two-pass sync**(双 pass 同步) [v0.8.4 - v0.9.26]:
-`db/sync.rs` 当前 2 阶段架构:
+**Two-pass sync**(双 pass 同步) [v0.8.4 - v0.9.26, 已废弃]:
+v0.8.4 起 `db/sync.rs` 用的 2 阶段架构:Pass 1 (`sync_one_file`) quick path
+50 行 head 扫写 SessionMeta 21 列,Pass 2 (enrichment loop) 重开文件扫
+≤5000 行 + `meta_extras::build_meta_full` 算派生指标 + `enrich_session_meta`
+写 28-param UPDATE。v0.9.27 (M10) 切到 single-pass 后**整个废除** — 见下。
 
-- **Pass 1** (`sync_one_file` at sync.rs:491) — quick path 50 行 head 扫,
-  写 SessionMeta 大部分字段到 DB。
-- **Pass 2** (enrichment loop at sync.rs:323-444) — `meta_extras::build_meta_full`
-  重开文件扫 ≤5000 行,算派生指标(可用 models、think 计数、tool 分布、
-  repeat run、idle gap、kimi 专属聚合)→ `enrich_session_meta` 写 28-param UPDATE。
-
-两 pass 都用 `jsonl::for_each_line` 单文件扫,Pass 2 不复用 Pass 1 结果。
-v0.9.26 (M9) 起,kimi 3 字段 (`kimi_token_usage` / `available_models` /
-`thinking_count`) 也由 Pass 1 算,跟 Pass 2 比对验证 byte-identical。
-M10 (v0.9.27) 才会切 Pass 1 only + 删 `meta_extras.rs`。
+**Single-pass sync**(单 pass 同步) [v0.9.27+]:
+`db/sync.rs` 现在 1 阶段架构 — `sync_one_file` 调对应 `build_*_session_meta`,
+后者调 `parser::meta_aggregator::{aggregate_claude_openclaw, aggregate_kimi}`
+扫 ≤5000 行,一次性填全部 47 字段到 SessionMeta struct,再 `upsert_session_meta`
+走单个 INSERT 写全 47 列。`enrich_session_meta` 函数 + enrichment loop +
+`meta_extras.rs` 文件全部删除。sync 总耗时 floor = v0.9.26 perf baseline
+减去 enrichment 那段时间(典型 session ~ms 级,慢文件 >500ms warn)。
 _Avoid_: Sync pipeline, enrichment pipeline (含义过载)
 
 **Chart meta**(图表元数据):

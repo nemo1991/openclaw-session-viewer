@@ -10,7 +10,6 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use serde_json::Value as JsonValue;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -146,7 +145,6 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
     // 保留 set 是为了不让孤儿清扫把真实文件误判为孤儿。
     let mut seen_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
     // v0.8.4 item 2: 同步成功才进 v0.8.4 派生指标 enrich; failed 不入
-    let mut synced_paths: Vec<String> = Vec::new();
 
     // 1) Claude projects_dir
     for projects_dir in paths_snapshot.all_claude_projects_dirs() {
@@ -163,7 +161,6 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
             match sync_one_file(state, &path, "claude", None, None, None, None).await {
                 Ok(_) => {
                     done += 1;
-                    synced_paths.push(path.to_string_lossy().to_string());
                 }
                 Err(e) => {
                     failed += 1;
@@ -214,7 +211,6 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
                 {
                     Ok(_) => {
                         done += 1;
-                        synced_paths.push(path.to_string_lossy().to_string());
                     }
                     Err(e) => {
                         failed += 1;
@@ -248,7 +244,6 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
             match sync_one_file(state, jsonl_path, "kimi", Some("main"), None, None, None).await {
                 Ok(_) => {
                     done += 1;
-                    synced_paths.push(jsonl_path.to_string_lossy().to_string());
                 }
                 Err(e) => {
                     failed += 1;
@@ -319,135 +314,6 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
         log::info!("sync orphan sweep: 删除 {orphan_deleted} 条已被磁盘移除的 session_meta 行");
     }
 
-    // v0.8.4 item 2: 第二阶段 enrichment — 对本轮同步成功的 jsonl 全量扫描, 落派生指标
-    // 单文件失败不会让 sync_state 阻塞; 用 sync_one_file 成功名单, 失败文件下轮再试
-    //
-    // v0.9.26 (M9-D): 加 Instant::now() timing baseline。3 个点:loop_start (line 325) /
-    // per_file_start (line 329) / loop_end (line 425)。慢文件阈值 500ms warn。
-    // Pass 1 (sync_one_file head scan) 主导 < 1ms,无需单独计时 — Pass 1 cost 隐式为
-    // sync_total − enrich_total。Baseline 给 M10 删 meta_extras.rs 后对照用。
-    if !synced_paths.is_empty() {
-        let count = synced_paths.len();
-        let enrich_loop_start = Instant::now();
-        log::info!("v0.8.4 enrichment: 扫描 {count} 个 jsonl 提取派生指标 (上限 5000 行/文件)");
-        let mut slow_files: u32 = 0;
-        for jsonl_path in &synced_paths {
-            let p = std::path::Path::new(jsonl_path);
-            let per_file_start = Instant::now();
-            let extras = match crate::parser::meta_extras::build_meta_full(p) {
-                Ok(e) => e,
-                Err(e) => {
-                    log::warn!("build_meta_full {:?} 失败: {e:?}", p);
-                    continue;
-                }
-            };
-            let per_file_elapsed = per_file_start.elapsed();
-            if per_file_elapsed > std::time::Duration::from_millis(500) {
-                slow_files += 1;
-                log::warn!(
-                    "build_meta_full 慢文件 {:?}: {:?} (>500ms)",
-                    p,
-                    per_file_elapsed
-                );
-            }
-            // 用 jsonl_path 反查 session_id (build_meta_full 不返回 sid)
-            let sid: Option<String> = state
-                .db
-                .with(|c| {
-                    let r: Result<String, _> = c.query_row(
-                        "SELECT session_id FROM session_meta WHERE jsonl_path = ?1",
-                        rusqlite::params![jsonl_path],
-                        |r| r.get::<_, String>(0),
-                    );
-                    Ok::<Option<String>, AppError>(r.ok())
-                })
-                .ok()
-                .flatten();
-            let Some(sid) = sid else {
-                // 该文件刚刚 sync_one_file 成功过, 理论上必有 row; 找不到就跳
-                continue;
-            };
-            let tool_usage_json = serde_json::to_string(&extras.tool_usage)
-                .ok()
-                .filter(|s| !s.is_empty() && s != "[]");
-            // v0.8.4 item 2'': available_models_json — BTreeSet 已经字典序, 紧凑数组
-            let available_models_json = serde_json::to_string(&extras.available_models)
-                .ok()
-                .filter(|s| !s.is_empty() && s != "[]");
-            // v0.8.5 A: per-tool 失败计数 (跟 tool_usage_json 同紧凑数组格式)
-            let tool_error_json = serde_json::to_string(&extras.tool_error)
-                .ok()
-                .filter(|s| !s.is_empty() && s != "[]");
-            // v0.8.7 A: parent_uuids 转 newline-separated text (DB schema 是 TEXT 列,
-            // 比 JSON 数组紧凑, 大数据下存更少字符)
-            let parent_uuids_text = if extras.parent_uuids.is_empty() {
-                None
-            } else {
-                Some(extras.parent_uuids.join("\n"))
-            };
-            // v0.9.8: kimi 专属聚合 JSON 序列化
-            let todo_summary_json = extras
-                .todo_summary
-                .as_ref()
-                .and_then(|t| serde_json::to_string(t).ok());
-            let kimi_token_usage_json = extras
-                .kimi_token_usage
-                .as_ref()
-                .and_then(|t| serde_json::to_string(t).ok());
-            let meta_banner_json = extras
-                .meta_banner
-                .as_ref()
-                .and_then(|t| serde_json::to_string(t).ok());
-            let _ = state.db.with(|c| {
-                crate::db::schema::enrich_session_meta(
-                    c,
-                    &sid,
-                    extras.error_count,
-                    extras.user_message_count,
-                    extras.assistant_message_count,
-                    extras.duration_seconds,
-                    extras.first_response_latency_ms,
-                    extras.agent_name.as_deref(),
-                    extras.invoked_skills_count,
-                    extras.plan_file_ref_count,
-                    extras.compact_file_ref_count,
-                    extras.queued_command_count,
-                    extras.attached_file_count,
-                    // v0.8.4 item 2'
-                    extras.text_message_count,
-                    tool_usage_json.as_deref(),
-                    extras.phase_hint.as_deref(),
-                    extras.phase_detail.as_deref(),
-                    extras.repeat_run_count,
-                    extras.repeat_run_max_tool.as_deref(),
-                    extras.repeat_run_max_count,
-                    extras.idle_gap_count,
-                    extras.idle_gap_max_ms,
-                    // v0.8.4 item 2''
-                    available_models_json.as_deref(),
-                    // v0.8.5 A: per-tool 失败
-                    tool_error_json.as_deref(),
-                    // v0.8.7 A: parent_uuids
-                    parent_uuids_text.as_deref(),
-                    // v0.9.5: thinking_count (kimi 走 build_meta_full_kimi 填)
-                    extras.thinking_count,
-                    // v0.9.8: kimi 专属聚合
-                    todo_summary_json.as_deref(),
-                    kimi_token_usage_json.as_deref(),
-                    meta_banner_json.as_deref(),
-                )?;
-                Ok::<_, AppError>(())
-            });
-        }
-        let enrich_loop_elapsed = enrich_loop_start.elapsed();
-        log::info!(
-            "v0.8.4 enrichment 完成: {} 个文件, 总耗时 {:?}, 慢文件 {} 个 (>500ms)",
-            count,
-            enrich_loop_elapsed,
-            slow_files
-        );
-    }
-
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -477,7 +343,9 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
 
     // v0.8.5 B: 跨 session 工具聚合 — 事务内 TRUNCATE + 全量重算 tool_global_stats / tool_session
     // 跑在 sync_state 写入之后, 用户能在 sync-progress done 后立刻看到聚合数据
-    if !synced_paths.is_empty() {
+    // v0.9.27 (M10): 之前是 `if !synced_paths.is_empty()`, 2-pass 架构没了改成 `if total > 0`
+    // (任何一文件走过都触发重算 — 工具聚合幂等, 多个 session 跑过同样工具还是 OK)。
+    if total > 0 {
         if let Err(e) = state.db.with(|c| {
             crate::db::schema::rebuild_tool_global_stats(c)?;
             Ok::<_, AppError>(())

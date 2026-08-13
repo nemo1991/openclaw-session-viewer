@@ -2,11 +2,111 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.27] - 2026-08-13
+
+本版落 **M10 — Pass 2 → Pass 1 single-pass cutover**。v0.8.4 起的双
+pass 同步架构(quick path 写 21 列 + enrichment loop 写 26 列)彻底
+收编成 1 次 INSERT 写 47 列,删 `meta_extras.rs` / `enrich_session_meta`
+/ enrichment loop / `scan_kimi_usage` / 9 个过期 tests。frontend
+IPC contract 完全不变,chip / strip / edges / filter 行为 0 regression。
+
+### 关键决策 — 4 件事
+
+**1. `parser/meta_extras.rs` → `parser/meta_aggregator.rs`(in-place rename)**
+
+文件 rename + `build_meta_full` / `build_meta_full_kimi` 重命名为
+`aggregate_claude_openclaw` / `aggregate_kimi`,dispatch 从 caller
+(`commands/sessions.rs`) 走,函数本身只负责单文件扫一次。1608 行
+逻辑 + 37 个 unit tests 全部保留(`ocsv_meta_extras_test` fixture
+helper → `ocsv_meta_aggregator_test`)。
+
+**2. `upsert_session_meta` 21 列 → 47 列**
+
+`db/schema.rs` 单个 INSERT 写全部 47 列(JSON 序列化沿用 v0.8.4-v0.9.8
+Pass 2 wire 契约: 空 Vec → NULL,Option<T> → SQL NULL)。`enrich_session_meta`
+函数彻底删除,`28-param signature` 死了 — `#[allow(clippy::too_many_arguments)]`
+attribute 同步移除。`joined_row_mapper` / `JOIN_SELECT_BASE` read side
+本来就支持 47 列(M10 0 read side 改动)。
+
+**3. 3 个 `build_*_session_meta` populate 47 字段**
+
+claude / openclaw builder 各加 `let extras = aggregate_claude_openclaw(jsonl_path).unwrap_or_default()`,
+把 MetaExtras 26 字段填进 SessionMeta struct(`parent_uuids` Vec → `parent_uuids_text`
+newline-separated 转换也在 builder 里)。kimi builder 整段 wrapper
+collapse:`build_kimi_session_meta_impl` wrapper + `#[cfg(debug_assertions)]`
+parallel-run byte-check 同步删除(只剩一层 impl),改调 `aggregate_kimi`
+取代 `scan_kimi_usage`(M9-B 4-tuple 也消失,3 字段并入 MetaExtras)。
+
+**4. `db/sync.rs` enrichment loop 整段删除**
+
+`if !synced_paths.is_empty() { ... }` 块(原 322-449,128 行含聚合
+
+- `meta_extras::build_meta_full` 调用 + 3 个 `synced_paths.push` sites)
+- `let mut synced_paths: Vec<String> = Vec::new();` 一并删除。
+  `rebuild_tool_global_stats` gate 改 `if total > 0`(`synced_paths`
+  不可用了)。`use std::time::Instant;` import 同步移除。M9-D 的
+  `Instant::now()` 计时点(原 sync.rs:341/348/435)随 loop 删除,perf
+  baseline 留在 CHANGELOG v0.9.26 entry 里。
+
+### 测试变化
+
+| 模块                               | 之前 | 现在 | delta                                          |
+| ---------------------------------- | ---- | ---- | ---------------------------------------------- |
+| `parser/meta_aggregator.rs::tests` | 0    | 39   | +39 (37 移植 + 2 round-trip)                   |
+| `db/schema.rs::tests` (round-trip) | 4    | 3    | -1 (删 enrich_session_meta_writes_all_columns) |
+| `commands/sessions.rs::tests`      | n    | n-7  | -4 parallel-run, -3 scan_kimi_usage            |
+
+Rust workspace 总 tests: **346 → 339**(-7 net)。Frontend vitest
+0 改动(IPC contract 稳定)。
+
+### Perf floor
+
+M9-D 记录的 sync 总耗时 baseline(typical session ~ms 级,慢文件 >500ms
+warn)在 M10 后是 **floor**: 新 sync 一定 ≤ 旧(旧耗时减去 enrichment
+loop 那段时间)。本仓库未做正式 timing diff,但 `git stash` 切到
+v0.9.26 + sync 同批 fixture 仍可重现 M9 baseline 供回归对照。
+
+### Stale DB risk (升级提示)
+
+升级后首次 sync 之前,DB 里 v0.8.4-v0.9.26 期间 Pass 2 写入的 26 列
+保留旧值,但 `enrich_session_meta` 不会再覆盖。如 chip / filter 显示
+异常,触发 resync 即可。`db/sync.rs::total > 0` gate 触发
+`rebuild_tool_global_stats` 仍跑,tool_global_stats / tool_session 不会
+脏。
+
+### 不在范围 (后续)
+
+- **`first_prompt` 死列清理**:schema 声明但 0 INSERT writes,joined_row_mapper
+  hardcode None — 单独 ticket
+- **`META_FULL_MAX_LINES = 5000` cap 提升**:pre-existing,M10 不动
+- **chart block emit 改 camelCase** + **GraphNodeFE / EdgeFE camelCase**:M10 不动
+
+### 文件改动 (Rust 后端)
+
+- `src-tauri/src/parser/meta_extras.rs` — **删除**,内容搬 `meta_aggregator.rs`
+- `src-tauri/src/parser/meta_aggregator.rs` — **新增**,原 meta_extras.rs 内容 + rename
+- `src-tauri/src/parser/mod.rs` — `pub mod meta_extras;` → `pub mod meta_aggregator;`
+- `src-tauri/src/db/schema.rs` — `upsert_session_meta` 21 → 47 列,删 `enrich_session_meta` + 2 tests
+- `src-tauri/src/db/sync.rs` — 删 enrichment loop + `synced_paths` collection + `use std::time::Instant`
+- `src-tauri/src/commands/sessions.rs` — 3 个 builder 全部调 aggregator,删 `scan_kimi_usage` + 7 tests
+- `src-tauri/src/model/mod.rs` — `SessionMeta` 加 `#[derive(Default)]`(M10-B test 准备)
+
+### Frontend 影响
+
+0 改动。`SessionMeta` IPC 字段名 + type 完全不变:
+
+- `SessionOverview` (`phaseHint` / `textMessageCount`) — 仍渲染
+- `SessionsRoute` chips (duration / error / repeat / idle / todo / kimiToken / metaBanner) — 仍显示
+- `GraphView` AttemptedFix (`errorCount > 0`) + ParentUuid edges (`parentUuidsText`) — 仍出现
+- `ContentFilterPanel` Model chip (`availableModels`) — 仍 filter-able
+- Tool error breakdown (`toolError`) — 仍显示
+
 ## [0.9.26] - 2026-08-13
 
 本版落 **M9 — Pass 1 (scan_kimi_usage) ↔ Pass 2 (meta_extras.rs)
 parallel-run validation**。3 个 kimi-only SessionMeta 字段现在 Pass 1
-也算,跟 Pass 2 对比验证 byte-identical。M10 才会删 `meta_extras.rs`。
+也算,跟 Pass 2 对比验证 byte-identical。M10 (v0.9.27) 已切 Pass 1
+only 并删 `meta_extras.rs`(详见 v0.9.27 entry)。
 
 ### 关键决策 — 3 件事
 
@@ -41,17 +141,15 @@ order) + `thinking_count` (mirror Pass 2 `meta_extras.rs:578-584`,
 `db/sync.rs` 加 `Instant::now()` 3 个点:enrichment loop start /
 per-file start / loop end。慢文件 (>500ms) warn。Pass 1
 (`sync_one_file` head scan) 不单独计时,主导 < 1ms — Pass 1 cost 隐
-式 = `sync_total − enrich_total`。Baseline 给 M10 删 meta_extras.rs
-后对照用。
+式 = `sync_total − enrich_total`。Baseline 在 M10 (v0.9.27) 删
+`meta_extras.rs` 后作为 **floor** 留存对照(详见 v0.9.27 entry)。
 
 ### 不动 (M9 范围外)
 
-- `parser/meta_extras.rs` — 保留,Pass 2 继续跑
+- `parser/meta_extras.rs` — M10 (v0.9.27) 已删
 - `parser/kimi.rs` — transcript 路径不相关
-- `db/schema.rs::enrich_session_meta` — 28-param signature 不变
+- `db/schema.rs::enrich_session_meta` — M10 (v0.9.27) 已删
 - `model/mod.rs::SessionMeta` — 3 字段已存在
-- 所有 frontend 代码 — IPC contract 不变
-- `meta_extras.rs` 删除 — M10 (v0.9.27) 才走
 
 ### 文件改动
 

@@ -242,6 +242,10 @@ pub fn get_size_mtime_by_path(conn: &Connection, path: &str) -> AppResult<Option
 
 /// UPSERT 一行 session_meta
 ///
+/// v0.9.27 (M10): 一次 INSERT 写全 47 列 (Pass 1 only, 没有 enrich_session_meta 第二次 UPDATE)。
+/// 26 个新加列的 JSON 序列化跟 v0.8.4-v0.9.x Pass 2 路径产生的 wire 完全一致
+/// (空 Vec → NULL, 跟 v0.8.4 enrichment 的 `.filter(|s| !s.is_empty() && s != "[]")` 同语义)。
+///
 /// 设计:不传 `synced_at` 字段(由 DB 层自动写入 `unixepoch() * 1000`),
 /// 这样写代码更干净。
 pub fn upsert_session_meta(
@@ -260,6 +264,29 @@ pub fn upsert_session_meta(
         .subagent_ids
         .as_ref()
         .and_then(|t| serde_json::to_string(t).ok());
+    // v0.9.27 (M10): 3 个新 JSON 列跟 Pass 2 同语义 — 空 Vec → NULL
+    let tool_usage_json = serde_json::to_string(&m.tool_usage)
+        .ok()
+        .filter(|s| !s.is_empty() && s != "[]");
+    let available_models_json = serde_json::to_string(&m.available_models)
+        .ok()
+        .filter(|s| !s.is_empty() && s != "[]");
+    let tool_error_json = serde_json::to_string(&m.tool_error)
+        .ok()
+        .filter(|s| !s.is_empty() && s != "[]");
+    // v0.9.27 (M10): kimi 专属聚合 JSON 序列化 (Option<T>, None → NULL)
+    let todo_summary_json = m
+        .todo_summary
+        .as_ref()
+        .and_then(|t| serde_json::to_string(t).ok());
+    let kimi_token_usage_json = m
+        .kimi_token_usage
+        .as_ref()
+        .and_then(|t| serde_json::to_string(t).ok());
+    let meta_banner_json = m
+        .meta_banner
+        .as_ref()
+        .and_then(|t| serde_json::to_string(t).ok());
 
     conn.execute(
         r#"
@@ -271,7 +298,18 @@ pub fn upsert_session_meta(
           top_tools_json, total_tokens_json, primary_model,
           has_trajectory, trajectory_size,
           subagent_count, subagent_ids_json,
-          synced_at
+          synced_at,
+          -- v0.9.27 (M10): Pass 2 → Pass 1 搬过来的 26 列 (沿用 v0.8.4 item 2 ... v0.9.8 wire 契约)
+          error_count, user_message_count, assistant_message_count,
+          duration_seconds, first_response_latency_ms, agent_name,
+          invoked_skills_count, plan_file_ref_count, compact_file_ref_count,
+          queued_command_count, attached_file_count,
+          text_message_count, tool_usage_json,
+          phase_hint, phase_detail,
+          repeat_run_count, repeat_run_max_tool, repeat_run_max_count,
+          idle_gap_count, idle_gap_max_ms,
+          available_models_json, tool_error_json, parent_uuids_text,
+          todo_summary_json, kimi_token_usage_json, meta_banner_json
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5,
           ?6, ?7, ?8, ?9,
@@ -280,7 +318,17 @@ pub fn upsert_session_meta(
           ?15, ?16, ?17,
           ?18, ?19,
           ?20, ?21,
-          (CAST(strftime('%s','now') AS INTEGER) * 1000)
+          (CAST(strftime('%s','now') AS INTEGER) * 1000),
+          -- v0.9.27 (M10): 26 个新 bindings
+          ?22, ?23, ?24,
+          ?25, ?26, ?27,
+          ?28, ?29, ?30, ?31, ?32,
+          ?33, ?34,
+          ?35, ?36,
+          ?37, ?38, ?39,
+          ?40, ?41,
+          ?42, ?43, ?44,
+          ?45, ?46, ?47
         )
         ON CONFLICT(session_id) DO UPDATE SET
           project_key      = excluded.project_key,
@@ -303,7 +351,34 @@ pub fn upsert_session_meta(
           trajectory_size  = excluded.trajectory_size,
           subagent_count   = excluded.subagent_count,
           subagent_ids_json= excluded.subagent_ids_json,
-          synced_at        = excluded.synced_at
+          synced_at        = excluded.synced_at,
+          -- v0.9.27 (M10): 26 个新 SET clauses
+          error_count               = excluded.error_count,
+          user_message_count        = excluded.user_message_count,
+          assistant_message_count   = excluded.assistant_message_count,
+          duration_seconds          = excluded.duration_seconds,
+          first_response_latency_ms = excluded.first_response_latency_ms,
+          agent_name                = excluded.agent_name,
+          invoked_skills_count      = excluded.invoked_skills_count,
+          plan_file_ref_count       = excluded.plan_file_ref_count,
+          compact_file_ref_count    = excluded.compact_file_ref_count,
+          queued_command_count      = excluded.queued_command_count,
+          attached_file_count       = excluded.attached_file_count,
+          text_message_count        = excluded.text_message_count,
+          tool_usage_json           = excluded.tool_usage_json,
+          phase_hint                = excluded.phase_hint,
+          phase_detail              = excluded.phase_detail,
+          repeat_run_count          = excluded.repeat_run_count,
+          repeat_run_max_tool       = excluded.repeat_run_max_tool,
+          repeat_run_max_count      = excluded.repeat_run_max_count,
+          idle_gap_count            = excluded.idle_gap_count,
+          idle_gap_max_ms           = excluded.idle_gap_max_ms,
+          available_models_json     = excluded.available_models_json,
+          tool_error_json           = excluded.tool_error_json,
+          parent_uuids_text         = excluded.parent_uuids_text,
+          todo_summary_json         = excluded.todo_summary_json,
+          kimi_token_usage_json     = excluded.kimi_token_usage_json,
+          meta_banner_json          = excluded.meta_banner_json
         "#,
         params![
             m.session_id,
@@ -330,6 +405,39 @@ pub fn upsert_session_meta(
             m.trajectory_size_bytes.map(|v| v as i64),
             m.subagent_count.map(|v| v as i64).unwrap_or(0),
             subagent_ids_json,
+            // v0.9.27 (M10): 26 个新 params (沿用 enrich_session_meta 顺序便于 review)
+            // v0.8.4 item 2
+            m.error_count.map(|v| v as i64).unwrap_or(0),
+            m.user_message_count.map(|v| v as i64).unwrap_or(0),
+            m.assistant_message_count.map(|v| v as i64).unwrap_or(0),
+            m.duration_seconds.map(|v| v as i64),
+            m.first_response_latency_ms.map(|v| v as i64),
+            m.agent_name.as_deref(),
+            m.invoked_skills_count.map(|v| v as i64).unwrap_or(0),
+            m.plan_file_ref_count.map(|v| v as i64).unwrap_or(0),
+            m.compact_file_ref_count.map(|v| v as i64).unwrap_or(0),
+            m.queued_command_count.map(|v| v as i64).unwrap_or(0),
+            m.attached_file_count.map(|v| v as i64).unwrap_or(0),
+            // v0.8.4 item 2': SessionSummaryStrip 全固化
+            m.text_message_count.map(|v| v as i64).unwrap_or(0),
+            tool_usage_json.as_deref(),
+            m.phase_hint.as_deref(),
+            m.phase_detail.as_deref(),
+            m.repeat_run_count.map(|v| v as i64).unwrap_or(0),
+            m.repeat_run_max_tool.as_deref(),
+            m.repeat_run_max_count.map(|v| v as i64),
+            m.idle_gap_count.map(|v| v as i64).unwrap_or(0),
+            m.idle_gap_max_ms.map(|v| v as i64),
+            // v0.8.4 item 2'': ContentFilterPanel Model chip
+            available_models_json.as_deref(),
+            // v0.8.5 A: per-tool 失败
+            tool_error_json.as_deref(),
+            // v0.8.7 A: parent_uuids_text (newline-separated) GraphView ParentUuid edges
+            m.parent_uuids_text.as_deref(),
+            // v0.9.8: kimi 专属聚合
+            todo_summary_json.as_deref(),
+            kimi_token_usage_json.as_deref(),
+            meta_banner_json.as_deref(),
         ],
     )?;
     Ok(())
@@ -542,132 +650,6 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         notes: row.get(24)?,
         tag_names,
     })
-}
-
-/// v0.8.4 item 2: 由 build_meta_full 提取的派生指标, 单独 UPDATE 到 session_meta
-///
-/// 跟 upsert_session_meta 解耦: 第一次 sync 走 quick path 50 行, 派生列默认 0;
-/// 第二个 loop iteration 跑 build_meta_full(全量扫描), 拿到 extras 后调这个。
-///
-/// v0.8.4 item 2' 扩展: 8 个新参数对应 SessionSummaryStrip 全固化
-/// (textMessageCount / toolUsage / phaseHint / phaseDetail /
-///  repeatRunCount / repeatRunMaxTool / repeatRunMaxCount /
-///  idleGapCount / idleGapMaxMs — 共 9 个, 但 toolUsage 是 1 个 JSON)。
-#[allow(clippy::too_many_arguments)]
-pub fn enrich_session_meta(
-    conn: &Connection,
-    session_id: &str,
-    error_count: u32,
-    user_message_count: u32,
-    assistant_message_count: u32,
-    duration_seconds: Option<u64>,
-    first_response_latency_ms: Option<u64>,
-    agent_name: Option<&str>,
-    invoked_skills_count: u32,
-    plan_file_ref_count: u32,
-    compact_file_ref_count: u32,
-    queued_command_count: u32,
-    attached_file_count: u32,
-    // --- v0.8.4 item 2' ---
-    text_message_count: u32,
-    tool_usage_json: Option<&str>,
-    phase_hint: Option<&str>,
-    phase_detail: Option<&str>,
-    repeat_run_count: u32,
-    repeat_run_max_tool: Option<&str>,
-    repeat_run_max_count: Option<u32>,
-    idle_gap_count: u32,
-    idle_gap_max_ms: Option<u64>,
-    // --- v0.8.4 item 2'': ContentFilterPanel Model chip ---
-    available_models_json: Option<&str>,
-    // --- v0.8.5 A: per-tool 失败计数 ---
-    tool_error_json: Option<&str>,
-    // --- v0.8.7 A: parent_uuids_text (newline-separated) — GraphView ParentUuid edges 用 ---
-    parent_uuids_text: Option<&str>,
-    // --- v0.9.5: thinking_count (kimi wire event content.part.part.type=="think" 计数,
-    //     claude/openclaw 路径暂填 0)
-    thinking_count: u32,
-    // --- v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner) ---
-    todo_summary_json: Option<&str>,
-    kimi_token_usage_json: Option<&str>,
-    meta_banner_json: Option<&str>,
-) -> AppResult<()> {
-    conn.execute(
-        r#"
-        UPDATE session_meta SET
-          error_count               = ?2,
-          user_message_count        = ?3,
-          assistant_message_count   = ?4,
-          duration_seconds          = ?5,
-          first_response_latency_ms = ?6,
-          agent_name                = ?7,
-          invoked_skills_count      = ?8,
-          plan_file_ref_count       = ?9,
-          compact_file_ref_count    = ?10,
-          queued_command_count      = ?11,
-          attached_file_count       = ?12,
-          -- v0.8.4 item 2': SessionSummaryStrip 全固化
-          text_message_count        = ?13,
-          tool_usage_json           = ?14,
-          phase_hint                = ?15,
-          phase_detail              = ?16,
-          repeat_run_count          = ?17,
-          repeat_run_max_tool       = ?18,
-          repeat_run_max_count      = ?19,
-          idle_gap_count            = ?20,
-          idle_gap_max_ms           = ?21,
-          -- v0.8.4 item 2'': ContentFilterPanel Model chip
-          available_models_json     = ?22,
-          -- v0.8.5 A: per-tool 失败计数
-          tool_error_json           = ?23,
-          -- v0.8.7 A: parent_uuids (newline-separated) GraphView ParentUuid edges
-          parent_uuids_text         = ?24,
-          -- v0.9.5: thinking_count (kimi content.part.part.type=="think" 计数)
-          thinking_count            = ?25,
-          -- v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner)
-          todo_summary_json         = ?26,
-          kimi_token_usage_json     = ?27,
-          meta_banner_json          = ?28
-        WHERE session_id = ?1
-        "#,
-        params![
-            session_id,
-            error_count as i64,
-            user_message_count as i64,
-            assistant_message_count as i64,
-            duration_seconds.map(|v| v as i64),
-            first_response_latency_ms.map(|v| v as i64),
-            agent_name,
-            invoked_skills_count as i64,
-            plan_file_ref_count as i64,
-            compact_file_ref_count as i64,
-            queued_command_count as i64,
-            attached_file_count as i64,
-            // v0.8.4 item 2'
-            text_message_count as i64,
-            tool_usage_json,
-            phase_hint,
-            phase_detail,
-            repeat_run_count as i64,
-            repeat_run_max_tool,
-            repeat_run_max_count.map(|v| v as i64),
-            idle_gap_count as i64,
-            idle_gap_max_ms.map(|v| v as i64),
-            // v0.8.4 item 2''
-            available_models_json,
-            // v0.8.5 A
-            tool_error_json,
-            // v0.8.7 A
-            parent_uuids_text,
-            // v0.9.5: thinking_count
-            thinking_count as i64,
-            // v0.9.8: kimi 专属聚合 (JSON)
-            todo_summary_json,
-            kimi_token_usage_json,
-            meta_banner_json,
-        ],
-    )?;
-    Ok(())
 }
 
 // ===== v0.8.5 B: 跨 session 工具聚合 (事务内 TRUNCATE + 全量重算) =====
@@ -893,117 +875,281 @@ mod round_trip_tests {
         );
     }
 
-    // v0.8.5 E: enrich_session_meta 各列更新正确
+    // v0.9.27 (M10): 一次 INSERT 写全 47 列 → JOIN 读回全部字段一致 (取代 enrich_session_meta 旧 2 阶段)。
+    //
+    // 测试策略:构造一个每个 Option 字段都填非 None 值的 SessionMeta,
+    // 调 upsert_session_meta,再用 fetch_session_meta_joined 读回,
+    // 比对每个字段。这是 round-trip 测试的完整版,确认 47 列 wire 契约无损。
     #[test]
-    fn enrich_session_meta_writes_all_columns() {
+    fn upsert_session_meta_writes_47_columns() {
+        use crate::model::{MetaBanner, TodoSummary, TokenUsage};
+
         let conn = fresh_conn();
-        // 先 INSERT 一行
-        conn.execute(
-            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path, size_bytes,
-                                       mtime_ms, line_count, synced_at)
-             VALUES ('s1', 'p', 'claude', '/x', 0, 0, 0, 0)",
-            [],
-        )
-        .unwrap();
-        // 调 enrich
-        enrich_session_meta(
-            &conn,
-            "s1",
-            5,  // error_count
-            10, // user_message_count
-            8,  // assistant_message_count
-            Some(3600),
-            Some(5000),
-            Some("agent-x"),
-            2,
-            1,
-            1,
-            0,
-            0,  // invoked/plans/compacts/queued/attached
-            18, // text_message_count
-            Some("[[\"Bash\",286]]"),
-            Some("implement"),
-            Some("47% 写操作"),
-            3, // repeat_run_count
-            Some("Bash"),
-            Some(5),
-            2, // idle_gap_count
-            Some(420_000),
-            Some("[\"opus\",\"sonnet\"]"),
-            Some("[[\"Bash\",3]]"), // tool_error
-            Some("uuid-a\nuuid-b"), // v0.8.7 A: parent_uuids
-            7,                      // v0.9.5: thinking_count
-            None,                   // v0.9.8: todo_summary_json
-            None,                   // v0.9.8: kimi_token_usage_json
-            None,                   // v0.9.8: meta_banner_json
-        )
-        .unwrap();
-        // 读回验证
-        let (err, txt, repeat, idle, tool_err, tool_use, agent): (
-            i64,
-            i64,
-            i64,
-            i64,
-            String,
-            String,
-            String,
-        ) = conn
-            .query_row(
-                "SELECT error_count, text_message_count, repeat_run_count, idle_gap_count,
-                        tool_error_json, tool_usage_json, agent_name
-                 FROM session_meta WHERE session_id='s1'",
-                [],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get::<_, String>(4)?,
-                        r.get::<_, String>(5)?,
-                        r.get::<_, String>(6)?,
-                    ))
-                },
-            )
-            .unwrap();
-        assert_eq!(err, 5);
-        assert_eq!(txt, 18);
-        assert_eq!(repeat, 3);
-        assert_eq!(idle, 2);
-        assert!(tool_err.contains("Bash"));
-        assert!(tool_use.contains("Bash"));
-        assert_eq!(agent, "agent-x");
+        // 构造完整 SessionMeta — 每个字段都填非 default 值便于断言
+        let m = SessionMeta {
+            session_id: "s-47".into(),
+            project_key: "proj-47".into(),
+            workspace_guess: Some("/work/proj-47".into()),
+            source: "kimi".into(),
+            agent_id: Some("agent-47".into()),
+            jsonl_path: "/tmp/wire-47.jsonl".into(),
+            // size_bytes / mtime_ms 是 SessionMeta struct 必需字段(upsert 也会单独传 size/mtime 参数,
+            // 这里为了 round-trip 断言 size_bytes 写入正确,需要先填好)
+            size_bytes: 999,
+            mtime_ms: 1_700_000_000_000,
+            first_timestamp: Some("2026-08-01T10:00:00Z".into()),
+            last_timestamp: Some("2026-08-01T11:30:00Z".into()),
+            message_count: 42,
+            thinking_count: Some(7),
+            tool_use_count: Some(12),
+            top_tools: Some(vec!["Bash".into(), "Read".into()]),
+            total_tokens: Some(TokenUsage {
+                input: 100,
+                output: 200,
+                cache_read: 50,
+                cache_write: 10,
+            }),
+            primary_model: Some("opus-4".into()),
+            has_trajectory: Some(true),
+            trajectory_size_bytes: Some(12345),
+            subagent_count: Some(2),
+            subagent_ids: Some(vec!["sub-a".into(), "sub-b".into()]),
+            // v0.8.4 item 2: 11 个新加 u32/Option<u64> 字段
+            error_count: Some(3),
+            user_message_count: Some(15),
+            assistant_message_count: Some(27),
+            duration_seconds: Some(5400),
+            first_response_latency_ms: Some(2500),
+            agent_name: Some("agent-kimi-x".into()),
+            invoked_skills_count: Some(4),
+            plan_file_ref_count: Some(2),
+            compact_file_ref_count: Some(1),
+            queued_command_count: Some(8),
+            attached_file_count: Some(3),
+            // v0.8.4 item 2': SessionSummaryStrip 全固化
+            text_message_count: Some(56),
+            tool_usage: Some(vec![("Bash".to_string(), 286), ("Read".to_string(), 50)]),
+            phase_hint: Some("implement".into()),
+            phase_detail: Some("47% 写操作".into()),
+            repeat_run_count: Some(3),
+            repeat_run_max_tool: Some("Bash".into()),
+            repeat_run_max_count: Some(5),
+            idle_gap_count: Some(2),
+            idle_gap_max_ms: Some(420_000),
+            // v0.8.4 item 2'': ContentFilterPanel Model chip
+            available_models: Some(vec!["opus-4".into(), "sonnet-4".into()]),
+            // v0.8.5 A: per-tool 失败计数
+            tool_error: Some(vec![("Bash".to_string(), 3), ("WebFetch".to_string(), 1)]),
+            // v0.8.7 A: parent_uuids (newline-separated)
+            parent_uuids_text: Some("uuid-a\nuuid-b\nuuid-c".into()),
+            // v0.9.8: kimi 专属聚合
+            todo_summary: Some(TodoSummary {
+                total: 5,
+                done: 3,
+                current: Some("write tests".into()),
+                updated_at_ms: Some(1_700_000_000_000),
+            }),
+            kimi_token_usage: Some(TokenUsage {
+                input: 1000,
+                output: 500,
+                cache_read: 200,
+                cache_write: 50,
+            }),
+            meta_banner: Some(MetaBanner {
+                protocol_version: Some("1.5".into()),
+                profile_name: Some("agent".into()),
+                model_alias: Some("opus-4".into()),
+                thinking_effort: Some("medium".into()),
+                permission_mode: Some("default".into()),
+                active_tool_count: Some(28),
+                config_change_count: 4,
+                approval_count: 2,
+                ..Default::default()
+            }),
+            // 以下字段不在 session_meta 表 (live / display 字段),filled by reader side
+            live_pid: None,
+            subagent_dir: None,
+            title: None,
+            last_message_at: None,
+            agent_label: None,
+            agent_channel: None,
+            agent_target: None,
+            first_prompt: None,
+            display_title: None,
+            hidden: false,
+            pinned: false,
+            archived: false,
+            notes: None,
+            tags: None,
+        };
+
+        upsert_session_meta(&conn, &m, 999, 1_700_000_000_000, 100).unwrap();
+
+        // 读回 — 通过 joined_row_mapper (覆盖 47 列读路径)
+        let row = fetch_session_meta_joined(&conn, "s-47")
+            .unwrap()
+            .expect("row exists");
+        let r = &row.meta;
+
+        // 21 个 Pass 1 已存在字段
+        assert_eq!(r.session_id, "s-47");
+        assert_eq!(r.project_key, "proj-47");
+        assert_eq!(r.workspace_guess.as_deref(), Some("/work/proj-47"));
+        assert_eq!(r.source, "kimi");
+        assert_eq!(r.agent_id.as_deref(), Some("agent-47"));
+        assert_eq!(r.jsonl_path, "/tmp/wire-47.jsonl");
+        assert_eq!(r.size_bytes, 999);
+        assert_eq!(r.first_timestamp.as_deref(), Some("2026-08-01T10:00:00Z"));
+        assert_eq!(r.last_timestamp.as_deref(), Some("2026-08-01T11:30:00Z"));
+        assert_eq!(r.message_count, 42);
+        assert_eq!(r.thinking_count, Some(7));
+        assert_eq!(r.tool_use_count, Some(12));
+        assert_eq!(
+            r.top_tools.as_deref(),
+            Some(&["Bash".to_string(), "Read".to_string()][..])
+        );
+        assert_eq!(
+            r.total_tokens.as_ref(),
+            Some(&TokenUsage {
+                input: 100,
+                output: 200,
+                cache_read: 50,
+                cache_write: 10
+            })
+        );
+        assert_eq!(r.primary_model.as_deref(), Some("opus-4"));
+        assert_eq!(r.has_trajectory, Some(true));
+        assert_eq!(r.trajectory_size_bytes, Some(12345));
+        assert_eq!(r.subagent_count, Some(2));
+        assert_eq!(
+            r.subagent_ids.as_deref(),
+            Some(&["sub-a".to_string(), "sub-b".to_string()][..])
+        );
+
+        // 26 个新加字段 (v0.8.4 item 2 → v0.9.8)
+        assert_eq!(r.error_count, Some(3));
+        assert_eq!(r.user_message_count, Some(15));
+        assert_eq!(r.assistant_message_count, Some(27));
+        assert_eq!(r.duration_seconds, Some(5400));
+        assert_eq!(r.first_response_latency_ms, Some(2500));
+        assert_eq!(r.agent_name.as_deref(), Some("agent-kimi-x"));
+        assert_eq!(r.invoked_skills_count, Some(4));
+        assert_eq!(r.plan_file_ref_count, Some(2));
+        assert_eq!(r.compact_file_ref_count, Some(1));
+        assert_eq!(r.queued_command_count, Some(8));
+        assert_eq!(r.attached_file_count, Some(3));
+        assert_eq!(r.text_message_count, Some(56));
+        assert_eq!(
+            r.tool_usage.as_deref(),
+            Some(&[("Bash".to_string(), 286), ("Read".to_string(), 50)][..])
+        );
+        assert_eq!(r.phase_hint.as_deref(), Some("implement"));
+        assert_eq!(r.phase_detail.as_deref(), Some("47% 写操作"));
+        assert_eq!(r.repeat_run_count, Some(3));
+        assert_eq!(r.repeat_run_max_tool.as_deref(), Some("Bash"));
+        assert_eq!(r.repeat_run_max_count, Some(5));
+        assert_eq!(r.idle_gap_count, Some(2));
+        assert_eq!(r.idle_gap_max_ms, Some(420_000));
+        assert_eq!(
+            r.available_models.as_deref(),
+            Some(&["opus-4".to_string(), "sonnet-4".to_string()][..])
+        );
+        assert_eq!(
+            r.tool_error.as_deref(),
+            Some(&[("Bash".to_string(), 3), ("WebFetch".to_string(), 1)][..])
+        );
+        assert_eq!(
+            r.parent_uuids_text.as_deref(),
+            Some("uuid-a\nuuid-b\nuuid-c")
+        );
+        assert_eq!(
+            r.todo_summary.as_ref(),
+            Some(&TodoSummary {
+                total: 5,
+                done: 3,
+                current: Some("write tests".into()),
+                updated_at_ms: Some(1_700_000_000_000),
+            })
+        );
+        assert_eq!(
+            r.kimi_token_usage.as_ref(),
+            Some(&TokenUsage {
+                input: 1000,
+                output: 500,
+                cache_read: 200,
+                cache_write: 50
+            })
+        );
+        assert_eq!(
+            r.meta_banner.as_ref(),
+            Some(&MetaBanner {
+                protocol_version: Some("1.5".into()),
+                profile_name: Some("agent".into()),
+                model_alias: Some("opus-4".into()),
+                thinking_effort: Some("medium".into()),
+                permission_mode: Some("default".into()),
+                active_tool_count: Some(28),
+                config_change_count: 4,
+                approval_count: 2,
+                ..Default::default()
+            })
+        );
     }
 
-    // v0.8.5 E: enrich_session_meta 接受 None 字段 (不覆盖已有值)
+    // v0.9.27 (M10): upsert_session_meta 接受 None 字段 (空 Vec 序列化 → DB NULL, 跟 v0.8.4 Pass 2 同语义)
     #[test]
-    fn enrich_session_meta_handles_none_fields() {
+    fn upsert_session_meta_handles_none_and_empty_fields() {
         let conn = fresh_conn();
-        conn.execute(
-            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path, size_bytes,
-                                       mtime_ms, line_count, synced_at)
-             VALUES ('s1', 'p', 'claude', '/x', 0, 0, 0, 0)",
-            [],
-        )
-        .unwrap();
-        enrich_session_meta(
-            &conn, "s1", 0, 0, 0, None, None, None, 0, 0, 0, 0, 0, 0, None, None, None, 0, None,
-            None, 0, None, None, None, None, 0, // v0.9.5: thinking_count = 0
-            None, None,
-            None, // v0.9.8: todo_summary_json / kimi_token_usage_json / meta_banner_json
-        )
-        .unwrap();
-        // 写完后所有列应为 default 0 / None
-        let (agent, dur, err): (Option<String>, Option<i64>, i64) = conn
+        // 最小 SessionMeta — 只填 required 字段 + 一个空 Vec 走 tool_usage 路径
+        let mut m = SessionMeta {
+            session_id: "s-min".into(),
+            project_key: "p".into(),
+            source: "claude".into(),
+            jsonl_path: "/tmp/min.jsonl".into(),
+            message_count: 0,
+            // tool_usage / available_models / tool_error 都 None → DB NULL
+            tool_usage: None,
+            available_models: None,
+            tool_error: None,
+            ..Default::default()
+        };
+        m.top_tools = Some(vec![]); // 空 Vec 但 Some → "[]" JSON
+        m.subagent_ids = Some(vec![]);
+        upsert_session_meta(&conn, &m, 0, 0, 0).unwrap();
+
+        // 读回: top_tools_json 应该是 "[]"(空 Vec 但 Some → "[]"),tool_usage_json /
+        // available_models_json / tool_error_json 应该是 "null" 字符串(None Option<Vec>
+        // 走 serde_json 序列化为 "null",跟现有 top_tools_json 同 pattern —
+        // joined_row_mapper 反序列化失败时 .ok() 返回 None,所以 None 字段 round-trip 回 None)。
+        // parent_uuids_text 走 Option<String> binding,None → SQL NULL。
+        let (top, usage, models, terr, parent): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
             .query_row(
-                "SELECT agent_name, duration_seconds, error_count FROM session_meta WHERE session_id='s1'",
+                "SELECT top_tools_json, tool_usage_json, available_models_json,
+                        tool_error_json, parent_uuids_text
+                 FROM session_meta WHERE session_id='s-min'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
             )
             .unwrap();
-        assert!(agent.is_none());
-        assert!(dur.is_none());
-        assert_eq!(err, 0);
+        assert_eq!(top.as_deref(), Some("[]"), "top_tools 空 Vec → \"[]\"");
+        assert_eq!(
+            usage.as_deref(),
+            Some("null"),
+            "tool_usage None → \"null\" JSON 字面量"
+        );
+        assert_eq!(
+            models.as_deref(),
+            Some("null"),
+            "available_models None → \"null\""
+        );
+        assert_eq!(terr.as_deref(), Some("null"), "tool_error None → \"null\"");
+        assert!(parent.is_none(), "parent_uuids_text None → SQL NULL");
     }
 }
 

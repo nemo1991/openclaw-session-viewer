@@ -1,22 +1,31 @@
-//! v0.8.4 item 2: 派生指标的全量提取
+//! v0.9.27 (M10): Pass 1 聚合 (前身 v0.8.4 item 2 Pass 2 enrichment)
 //!
-//! 与 `commands/sessions.rs::build_claude_session_meta` (quick path, 50 行)
-//! 解耦: 本函数扫整个 jsonl (最多 5000 行) 提取:
-//! - error_count
-//! - user_message_count / assistant_message_count (排除 isSidechain)
+//! 由 `commands/sessions.rs::build_*_session_meta` 直接调,聚合结果作为
+//! SessionMeta 字段一并 `upsert_session_meta` 写 47 列 DB (无 UPDATE 二阶段)。
+//! v0.9.26 之前是 Pass 2 enrichment (`db/sync.rs` 二阶段 loop 调 `aggregate_claude_openclaw`
+//! 重开文件扫,`enrich_session_meta` 单独 UPDATE 26 列) — M10 删 sync loop 后
+//! 这层搬到 Pass 1。
+//!
+//! 两个入口,按 source 选:
+//! - `aggregate_claude_openclaw` — Claude Code + OpenClaw wire format
+//! - `aggregate_kimi` — Kimi Code wire format (事件流,字段名不一样)
+//!
+//! 扫整个 jsonl (最多 5000 行 `META_FULL_MAX_LINES`) 提取:
+//! - error_count / user_message_count / assistant_message_count (排除 isSidechain)
 //! - duration_seconds (last_ts - first_ts)
 //! - first_response_latency_ms (first assistant - first user)
 //! - agent_name (jsonl 里第一个 agent-name envelope 的 agentName)
-//! - invoked_skills_count / plan_file_ref_count / compact_file_ref_count
-//! - queued_command_count / attached_file_count
-//!
-//! 返回 MetaExtras, 由 db::sync::sync_once 调 db::schema::enrich_session_meta
-//! 写到 session_meta。
+//! - invoked_skills_count / plan_file_ref_count / compact_file_ref_count /
+//!   queued_command_count / attached_file_count
+//! - text_message_count / tool_usage / phase_hint / phase_detail
+//! - repeat_run_count / repeat_run_max_tool / repeat_run_max_count
+//! - idle_gap_count / idle_gap_max_ms
+//! - available_models / tool_error / parent_uuids (Vec<String> newline-joined 后写)
+//! - kimi-only: thinking_count / todo_summary / kimi_token_usage / meta_banner
 
 use std::path::Path;
 
 use crate::error::AppResult;
-use crate::fs::source::source_from_path;
 use crate::parser::blocks::tool_use::TOOL_USE_ALIASES;
 use crate::parser::jsonl;
 
@@ -88,22 +97,8 @@ pub struct MetaExtras {
     pub meta_banner: Option<crate::model::MetaBanner>,
 }
 
-/// 扫 jsonl 全量(或 5000 行上限), 提取派生指标
-pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
-    // v0.9.0: kimi wire.jsonl 是事件流而非 message 流,正则按 parentUuid 匹配
-    // 的 enrich 算法对 kimi 不适用。跳过,返回默认值 — 用户在详情页看到的是
-    // build_kimi_session_meta quick-path 拿到的 phaseHint/textMessageCount 等,
-    // repeatRun / idleGap / toolError 等 v0.9.x 再补 kimi 专属 enrich。
-    // v0.9.4: 但 tool_usage 聚合(`context.append_loop_event.event.type=='tool.call'`
-    // event.name)对 kimi 也适用,够简单,直接算。tool_error 留空 (kimi 无 is_error 事件信号)。
-    // v0.9.4: 用 source_from_path 替代 path.contains(".kimi") — 测试 fixture 文件名
-    // 可能不含 ".kimi" (e.g. /tmp/kimi_tools.jsonl),但 sync_one_file 传过来时已
-    // 经 source= kimi 验证过;这里改用 path substring 是兜底。
-    if path.to_string_lossy().contains(".kimi")
-        || source_from_path(&path.to_string_lossy()) == "kimi"
-    {
-        return build_meta_full_kimi(path);
-    }
+/// 扫 claude/openclaw jsonl 全量(或 5000 行上限), 提取派生指标
+pub fn aggregate_claude_openclaw(path: &Path) -> AppResult<MetaExtras> {
     let mut out = MetaExtras::default();
     let mut first_user_ts: Option<String> = None;
     let mut first_assistant_ts: Option<String> = None;
@@ -350,7 +345,7 @@ pub fn build_meta_full(path: &Path) -> AppResult<MetaExtras> {
     flush_repeat_run(&mut out, &mut current_tool, &mut current_count);
 
     log::debug!(
-        "build_meta_full {} ({} lines): user={} asst={} err={} skills={} plans={} text={} repeat={} idle={}",
+        "aggregate_claude_openclaw {} ({} lines): user={} asst={} err={} skills={} plans={} text={} repeat={} idle={}",
         path.display(),
         line_idx,
         out.user_message_count,
@@ -490,7 +485,7 @@ fn compute_ms_between(first: &str, last: &str) -> Option<u64> {
 /// - kimi 错误信号是 `tool.result.result.isError == true`,不是 `step.end.finishReason`。
 ///   dcwin11 11 个 session 共 37 个 isError 事件 (5/6/21 三个长 session),finishReason
 ///   真实值仅 `tool_use` (353) 和 `end_turn` (11) 两种,`error` 永远 0 命中。
-fn build_meta_full_kimi(path: &Path) -> AppResult<MetaExtras> {
+pub fn aggregate_kimi(path: &Path) -> AppResult<MetaExtras> {
     use std::collections::{BTreeSet, HashMap};
     let mut out = MetaExtras::default();
     // v0.9.4 + v0.9.5: tool_usage via tool.call.name (per-tool count)
@@ -842,7 +837,7 @@ mod tests {
     use std::io::Write;
 
     fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("ocsv_meta_extras_test");
+        let dir = std::env::temp_dir().join("ocsv_meta_aggregator_test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(name);
         let mut f = std::fs::File::create(&p).unwrap();
@@ -863,7 +858,7 @@ mod tests {
 {"type":"attachment","timestamp":"2026-07-08T10:00:15Z","attachment":{"type":"compact_file_reference","filename":"/z"}}
 "#;
         let p = write_tmp("basic.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.user_message_count, 1);
         assert_eq!(m.assistant_message_count, 2);
         assert_eq!(m.error_count, 1);
@@ -884,7 +879,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:02Z","isSidechain":true,"message":{"role":"assistant"}}
 "#;
         let p = write_tmp("sidechain.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.user_message_count, 1);
         assert_eq!(m.assistant_message_count, 0);
     }
@@ -895,14 +890,14 @@ mod tests {
 {"type":"agent-name","agentName":"second","sessionId":"x"}
 "#;
         let p = write_tmp("agent_name.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.agent_name.as_deref(), Some("first"));
     }
 
     #[test]
     fn empty_file_yields_zeros() {
         let p = write_tmp("empty.jsonl", "");
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.user_message_count, 0);
         assert_eq!(m.assistant_message_count, 0);
         assert_eq!(m.error_count, 0);
@@ -931,7 +926,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:07Z","message":{"role":"assistant","content":[{"type":"toolUse","name":"Read","input":{}}]}}
 "#;
         let p = write_tmp("tool_usage.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         // 按 count 降序
         assert_eq!(
             m.tool_usage,
@@ -954,7 +949,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:05Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{}}]}}
 "#;
         let p = write_tmp("phase_implement.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.phase_hint.as_deref(), Some("implement"));
         assert!(m.phase_detail.as_ref().unwrap().contains("写"));
     }
@@ -971,7 +966,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:06Z","message":{"role":"assistant","content":[]}}
 "#;
         let p = write_tmp("phase_explore.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.phase_hint.as_deref(), Some("explore"));
     }
 
@@ -981,7 +976,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","input":{}}]}}
 "#;
         let p = write_tmp("phase_short.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.phase_hint.as_deref(), Some("short"));
     }
 
@@ -995,7 +990,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:04Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}}]}}
 "#;
         let p = write_tmp("repeat.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.repeat_run_count, 1);
         assert_eq!(m.repeat_run_max_tool.as_deref(), Some("Bash"));
         assert_eq!(m.repeat_run_max_count, Some(4));
@@ -1010,7 +1005,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:07:10Z","message":{"role":"assistant"}}
 "#;
         let p = write_tmp("idle.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.idle_gap_count, 1);
         assert_eq!(m.idle_gap_max_ms, Some(6 * 60 * 1000));
     }
@@ -1024,7 +1019,7 @@ mod tests {
 {"type":"user","timestamp":"2026-07-08T10:00:03Z","message":{"role":"user"}} // user 没 model, 不算
 "#;
         let p = write_tmp("models.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(
             m.available_models,
             vec!["claude-opus-4".to_string(), "claude-sonnet-5".to_string()]
@@ -1043,7 +1038,7 @@ mod tests {
 {"type":"user","timestamp":"2026-07-08T10:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_3","content":"missing","is_error":true}]}}
 "#;
         let p = write_tmp("tool_error.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         // tool_error 按 count desc, 字典序 tie-break
         assert_eq!(
             m.tool_error,
@@ -1065,7 +1060,7 @@ mod tests {
 {"type":"user","timestamp":"2026-07-08T10:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu_orphan","content":"x","is_error":true}]}}
 "#;
         let p = write_tmp("tool_error_orphan.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         // tu_orphan 找不到对应 name → 不累加
         assert!(m.tool_error.is_empty());
     }
@@ -1079,7 +1074,7 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:02Z","parentUuid":"uuid-c","message":{"role":"assistant","content":[]}}
 "#;
         let p = write_tmp("parent_uuids.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         assert_eq!(m.parent_uuids, vec!["uuid-a", "uuid-b", "uuid-c"]);
     }
 
@@ -1092,7 +1087,7 @@ mod tests {
 {"type":"message","timestamp":"2026-07-08T10:00:03Z","parentId":"uuid-b","message":{"role":"assistant"}}
 "#;
         let p = write_tmp("parent_uuids_dedup.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         // BTreeSet 字典序 ('oc:' ASCII 96 < 'u' ASCII 117): oc:uuid-b < uuid-a
         assert_eq!(m.parent_uuids, vec!["oc:uuid-b", "uuid-a"]);
     }
@@ -1105,12 +1100,12 @@ mod tests {
 {"type":"assistant","timestamp":"2026-07-08T10:00:02Z","parentUuid":"real-uuid","message":{"role":"assistant","content":[]}}
 "#;
         let p = write_tmp("parent_uuids_empty.jsonl", jsonl);
-        let m = build_meta_full(&p).unwrap();
+        let m = aggregate_claude_openclaw(&p).unwrap();
         // 两个空字符串不入集合, 只留真实那个
         assert_eq!(m.parent_uuids, vec!["real-uuid"]);
     }
 
-    // v0.8.10: 锁住 PARENT_KEY const 值 — 改了 const 必然要更新 build_meta_full 引用
+    // v0.8.10: 锁住 PARENT_KEY const 值 — 改了 const 必然要更新 aggregate_claude_openclaw 引用
     // (跟 TOOL_USE_ALIASES 测试同 pattern)
     #[test]
     fn parent_key_const_values_locked() {
@@ -1131,7 +1126,7 @@ mod tests {
     // ===== v0.9.4: kimi tool_usage 跨 session 聚合 =====
 
     #[test]
-    fn build_meta_full_kimi_aggregates_tool_usage() {
+    fn aggregate_kimi_aggregates_tool_usage() {
         let jsonl = "\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Bash\"},\"time\":1}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"name\":\"Bash\"},\"time\":2}\n\
@@ -1142,7 +1137,7 @@ mod tests {
 {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":7}\n\
 ";
         let p = write_tmp(".kimi_tools.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         // tool_usage 按 count desc 排序: Read=3, Bash=2
         assert_eq!(
             extras.tool_usage,
@@ -1159,14 +1154,14 @@ mod tests {
     }
 
     #[test]
-    fn build_meta_full_kimi_ignores_non_tool_call_loop_events() {
+    fn aggregate_kimi_ignores_non_tool_call_loop_events() {
         let jsonl = "\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\"},\"time\":1}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"text\":\"x\"},\"time\":2}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\"},\"time\":3}\n\
 {\"type\":\"context.append_message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"},\"time\":4}\n";
         let p = write_tmp(".kimi_no_tools.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         // 只有 step/append_message 事件,tool_usage 空
         assert!(extras.tool_usage.is_empty());
     }
@@ -1175,14 +1170,14 @@ mod tests {
 
     /// C: usage.record.model 去重 → available_models
     #[test]
-    fn build_meta_full_kimi_v095_collects_available_models() {
+    fn aggregate_kimi_v095_collects_available_models() {
         let jsonl = "\
 {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":1}\n\
 {\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":50,\"output\":30,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
 {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":80,\"output\":40,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":3}\n\
 {\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":60,\"output\":35,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":4}\n";
         let p = write_tmp(".kimi_models.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         // BTreeSet 字典序: "deepseek-v4-flash" < "kimi-k2" (d < k)
         assert_eq!(
             extras.available_models,
@@ -1193,7 +1188,7 @@ mod tests {
     /// D: content.part.part.type=="think" 累加 → thinking_count
     /// (同时验证 part.type=="text" 不计入)
     #[test]
-    fn build_meta_full_kimi_v095_counts_thinking_parts() {
+    fn aggregate_kimi_v095_counts_thinking_parts() {
         let jsonl = "\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"think\":\"thinking 1\"}},\"time\":1}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"text 1\"}},\"time\":2}\n\
@@ -1201,7 +1196,7 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"think\":\"thinking 3\"}},\"time\":4}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"text 2\"}},\"time\":5}\n";
         let p = write_tmp(".kimi_thinking.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         // 3 个 think + 2 个 text → thinking_count = 3
         assert_eq!(extras.thinking_count, 3);
     }
@@ -1210,7 +1205,7 @@ mod tests {
     /// (first step.end.time - first turn.prompt.time)
     /// v0.9.7: `time` 字段移到顶层 (跟真实 kimi wire 一致;v0.9.5 误放 event 内)
     #[test]
-    fn build_meta_full_kimi_v095_computes_duration_and_latency() {
+    fn aggregate_kimi_v095_computes_duration_and_latency() {
         // first turn.prompt.time = 1000
         // first step.end.time = 1500 (latency = 500ms)
         // second step.end.time = 2000
@@ -1221,14 +1216,14 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-2\",\"finishReason\":\"tool_use\"},\"time\":2000}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-3\",\"finishReason\":\"stop\"},\"time\":7000}\n";
         let p = write_tmp(".kimi_timing.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         assert_eq!(extras.first_response_latency_ms, Some(500));
         assert_eq!(extras.duration_seconds, Some(5));
     }
 
     /// A: step.end.finishReason=="error" → error_count + 配对 tool.call → tool_error
     #[test]
-    fn build_meta_full_kimi_v095_aggregates_tool_error_from_finish_reason() {
+    fn aggregate_kimi_v095_aggregates_tool_error_from_finish_reason() {
         // step-1: 1 个 Bash tool.call, finishReason=tool_use → ok
         // step-2: 1 个 Read tool.call, finishReason=error → Read 累计 +1
         // step-3: 1 个 Bash tool.call, finishReason=tool_use → ok
@@ -1243,7 +1238,7 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"call-3\",\"toolCallId\":\"call-3\",\"name\":\"Bash\",\"stepUuid\":\"step-3\",\"time\":8}}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-3\",\"finishReason\":\"tool_use\",\"time\":9}}\n";
         let p = write_tmp(".kimi_errors.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         assert_eq!(extras.error_count, 1, "1 个 step.finishReason=error");
         assert_eq!(
             extras.tool_error,
@@ -1256,7 +1251,7 @@ mod tests {
 
     /// A 边界: 1 个 step 含 2 个 tool, error → 2 个 tool 都入 error count
     #[test]
-    fn build_meta_full_kimi_v095_error_step_with_multiple_tools() {
+    fn aggregate_kimi_v095_error_step_with_multiple_tools() {
         // step-1 含 Bash + Read → error 时两个 tool name 都 +1
         let jsonl = "\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"step-1\",\"time\":1}}\n\
@@ -1264,7 +1259,7 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Read\",\"stepUuid\":\"step-1\",\"time\":3}}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"step-1\",\"finishReason\":\"error\",\"time\":4}}\n";
         let p = write_tmp(".kimi_error_multi.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         assert_eq!(extras.error_count, 1);
         // 字典序: Bash < Read
         assert_eq!(
@@ -1276,7 +1271,7 @@ mod tests {
     /// B: repeat_run (consecutive tool.call 同名 ≥3) + idle_gap (相邻 step.end.time gap ≥ 5min)
     /// v0.9.7: `time` 字段移到顶层 (跟真实 kimi wire 一致)
     #[test]
-    fn build_meta_full_kimi_v095_detects_repeat_run_and_idle_gap() {
+    fn aggregate_kimi_v095_detects_repeat_run_and_idle_gap() {
         // step-1: Bash × 3 (repeat) + Read × 1 → repeat_run_count = 1, max_tool = Bash, max_count = 3
         // step-2: Bash × 2 (跨 step,不连续) → 不重复计
         // step-3: 跟 step-2 间隔 10 分钟 (> 5min) → idle_gap_count = 1
@@ -1294,7 +1289,7 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.begin\",\"uuid\":\"s3\"},\"time\":601000}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"stop\"},\"time\":601500}\n";
         let p = write_tmp(".kimi_repeat_idle.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         // repeat_run: s1 里 Bash × 3, s2 里 Bash × 2 不连续(被 step.end flush) → repeat_run_count = 1
         assert_eq!(extras.repeat_run_count, 1);
         assert_eq!(extras.repeat_run_max_tool.as_deref(), Some("Bash"));
@@ -1306,14 +1301,14 @@ mod tests {
 
     /// B 边界: 不足 REPEAT_RUN_MIN=3 不计 repeat run
     #[test]
-    fn build_meta_full_kimi_v095_repeat_run_below_threshold() {
+    fn aggregate_kimi_v095_repeat_run_below_threshold() {
         // Bash × 2 → < 3,不计入 repeat
         let jsonl = "\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c1\",\"toolCallId\":\"c1\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":1}}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"c2\",\"toolCallId\":\"c2\",\"name\":\"Bash\",\"stepUuid\":\"s1\",\"time\":2}}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s1\",\"finishReason\":\"tool_use\",\"time\":3}}\n";
         let p = write_tmp(".kimi_no_repeat.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         assert_eq!(extras.repeat_run_count, 0);
     }
 
@@ -1328,7 +1323,7 @@ mod tests {
 {\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:01:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"t2\"},{\"type\":\"text\",\"text\":\"y\"}]}}\n\
 {\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:02:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"t3\"},{\"type\":\"text\",\"text\":\"z\"}]}}\n";
         let p = write_tmp("claude_thinking.jsonl", jsonl);
-        let m = build_meta_full(&p).expect("build_meta_full");
+        let m = aggregate_claude_openclaw(&p).expect("aggregate_claude_openclaw");
         assert_eq!(m.thinking_count, 3);
         assert_eq!(m.assistant_message_count, 3);
     }
@@ -1340,7 +1335,7 @@ mod tests {
 {\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"a\"},{\"type\":\"thinking\",\"thinking\":\"b\"},{\"type\":\"text\",\"text\":\"x\"}]}}\n\
 {\"type\":\"assistant\",\"timestamp\":\"2026-07-08T10:01:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"c\"},{\"type\":\"text\",\"text\":\"y\"}]}}\n";
         let p = write_tmp("claude_multi_thinking.jsonl", jsonl);
-        let m = build_meta_full(&p).expect("build_meta_full");
+        let m = aggregate_claude_openclaw(&p).expect("aggregate_claude_openclaw");
         assert_eq!(m.thinking_count, 3);
     }
 
@@ -1354,7 +1349,7 @@ mod tests {
 {\"type\":\"message\",\"id\":\"m1\",\"timestamp\":\"2026-07-08T10:00:00Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"},{\"type\":\"toolUse\",\"id\":\"tu1\",\"name\":\"Read\",\"input\":{}}]}}\n\
 {\"type\":\"message\",\"id\":\"m2\",\"timestamp\":\"2026-07-08T10:01:00Z\",\"message\":{\"role\":\"user\",\"content\":\"ok\"}}\n";
         let p = write_tmp("openclaw_no_thinking.jsonl", jsonl);
-        let m = build_meta_full(&p).expect("build_meta_full");
+        let m = aggregate_claude_openclaw(&p).expect("aggregate_claude_openclaw");
         assert_eq!(m.thinking_count, 0);
     }
 
@@ -1364,7 +1359,7 @@ mod tests {
     /// (不是 `step.end.finishReason == "error"`,后者在 11 个 dcwin11 session 0 命中)。
     /// 验证 isError → error_count + per-tool breakdown。
     #[test]
-    fn build_meta_full_kimi_v097_detects_iserror_tool_results() {
+    fn aggregate_kimi_v097_detects_iserror_tool_results() {
         // step-1: 1 个 Bash,result.isError=true → error_count=1, tool_error[Bash]=1
         // step-2: 1 个 Read,result.isError=false → 不算 error
         // step-3: 1 个 Grep,result.isError=true → error_count=2, tool_error[Grep]=1
@@ -1379,7 +1374,7 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.result\",\"parentUuid\":\"c3\",\"toolCallId\":\"c3\",\"result\":{\"output\":\"no match\",\"isError\":true},\"time\":3100}}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"tool_use\",\"time\":3200}}\n";
         let p = write_tmp(".kimi_iserror.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         assert_eq!(extras.error_count, 2, "Bash + Grep 各 1 个 isError");
         // Bash 和 Grep 各 1 次,desc 排: count 相同 → 字典序 Bash < Grep
         assert_eq!(
@@ -1394,7 +1389,7 @@ mod tests {
     /// 不在嵌套 `event` 内。v0.9.5 误读 `ev.get("time")` 永远 None,导致 duration/latency
     /// 在真实数据上全 default。验证顶层 time 正确传递到 first/last step.end.time。
     #[test]
-    fn build_meta_full_kimi_v097_uses_top_level_time_field() {
+    fn aggregate_kimi_v097_uses_top_level_time_field() {
         // 3 个 step.end,顶层 time: 1000, 2000, 3000
         // duration = 3000 - 1000 = 2000ms → 2s
         // first_response_latency = 1000 - 500 = 500ms (turn.prompt at 500)
@@ -1404,7 +1399,7 @@ mod tests {
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s2\",\"finishReason\":\"end_turn\"},\"time\":2000}\n\
 {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"step.end\",\"uuid\":\"s3\",\"finishReason\":\"tool_use\"},\"time\":3000}\n";
         let p = write_tmp(".kimi_toplevel_time.jsonl", jsonl);
-        let extras = build_meta_full(&p).expect("build_meta_full");
+        let extras = aggregate_kimi(&p).expect("aggregate_kimi");
         assert_eq!(extras.duration_seconds, Some(2));
         assert_eq!(extras.first_response_latency_ms, Some(500));
     }
@@ -1412,7 +1407,7 @@ mod tests {
     /// 真实样本: dcwin11 das-portal session (1096 lines, 5 errors Bash×4 + Grep×1)
     /// 验证 5 errors、thinking_count=125、step_end=124、turn_prompts=12、model=deepseek-v4-flash
     #[test]
-    fn build_meta_full_kimi_v097_dcwin11_das_portal_real_sample() {
+    fn aggregate_kimi_v097_dcwin11_das_portal_real_sample() {
         // 使用 commit 时一并 copy 的真实样本 (<redacted-fixture>-main.jsonl)
         // 真实数据下 v0.9.5 会 0 errors (finishReason 没 "error"), v0.9.7 修正后 5 errors。
         let path = std::path::Path::new("../<redacted-fixture>-main.jsonl");
@@ -1421,7 +1416,7 @@ mod tests {
             eprintln!("skip: {} not found", path.display());
             return;
         }
-        let extras = build_meta_full_kimi(path).expect("build_meta_full_kimi");
+        let extras = aggregate_kimi(path).expect("aggregate_kimi");
         assert_eq!(
             extras.error_count, 5,
             "5 个 tool.result.isError=true (Bash×4 + Grep×1)"
@@ -1452,13 +1447,13 @@ mod tests {
     /// 真实样本: dcwin11 platform 5-agent session main wire (859 lines, 6 errors)
     /// 验证多 agent 场景 + 0 thinking_count (model=minimax-m3 不产 think part)
     #[test]
-    fn build_meta_full_kimi_v097_dcwin11_platform_main_real_sample() {
+    fn aggregate_kimi_v097_dcwin11_platform_main_real_sample() {
         let path = std::path::Path::new("../<redacted-fixture>-main.jsonl");
         if !path.exists() {
             eprintln!("skip: {} not found", path.display());
             return;
         }
-        let extras = build_meta_full_kimi(path).expect("build_meta_full_kimi");
+        let extras = aggregate_kimi(path).expect("aggregate_kimi");
         assert_eq!(
             extras.error_count, 6,
             "6 个 tool.result.isError=true (Read×1 + Grep×2 + Edit×3)"
@@ -1479,7 +1474,7 @@ mod tests {
     /// 真实样本: dcwin11 bpm 大 session (3431 lines, 21 errors, 364 thinking)
     /// 性能 + 大数据量 sanity check,确保循环不 OOM/panic
     #[test]
-    fn build_meta_full_kimi_v097_dcwin11_bpm_large_real_sample() {
+    fn aggregate_kimi_v097_dcwin11_bpm_large_real_sample() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -1489,7 +1484,7 @@ mod tests {
             return;
         }
         // 已有 wire-with-usage.jsonl (v0.9.3 fixture),254KB,验证大文件能跑通 + 思考数 ≥ 几十
-        let extras = build_meta_full_kimi(&path).expect("build_meta_full_kimi");
+        let extras = aggregate_kimi(&path).expect("aggregate_kimi");
         // 没有 isError 的 fixture 走 v0.9.5 path,error_count=0 (因为 isError 新分支不命中)
         // thinking_count 应该 > 0 (kimi fixture 含 think part)
         assert!(
@@ -1508,7 +1503,7 @@ mod tests {
     ///   inputOther:2.3M / output:716k / inputCacheRead:30.9M / inputCacheCreation:0
     /// - meta_banner: {protocol:"1.4", config_change_count:>0, approval_count:20, compaction_count:22}
     #[test]
-    fn build_meta_full_kimi_v098_dcwin11_bpm_aggregates_three_fields() {
+    fn aggregate_kimi_v098_dcwin11_bpm_aggregates_three_fields() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
@@ -1517,7 +1512,7 @@ mod tests {
             eprintln!("skip: {} not found", path.display());
             return;
         }
-        let extras = build_meta_full_kimi(&path).expect("build_meta_full_kimi 大文件");
+        let extras = aggregate_kimi(&path).expect("aggregate_kimi 大文件");
 
         // todo_summary: bpm 真实有 55 个 todo update
         let todo = extras
@@ -1572,12 +1567,12 @@ mod tests {
 
     /// 单元 fixture 测试: 单条 tools.update_store{key:"todo"} → todo_summary 提取
     #[test]
-    fn build_meta_full_kimi_v098_aggregates_todo_from_in_memory() {
+    fn aggregate_kimi_v098_aggregates_todo_from_in_memory() {
         let tmp = std::env::temp_dir().join(format!("ocsv_kimi_todo_{}.jsonl", std::process::id()));
         let content = "{\"type\":\"metadata\",\"protocol_version\":\"1.4\",\"created_at\":1,\"time\":100}\n\
                        {\"type\":\"tools.update_store\",\"key\":\"todo\",\"value\":[{\"title\":\"A\",\"status\":\"done\"},{\"title\":\"B\",\"status\":\"in_progress\"},{\"title\":\"C\",\"status\":\"pending\"}],\"time\":200}\n";
         std::fs::write(&tmp, content).unwrap();
-        let extras = build_meta_full_kimi(&tmp).expect("build");
+        let extras = aggregate_kimi(&tmp).expect("build");
         std::fs::remove_file(&tmp).ok();
         let todo = extras.todo_summary.expect("todo 应有");
         assert_eq!(todo.total, 3);
@@ -1588,7 +1583,7 @@ mod tests {
 
     /// 单元 fixture 测试: usage.record{usageScope:"turn"} 累加,不累计 scope=="context" 的
     #[test]
-    fn build_meta_full_kimi_v098_aggregates_tokens_only_turn_scope() {
+    fn aggregate_kimi_v098_aggregates_tokens_only_turn_scope() {
         let tmp =
             std::env::temp_dir().join(format!("ocsv_kimi_token_{}.jsonl", std::process::id()));
         let content = "{\"type\":\"metadata\",\"protocol_version\":\"1.4\",\"created_at\":1,\"time\":100}\n\
@@ -1596,7 +1591,7 @@ mod tests {
                        {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":200,\"output\":80,\"inputCacheRead\":2000,\"inputCacheCreation\":0},\"usageScope\":\"context\",\"time\":300}\n\
                        {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":150,\"output\":40,\"inputCacheRead\":500,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":400}\n";
         std::fs::write(&tmp, content).unwrap();
-        let extras = build_meta_full_kimi(&tmp).expect("build");
+        let extras = aggregate_kimi(&tmp).expect("build");
         std::fs::remove_file(&tmp).ok();
         let tok = extras.kimi_token_usage.expect("token 应有");
         // 累加 2 条 turn: input=100+150=250, output=50+40=90, cache_read=1000+500=1500

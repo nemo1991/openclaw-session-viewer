@@ -22,12 +22,14 @@ context(s) relevant to the topic at hand.
 monorepo layout, CI, etc.). Per-context ADRs live under `src/<context>/docs/adr/`
 (e.g. `src-tauri/docs/adr/` for parser-layer decisions).
 
-## M9 parallel-run status (v0.9.26)
+## M10 single-pass cutover status (v0.9.27)
 
-`src-tauri` is mid-way through collapsing the two-pass sync architecture
-(`db/sync.rs::Two-pass sync` per `src-tauri/CONTEXT.md`). v0.9.26 introduces
-a parallel-run mode where 3 kimi-only SessionMeta fields are computed by both
-Pass 1 (`scan_kimi_usage`) and Pass 2 (`meta_extras::build_meta_full_kimi`),
-and any divergence is `log::warn!`d in debug builds. M10 (v0.9.27) will cut
-over to Pass 1 only and delete `meta_extras.rs`. Until then, both paths run
-side-by-side — there is no frontend-visible behavior change.
+`src-tauri` has collapsed the two-pass sync architecture
+(`db/sync.rs::Two-pass sync` per `src-tauri/CONTEXT.md`). v0.9.27 (M10)
+deletes the Pass 2 enrichment loop and `meta_extras.rs` entirely —
+`upsert_session_meta` now writes all 47 columns in a single INSERT,
+and `parser::meta_aggregator::{aggregate_claude_openclaw, aggregate_kimi}`
+produces the full SessionMeta struct in one file scan. v0.9.26 (M9)
+validated byte-identity via parallel-run for 3 kimi fields before the
+cutover; that debug-check is now gone. The single-pass sync runs as the
+only path; there is no frontend-visible behavior change.
