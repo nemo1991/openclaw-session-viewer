@@ -10,6 +10,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde_json::Value as JsonValue;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -320,11 +321,19 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
 
     // v0.8.4 item 2: 第二阶段 enrichment — 对本轮同步成功的 jsonl 全量扫描, 落派生指标
     // 单文件失败不会让 sync_state 阻塞; 用 sync_one_file 成功名单, 失败文件下轮再试
+    //
+    // v0.9.26 (M9-D): 加 Instant::now() timing baseline。3 个点:loop_start (line 325) /
+    // per_file_start (line 329) / loop_end (line 425)。慢文件阈值 500ms warn。
+    // Pass 1 (sync_one_file head scan) 主导 < 1ms,无需单独计时 — Pass 1 cost 隐式为
+    // sync_total − enrich_total。Baseline 给 M10 删 meta_extras.rs 后对照用。
     if !synced_paths.is_empty() {
         let count = synced_paths.len();
+        let enrich_loop_start = Instant::now();
         log::info!("v0.8.4 enrichment: 扫描 {count} 个 jsonl 提取派生指标 (上限 5000 行/文件)");
+        let mut slow_files: u32 = 0;
         for jsonl_path in &synced_paths {
             let p = std::path::Path::new(jsonl_path);
+            let per_file_start = Instant::now();
             let extras = match crate::parser::meta_extras::build_meta_full(p) {
                 Ok(e) => e,
                 Err(e) => {
@@ -332,6 +341,15 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
                     continue;
                 }
             };
+            let per_file_elapsed = per_file_start.elapsed();
+            if per_file_elapsed > std::time::Duration::from_millis(500) {
+                slow_files += 1;
+                log::warn!(
+                    "build_meta_full 慢文件 {:?}: {:?} (>500ms)",
+                    p,
+                    per_file_elapsed
+                );
+            }
             // 用 jsonl_path 反查 session_id (build_meta_full 不返回 sid)
             let sid: Option<String> = state
                 .db
@@ -421,6 +439,13 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
                 Ok::<_, AppError>(())
             });
         }
+        let enrich_loop_elapsed = enrich_loop_start.elapsed();
+        log::info!(
+            "v0.8.4 enrichment 完成: {} 个文件, 总耗时 {:?}, 慢文件 {} 个 (>500ms)",
+            count,
+            enrich_loop_elapsed,
+            slow_files
+        );
     }
 
     let now = SystemTime::now()

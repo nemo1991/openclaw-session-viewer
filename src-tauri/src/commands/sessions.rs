@@ -262,55 +262,92 @@ pub(crate) fn scan_full_stats(
 
 /// v0.9.3: 扫 kimi wire.jsonl 聚合 `usage.record` 事件。
 ///
-/// 返回 `(Option<TokenUsage>, Option<String>)`:
+/// v0.9.26 (M9-A): 返回扩成 4-tuple,加 available_models + thinking_count 字段
+/// (mirror `parser/meta_extras.rs:578-584` thinking_count + `:810` available_models),
+/// 为 M9 parallel-run 验证 Pass 1/Pass 2 byte-identity 用。M9 完成后再删 `meta_extras.rs`。
+///
+/// 返回 `(Option<TokenUsage>, Vec<String>, u32, Option<String>)`:
 /// - TokenUsage: 累加 `usageScope=="turn"` 的 4 个字段 (input/output/cache_read/cache_write)
 ///   跳过 `usageScope=="session"` — 是 cache pool snapshot (~80K 不随时间变),
 ///   sum 全部会重复计入 cache 池。
+/// - available_models: 全 model 去重 + 字典序 (BTreeSet→Vec),
+///   跟 Pass 2 `meta_extras.rs:810` 同 order,parallel-run 对齐
+/// - thinking_count: `context.append_loop_event.event.type=="content.part"` 且
+///   `event.part.type=="think"` 累加,kimi 字段名 "think" (非 "thinking")
 /// - primary_model: 首个 usage.record.model (单 model,可作为 fallback)
+// v0.9.26 (M9-A): 4-tuple 含 Vec<String> + Option<...>,clippy::type_complexity 警告,
+// 跟 plan 一致 — 没拆成新 struct,#[allow] 即可。
+#[allow(clippy::type_complexity)]
 pub(crate) fn scan_kimi_usage(
     jsonl_path: &Path,
-) -> AppResult<(Option<crate::model::TokenUsage>, Option<String>)> {
+) -> AppResult<(
+    Option<crate::model::TokenUsage>,
+    Vec<String>,
+    u32,
+    Option<String>,
+)> {
     let mut input: u64 = 0;
     let mut output: u64 = 0;
     let mut cache_read: u64 = 0;
     let mut cache_write: u64 = 0;
-    let mut model: Option<String> = None;
+    let mut model_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut primary_model: Option<String> = None;
     let mut saw_any: bool = false;
+    let mut thinking_count: u32 = 0;
 
     jsonl::for_each_line(jsonl_path, |_, _, v| {
         let obj = match v.as_object() {
             Some(o) => o,
             None => return,
         };
-        if obj.get("type").and_then(|x| x.as_str()) != Some("usage.record") {
-            return;
+        match obj.get("type").and_then(|x| x.as_str()) {
+            Some("usage.record") => {
+                // v0.9.3: usageScope=='session' 跳过 — 是 cache pool snapshot,
+                // 不是 per-turn delta。turn-scope 是确定进出。
+                let scope = obj.get("usageScope").and_then(|x| x.as_str()).unwrap_or("");
+                if scope != "turn" {
+                    return;
+                }
+                saw_any = true;
+                if let Some(m) = obj.get("model").and_then(|x| x.as_str()) {
+                    if primary_model.is_none() {
+                        primary_model = Some(m.to_string());
+                    }
+                    model_set.insert(m.to_string());
+                }
+                let u = match obj.get("usage") {
+                    Some(u) => u,
+                    None => return,
+                };
+                input =
+                    input.saturating_add(u.get("inputOther").and_then(|x| x.as_u64()).unwrap_or(0));
+                output =
+                    output.saturating_add(u.get("output").and_then(|x| x.as_u64()).unwrap_or(0));
+                cache_read = cache_read.saturating_add(
+                    u.get("inputCacheRead")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0),
+                );
+                cache_write = cache_write.saturating_add(
+                    u.get("inputCacheCreation")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0),
+                );
+            }
+            Some("context.append_loop_event") => {
+                // v0.9.26 (M9-A): mirror meta_extras.rs:578-584
+                if let Some(ev) = obj.get("event") {
+                    if ev.get("type").and_then(|x| x.as_str()) == Some("content.part") {
+                        if let Some(part) = ev.get("part") {
+                            if part.get("type").and_then(|x| x.as_str()) == Some("think") {
+                                thinking_count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
-        // v0.9.3: usageScope=='session' 跳过 — 是 cache pool snapshot,
-        // 不是 per-turn delta。turn-scope 是确定进出。
-        let scope = obj.get("usageScope").and_then(|x| x.as_str()).unwrap_or("");
-        if scope != "turn" {
-            return;
-        }
-        saw_any = true;
-        if model.is_none() {
-            model = obj.get("model").and_then(|x| x.as_str()).map(String::from);
-        }
-        let u = match obj.get("usage") {
-            Some(u) => u,
-            None => return,
-        };
-        input = input.saturating_add(u.get("inputOther").and_then(|x| x.as_u64()).unwrap_or(0));
-        output = output.saturating_add(u.get("output").and_then(|x| x.as_u64()).unwrap_or(0));
-        cache_read = cache_read.saturating_add(
-            u.get("inputCacheRead")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
-        );
-        cache_write = cache_write.saturating_add(
-            u.get("inputCacheCreation")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(0),
-        );
     })?;
 
     let usage = if saw_any {
@@ -323,7 +360,8 @@ pub(crate) fn scan_kimi_usage(
     } else {
         None
     };
-    Ok((usage, model))
+    let available_models: Vec<String> = model_set.into_iter().collect();
+    Ok((usage, available_models, thinking_count, primary_model))
 }
 
 pub(crate) fn build_claude_session_meta(
@@ -870,6 +908,46 @@ pub(crate) fn build_kimi_session_meta_from_path(
 pub(crate) fn build_kimi_session_meta(
     ks: &crate::fs::walker::KimiSession,
 ) -> AppResult<SessionMeta> {
+    let meta = build_kimi_session_meta_impl(ks)?;
+    // v0.9.26 (M9-C): debug-only parallel-run check — 跟 Pass 2 (meta_extras.rs::build_meta_full_kimi)
+    // 比对 3 字段,kimi_token_usage / available_models / thinking_count。release build 不编译,
+    // 0 生产开销。预期两边 byte-identical (scan_kimi_usage 跟 build_meta_full_kimi 扫全文件且同逻辑)。
+    // 若发现 mismatch,记日志 → 检查 kimi.rs wire event 形状漂移或 meta_extras.rs 计数逻辑偏移。
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(pass2) =
+            crate::parser::meta_extras::build_meta_full(std::path::Path::new(&meta.jsonl_path))
+        {
+            if pass2.kimi_token_usage != meta.kimi_token_usage {
+                log::warn!(
+                    "[M9 parallel-run] kimi_token_usage mismatch @ {:?}: pass1={:?} pass2={:?}",
+                    meta.jsonl_path,
+                    meta.kimi_token_usage,
+                    pass2.kimi_token_usage,
+                );
+            }
+            if pass2.available_models != meta.available_models.clone().unwrap_or_default() {
+                log::warn!(
+                    "[M9 parallel-run] available_models mismatch @ {:?}: pass1={:?} pass2={:?}",
+                    meta.jsonl_path,
+                    meta.available_models,
+                    pass2.available_models,
+                );
+            }
+            if pass2.thinking_count != meta.thinking_count.unwrap_or(0) {
+                log::warn!(
+                    "[M9 parallel-run] thinking_count mismatch @ {:?}: pass1={:?} pass2={:?}",
+                    meta.jsonl_path,
+                    meta.thinking_count,
+                    pass2.thinking_count,
+                );
+            }
+        }
+    }
+    Ok(meta)
+}
+
+fn build_kimi_session_meta_impl(ks: &crate::fs::walker::KimiSession) -> AppResult<SessionMeta> {
     let jsonl_path = ks.main_wire.as_ref().ok_or_else(|| {
         AppError::Invalid(format!("kimi session 缺 main wire: {:?}", ks.session_dir))
     })?;
@@ -901,7 +979,11 @@ pub(crate) fn build_kimi_session_meta(
     let (first_ts, last_ts, message_count) = scan_full_stats(jsonl_path, "kimi")?;
 
     // v0.9.3: 聚合 usage.record (turn-scope only) → total_tokens + primary_model fallback
-    let (kimi_total_tokens, kimi_model_from_usage) = scan_kimi_usage(jsonl_path)?;
+    // v0.9.26 (M9-B): wire 3 字段 — thinking_count 走 upsert_session_meta 写入,
+    // available_models + kimi_token_usage 仅写到 SessionMeta struct(upsert 不写这俩列),
+    // 等 M9-C 的 debug-build parallel-check 跟 meta_extras.rs Pass 2 比对
+    let (kimi_total_tokens, kimi_available_models, kimi_thinking_count, kimi_model_from_usage) =
+        scan_kimi_usage(jsonl_path)?;
 
     // quick path 50 行: title / first_prompt / primary_model / thinking/tool_use
     let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
@@ -1010,7 +1092,7 @@ pub(crate) fn build_kimi_session_meta(
         title,
         live_pid, // v0.9.7: mtime heuristic
         subagent_dir,
-        total_tokens: kimi_total_tokens, // v0.9.3: 聚合 usage.record (turn-scope only)
+        total_tokens: kimi_total_tokens.clone(), // v0.9.3: 聚合 usage.record (turn-scope only) — v0.9.26 M9-B 也给 kimi_token_usage 用
         primary_model,
         agent_id: Some("main".to_string()),
         agent_label: None,
@@ -1018,7 +1100,7 @@ pub(crate) fn build_kimi_session_meta(
         agent_target: None,
         first_prompt: first_prompt.clone(),
         last_message_at: last_ts.clone(),
-        thinking_count: None, // quick path 不数 content.part thinking
+        thinking_count: Some(kimi_thinking_count), // v0.9.26 (M9-B): pass-1 直接算
         tool_use_count: Some(tool_use_count),
         top_tools: if top_tools.is_empty() {
             None
@@ -1056,12 +1138,13 @@ pub(crate) fn build_kimi_session_meta(
         repeat_run_max_count: None,
         idle_gap_count: None,
         idle_gap_max_ms: None,
-        available_models: None,
+        available_models: Some(kimi_available_models), // v0.9.26 (M9-B): pass-1 BTreeSet lex 序
         tool_error: None,
         parent_uuids_text: None,
-        // v0.9.8: kimi 专属聚合字段,quick path 不算,留给 enrich 二阶段
+        // v0.9.8: kimi 专属聚合字段 — todo_summary + meta_banner quick path 不算,
+        // 留给 enrich 二阶段。kimi_token_usage v0.9.26 (M9-B) 由 pass-1 写入 SessionMeta。
         todo_summary: None,
-        kimi_token_usage: None,
+        kimi_token_usage: kimi_total_tokens.clone(), // v0.9.26 (M9-B): pass-1 写入 struct(等 debug-check 比对)
         meta_banner: None,
     })
 }
@@ -1813,7 +1896,7 @@ mod tests {
              {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":200,\"output\":80,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
              {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":1000,\"output\":500,\"inputCacheRead\":100,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":3}\n",
         );
-        let (usage, model) = scan_kimi_usage(wire.path()).expect("scan");
+        let (usage, models, thinking_count, model) = scan_kimi_usage(wire.path()).expect("scan");
         let u = usage.expect("saw turn records");
         // total = 175 + 280 = 455
         assert_eq!(u.input, 300);
@@ -1821,6 +1904,9 @@ mod tests {
         assert_eq!(u.cache_read, 20);
         assert_eq!(u.cache_write, 5);
         assert_eq!(model.as_deref(), Some("deepseek-v4-flash"));
+        // v0.9.26 (M9-A): 新字段 — fixture 只有 1 个 model,无 think events
+        assert_eq!(models, vec!["deepseek-v4-flash".to_string()]);
+        assert_eq!(thinking_count, 0);
     }
 
     /// 无 usage.record → None (兼容 v0.9.0 老 session)
@@ -1830,9 +1916,12 @@ mod tests {
             "{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\"}}\n\
              {\"type\":\"context.append_message\",\"message\":{\"role\":\"assistant\"}}\n",
         );
-        let (usage, model) = scan_kimi_usage(wire.path()).expect("scan");
+        let (usage, models, thinking_count, model) = scan_kimi_usage(wire.path()).expect("scan");
         assert!(usage.is_none(), "no usage.record → total_tokens None");
         assert!(model.is_none());
+        // v0.9.26 (M9-A): 新字段 — 无 usage.record + 无 think events
+        assert!(models.is_empty());
+        assert_eq!(thinking_count, 0);
     }
 
     /// primary_model 在多 model 时取首个
@@ -1842,8 +1931,11 @@ mod tests {
             "{\"type\":\"usage.record\",\"model\":\"model-A\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":1}\n\
              {\"type\":\"usage.record\",\"model\":\"model-B\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n",
         );
-        let (_usage, model) = scan_kimi_usage(wire.path()).expect("scan");
+        let (_usage, models, thinking_count, model) = scan_kimi_usage(wire.path()).expect("scan");
         assert_eq!(model.as_deref(), Some("model-A"));
+        // v0.9.26 (M9-A): 新字段 — 2 个 model,BTreeSet lex 序
+        assert_eq!(models, vec!["model-A".to_string(), "model-B".to_string()]);
+        assert_eq!(thinking_count, 0);
     }
 
     /// build_kimi_session_meta 集成:total_tokens 透传 usage.record 数字
@@ -1881,5 +1973,191 @@ mod tests {
         assert_eq!(u.cache_write, 5);
         // primary_model: llm.request.model 优先 (deepseek-v4-flash) — 与 usage.record.model 一致
         assert_eq!(sm.primary_model.as_deref(), Some("deepseek-v4-flash"));
+    }
+
+    /// v0.9.26 (M9-B): build_kimi_session_meta 集成 — 3 字段 (kimi_token_usage /
+    /// available_models / thinking_count) 由 scan_kimi_usage pass-1 写入 SessionMeta。
+    /// Pass 2 暂未删,所以 DB 最终值仍是 Pass 2 的;此 test 只锁 SessionMeta struct 字段。
+    #[test]
+    fn build_kimi_session_meta_populates_three_kimi_fields_from_pass1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_sess_dir, wire) = make_kimi_session(&tmp, "wd_beta", "tok-2", false);
+        // 覆盖默认 wire:2 个 turn-scope (不同 model) + 1 个 session-scope (skipped) +
+        // 1 个 context.append_loop_event content.part think event
+        std::fs::write(
+            &wire,
+            "{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":20,\"inputCacheCreation\":5},\"usageScope\":\"turn\",\"time\":1}\n\
+             {\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
+             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":1000,\"output\":500,\"inputCacheRead\":100,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":3}\n\
+             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"reasoning\"}},\"time\":4}\n",
+        ).unwrap();
+        let ks = crate::fs::walker::KimiSession {
+            session_dir: tmp.path().join("wd_beta").join("session_tok-2"),
+            session_id: "tok-2".to_string(),
+            wd_name: "wd_beta".to_string(),
+            main_wire: Some(wire),
+            state_json: tmp
+                .path()
+                .join("wd_beta")
+                .join("session_tok-2")
+                .join("state.json"),
+            work_dir: Some("C:/Users/dc/test".to_string()),
+            title: Some("kimi test session".to_string()),
+            agent_ids: vec!["main".to_string()],
+        };
+        let sm = build_kimi_session_meta(&ks).expect("build kimi");
+
+        // 1. kimi_token_usage: turn-scope 累加, session-scope 跳过 → (101, 51, 20, 5)
+        let u = sm
+            .kimi_token_usage
+            .as_ref()
+            .expect("kimi_token_usage 应非空");
+        assert_eq!(u.input, 101);
+        assert_eq!(u.output, 51);
+        assert_eq!(u.cache_read, 20);
+        assert_eq!(u.cache_write, 5);
+
+        // 2. available_models: BTreeSet lex 序
+        let models = sm
+            .available_models
+            .as_ref()
+            .expect("available_models 应非空");
+        assert_eq!(
+            models,
+            &vec!["deepseek-v4-flash".to_string(), "kimi-k2".to_string()]
+        );
+
+        // 3. thinking_count: 1 个 content.part type=think
+        assert_eq!(sm.thinking_count, Some(1));
+
+        // 4. primary_model: 首个 usage.record.model (deepseek-v4-flash)
+        assert_eq!(sm.primary_model.as_deref(), Some("deepseek-v4-flash"));
+    }
+
+    // ===== v0.9.26 (M9-C): parallel-run validation =====
+    //
+    // 验证 scan_kimi_usage (Pass 1) 与 meta_extras::build_meta_full_kimi (Pass 2)
+    // 对 3 字段 (kimi_token_usage / available_models / thinking_count) 输出 byte-identical。
+    // 两者都扫全文件 (Pass 1 in commands/sessions.rs,Pass 2 in parser/meta_extras.rs),
+    // 镜像逻辑 (BTreeSet lex,turn-scope only,content.part think)。
+    //
+    // Note: 原计划放 src-tauri/tests/m9_kimi_parallel.rs (integration test),因
+    // build_kimi_session_meta 是 pub(crate) — 改 integration test 需要重新 expose
+    // 内部 module,scope 太大。改放 unit test (本 mod),效果一致。
+    //
+    // 因 build_meta_full 用 `source_from_path` 判定 kimi 分支,fixture 路径必须含
+    // `.kimi` 子串 (看 fs/source.rs:15)。write_kimi_temp 在 tempdir 下<redacted>
+    // `.kimi/wire.jsonl` 文件绕过。
+
+    /// v0.9.26 (M9-C): 在 tempdir 下<redacted> `.kimi/wire.jsonl`,dispatch 到 kimi 分支
+    fn write_kimi_temp(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let kimi_dir = tmp.path().join(".kimi");
+        std::fs::create_dir_all(&kimi_dir).expect("mkdir .kimi");
+        let path = kimi_dir.join("wire.jsonl");
+        std::fs::write(&path, content).expect("write");
+        (tmp, path)
+    }
+
+    /// Pass 1 vs Pass 2:典型 session — 2 turn + 1 session-scope skip + 3 think + 2 model
+    #[test]
+    fn parallel_run_kimi_three_fields_match_for_typical_session() {
+        let (_tmp, wire) = write_kimi_temp(
+            // 2 turn-scope (deepseek + kimi-k2) + 1 session-scope (skipped)
+            "{\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":100,\"output\":50,\"inputCacheRead\":20,\"inputCacheCreation\":5},\"usageScope\":\"turn\",\"time\":1}\n\
+             {\"type\":\"usage.record\",\"model\":\"kimi-k2\",\"usage\":{\"inputOther\":200,\"output\":80,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n\
+             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":9999,\"output\":9999,\"inputCacheRead\":9999,\"inputCacheCreation\":0},\"usageScope\":\"session\",\"time\":3}\n\
+             // 3 think parts (混合 deepseek/kimi session)
+             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"r1\"}},\"time\":4}\n\
+             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"hi\"}},\"time\":5}\n\
+             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"r2\"}},\"time\":6}\n\
+             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"think\",\"text\":\"r3\"}},\"time\":7}\n",
+        );
+        // Pass 1: scan_kimi_usage 4-tuple
+        let (pass1_usage, pass1_models, pass1_thinking, _) =
+            scan_kimi_usage(&wire).expect("pass1 scan");
+        // Pass 2: build_meta_full dispatch 到 build_meta_full_kimi (因路径含 ".kimi")
+        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2 build");
+
+        // 1. kimi_token_usage: turn-scope 累加 → (300, 130, 20, 5)
+        assert_eq!(
+            pass1_usage,
+            Some(crate::model::TokenUsage {
+                input: 300,
+                output: 130,
+                cache_read: 20,
+                cache_write: 5,
+            }),
+            "Pass 1 token_usage 应 = Pass 2"
+        );
+        assert_eq!(pass2.kimi_token_usage, pass1_usage);
+
+        // 2. available_models: BTreeSet lex → [deepseek-v4-flash, kimi-k2]
+        assert_eq!(
+            pass1_models,
+            vec!["deepseek-v4-flash".to_string(), "kimi-k2".to_string()],
+            "Pass 1 models 应 = Pass 2"
+        );
+        assert_eq!(pass2.available_models, pass1_models);
+
+        // 3. thinking_count: 3 个 content.part type=think
+        assert_eq!(pass1_thinking, 3, "Pass 1 thinking 应 = Pass 2");
+        assert_eq!(pass2.thinking_count, pass1_thinking);
+    }
+
+    /// Pass 1 vs Pass 2:空 thinking — 0 think parts → both 0
+    #[test]
+    fn parallel_run_kimi_handles_empty_thinking() {
+        let (_tmp, wire) = write_kimi_temp(
+            "{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"hi\"}},\"time\":1}\n\
+             {\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"content.part\",\"part\":{\"type\":\"text\",\"text\":\"hello\"}},\"time\":2}\n\
+             {\"type\":\"usage.record\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":3}\n",
+        );
+        let (_, _, pass1_thinking, _) = scan_kimi_usage(&wire).expect("pass1");
+        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2");
+
+        assert_eq!(pass1_thinking, 0);
+        assert_eq!(pass2.thinking_count, 0);
+        assert_eq!(pass2.thinking_count, pass1_thinking);
+    }
+
+    /// Pass 1 vs Pass 2:单 model across records
+    #[test]
+    fn parallel_run_kimi_handles_single_model() {
+        let (_tmp, wire) = write_kimi_temp(
+            "{\"type\":\"usage.record\",\"model\":\"only-model\",\"usage\":{\"inputOther\":1,\"output\":1,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":1}\n\
+             {\"type\":\"usage.record\",\"model\":\"only-model\",\"usage\":{\"inputOther\":2,\"output\":2,\"inputCacheRead\":0,\"inputCacheCreation\":0},\"usageScope\":\"turn\",\"time\":2}\n",
+        );
+        let (_, pass1_models, _, _) = scan_kimi_usage(&wire).expect("pass1");
+        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2");
+
+        assert_eq!(pass1_models, vec!["only-model".to_string()]);
+        assert_eq!(pass2.available_models, vec!["only-model".to_string()]);
+        assert_eq!(pass2.available_models, pass1_models);
+    }
+
+    /// Pass 1 vs Pass 2:无 usage.record → both None / empty
+    #[test]
+    fn parallel_run_kimi_handles_no_usage_records() {
+        let (_tmp, wire) = write_kimi_temp(
+            "{\"type\":\"context.append_message\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}\n\
+             {\"type\":\"context.append_message\",\"message\":{\"role\":\"assistant\",\"content\":\"hello\"}}\n",
+        );
+        let (pass1_usage, pass1_models, pass1_thinking, pass1_primary) =
+            scan_kimi_usage(&wire).expect("pass1");
+        let pass2 = crate::parser::meta_extras::build_meta_full(&wire).expect("pass2");
+
+        assert!(pass1_usage.is_none());
+        assert!(pass1_models.is_empty());
+        assert_eq!(pass1_thinking, 0);
+        assert!(pass1_primary.is_none());
+
+        assert!(pass2.kimi_token_usage.is_none());
+        assert!(pass2.available_models.is_empty());
+        assert_eq!(pass2.thinking_count, 0);
+
+        assert_eq!(pass2.kimi_token_usage, pass1_usage);
+        assert_eq!(pass2.available_models, pass1_models);
+        assert_eq!(pass2.thinking_count, pass1_thinking);
     }
 }

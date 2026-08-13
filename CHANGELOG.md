@@ -2,6 +2,70 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.26] - 2026-08-13
+
+本版落 **M9 — Pass 1 (scan_kimi_usage) ↔ Pass 2 (meta_extras.rs)
+parallel-run validation**。3 个 kimi-only SessionMeta 字段现在 Pass 1
+也算,跟 Pass 2 对比验证 byte-identical。M10 才会删 `meta_extras.rs`。
+
+### 关键决策 — 3 件事
+
+**1. `commands/sessions.rs::scan_kimi_usage` 扩 4-tuple**
+
+从 `(Option<TokenUsage>, Option<String>)` 扩成
+`(Option<TokenUsage>, Vec<String>, u32, Option<String>)` —
+加 `available_models` (BTreeSet lex,跟 Pass 2 `meta_extras.rs:810` 同
+order) + `thinking_count` (mirror Pass 2 `meta_extras.rs:578-584`,
+数 `context.append_loop_event.event.type=="content.part"` 且
+`event.part.type=="think"`)。内部已扫全文件 (无 5000 行 cap),
+跟 Pass 2 同样输入覆盖。
+
+**2. `build_kimi_session_meta` wire 3 字段到 SessionMeta**
+
+`thinking_count` 走 `upsert_session_meta` 列写入;
+`available_models` + `kimi_token_usage` 写入 struct(等 debug-check 比
+对)。**Pass 2 仍跑会 overwrite** — parallel-run 模式。
+
+**3. Debug-build runtime check + 4 unit tests 验证 byte-identity**
+
+`#[cfg(debug_assertions)]` block 在 `build_kimi_session_meta` 末尾,
+调 `build_meta_full` 跟 SessionMeta 3 字段比对,mismatch 走
+`log::warn!`。release build 不编译,0 生产开销。
+
+4 个新 unit tests (`parallel_run_kimi_*` in
+`commands/sessions.rs::tests`) 锁 Pass 1 / Pass 2 byte-identity:
+典型 session / 空 thinking / 单 model / 无 usage.record 全 pass。
+
+### Perf baseline (M9-D)
+
+`db/sync.rs` 加 `Instant::now()` 3 个点:enrichment loop start /
+per-file start / loop end。慢文件 (>500ms) warn。Pass 1
+(`sync_one_file` head scan) 不单独计时,主导 < 1ms — Pass 1 cost 隐
+式 = `sync_total − enrich_total`。Baseline 给 M10 删 meta_extras.rs
+后对照用。
+
+### 不动 (M9 范围外)
+
+- `parser/meta_extras.rs` — 保留,Pass 2 继续跑
+- `parser/kimi.rs` — transcript 路径不相关
+- `db/schema.rs::enrich_session_meta` — 28-param signature 不变
+- `model/mod.rs::SessionMeta` — 3 字段已存在
+- 所有 frontend 代码 — IPC contract 不变
+- `meta_extras.rs` 删除 — M10 (v0.9.27) 才走
+
+### 文件改动
+
+- `src-tauri/src/commands/sessions.rs` — scan_kimi_usage 扩 tuple +
+  build_kimi_session_meta wiring + debug-check block + 5 新 tests
+  (1 wiring + 4 parallel-run)
+- `src-tauri/src/model/mod.rs` — TokenUsage 加 `#[derive(PartialEq)]`
+  (1 行,方便 parallel-run assert_eq)
+- `src-tauri/src/db/sync.rs` — 3 个 Instant::now() + 慢文件 warn 500ms
+- `CHANGELOG.md` — 本 entry
+- `CONTEXT-MAP.md` / `src-tauri/CONTEXT.md` — M9 architecture 段
+
+(无 frontend 改动 — IPC contract 完全稳定。)
+
 ## [0.9.25] - 2026-08-12
 
 v0.9.24 (M7) 完成 SessionHeader + SessionNotesPanel 抽出。本版
