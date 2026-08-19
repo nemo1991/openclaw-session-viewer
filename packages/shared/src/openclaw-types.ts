@@ -94,6 +94,8 @@ export type OpenClawEntry =
 
 export type OpenClawEntryType = OpenClawEntry["type"];
 
-export function isOpenClawHeader(e: OpenClawEntry): e is Extract<OpenClawEntry, { type: "session" }> {
+export function isOpenClawHeader(
+  e: OpenClawEntry
+): e is Extract<OpenClawEntry, { type: "session" }> {
   return e.type === "session";
 }

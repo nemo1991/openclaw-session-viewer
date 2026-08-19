@@ -221,10 +221,10 @@ export function GraphDetailPanel({
         hasTrajectory: false,
         subagentDir: undefined,
         source: (session.source === "OpenClaw"
-        ? "openclaw"
-        : session.source === "Kimi"
-          ? "kimi"
-          : "claude") as any,
+          ? "openclaw"
+          : session.source === "Kimi"
+            ? "kimi"
+            : "claude") as any,
       };
       navigate(
         `/session/${encodeURIComponent(node.agent_id)}?path=${encodeURIComponent(jsonlPath)}`,
@@ -475,10 +475,10 @@ export function GraphDetailPanel({
                       hasTrajectory: false,
                       subagentDir: undefined,
                       source: (sib.node.source === "OpenClaw"
-                      ? "openclaw"
-                      : sib.node.source === "Kimi"
-                        ? "kimi"
-                        : "claude") as any,
+                        ? "openclaw"
+                        : sib.node.source === "Kimi"
+                          ? "kimi"
+                          : "claude") as any,
                     };
                     navigate(`/session/${encodeURIComponent(sib.node.session_id)}`, {
                       state: { session: sibMeta },

@@ -120,11 +120,19 @@ export interface KimiConfigRecord {
 
 /** `llm.request` / `usage.record` / `llm.tools_snapshot` — 协议层 */
 export interface KimiProtocolRecord {
-  type: "llm.request" | "llm.tools_snapshot" | "usage.record"
-    | "permission.record_approval_result" | "tools.update_store"
-    | "turn.steer" | "turn.cancel"
-    | "full_compaction.begin" | "full_compaction.complete"
-    | "context.apply_compaction" | "plan_mode.enter" | "plan_mode.cancel";
+  type:
+    | "llm.request"
+    | "llm.tools_snapshot"
+    | "usage.record"
+    | "permission.record_approval_result"
+    | "tools.update_store"
+    | "turn.steer"
+    | "turn.cancel"
+    | "full_compaction.begin"
+    | "full_compaction.complete"
+    | "context.apply_compaction"
+    | "plan_mode.enter"
+    | "plan_mode.cancel";
   time?: number;
   [key: string]: unknown;
 }

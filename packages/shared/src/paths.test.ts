@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  encodeClaudeProjectKey,
-  decodeClaudeProjectKey,
-  joinPath,
-} from "./paths.js";
+import { encodeClaudeProjectKey, decodeClaudeProjectKey, joinPath } from "./paths.js";
 
 describe("encodeClaudeProjectKey", () => {
   it("converts path separators and special chars", () => {
@@ -11,9 +7,7 @@ describe("encodeClaudeProjectKey", () => {
   });
 
   it("preserves numbers and letters", () => {
-    expect(encodeClaudeProjectKey("/Users/alice123/project-v2")).toBe(
-      "-Users-alice123-project-v2"
-    );
+    expect(encodeClaudeProjectKey("/Users/alice123/project-v2")).toBe("-Users-alice123-project-v2");
   });
 
   it("replaces unicode with dashes", () => {

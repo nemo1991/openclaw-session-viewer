@@ -177,9 +177,7 @@ export default function AnalyzeRoute() {
               <Square size={14} /> {t("analyze.stop")}
             </button>
           )}
-          {!hasApiKey && (
-            <div className="warning">{t("analyze.noApiKey")}</div>
-          )}
+          {!hasApiKey && <div className="warning">{t("analyze.noApiKey")}</div>}
         </section>
       </div>
 
@@ -189,9 +187,7 @@ export default function AnalyzeRoute() {
           <div className="analyze-stats">
             {streaming && <span className="streaming">● {t("analyze.streaming")}</span>}
             {(inputTokens > 0 || outputTokens > 0) && (
-              <span>
-                已用 {formatNumber(inputTokens + outputTokens)} tokens
-              </span>
+              <span>已用 {formatNumber(inputTokens + outputTokens)} tokens</span>
             )}
           </div>
         </div>

@@ -70,7 +70,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       // v0.9.0: agentId 过滤仍只对 openclaw 生效 (claude 无 agentId,kimi 永远 "main")。
       // 之前条件 `s.source === filter.source` 在 source=claude 时也命中,会拿 undefined 比 "main"
       // 把所有 claude session 过滤掉 — 回归到 "agentId 过滤只对 openclaw 生效" 旧契约。
-      if (filter.agentId && filter.source === "openclaw" && s.agentId !== filter.agentId) return false;
+      if (filter.agentId && filter.source === "openclaw" && s.agentId !== filter.agentId)
+        return false;
       if (filter.liveOnly && !s.livePid) return false;
       if (filter.hasSubagents && !s.subagentDir) return false;
       if (filter.last7Days && s.mtimeMs < cutoff) return false;
