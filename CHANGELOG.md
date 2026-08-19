@@ -2,6 +2,110 @@
 
 所有重要变更记录在此。格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 
+## [0.9.28] - 2026-08-19
+
+本版落 **M11 — DeepSeek Harness (dsh) 第 4 种 wire-format source**。
+把 `~/.dsh/sessions/` 接入现有 3-source 解析/聚合/UI 框架,同时落地
+2 个 wire-format twist 基础设施:
+
+1. **`.jsonl.zstd` 透明 reader** — 新 `parser/jsonl_zst.rs` +
+   `parser/jsonl.rs::for_each_line_auto` / `count_lines_auto` /
+   `parse_first_n_auto` 按扩展名派发。现有 3 source 走非压缩分支
+   零改动,dsh 命中 `.zst`/`.zstd` 走 `zstd::Decoder` 透明解压。
+2. **`--Users-foo-bar--` bracket 包裹 decoder** — 新
+   `decodeDshProjectKey` (TS + Rust) strip bracket + delegate Claude
+   decoder。project_key 在 DB 里以 `dsh:<dir-name>` 不透明存储,避开
+   每次读取 lossy decode。
+
+### 关键决策 — 6 件事
+
+**1. `SessionSource` 4 元 union + 47 列 DB CHECK 加 `'dsh'`**
+
+`packages/shared/src/normalize.ts` 把 `SessionSource` 从 `"claude" | "openclaw" | "kimi"`
+扩展到 `"dsh"`。`db/schema.rs` line 36 CHECK 改 `'claude','openclaw','kimi','dsh'`。
+chain-safe `ensure_dsh_in_source_check` 用 2 个 `.replace()` pattern 兼容
+3 种 schema 状态(pre-kimi / post-kimi / post-dsh) + idempotent skip。
+详见 `src-tauri/docs/adr/0002-dsh-source-m11.md`。
+
+**2. dsh wire envelope per-event normalize (no state machine)**
+
+`parser/dsh.rs::normalize_dsh_record` 镜像 `parser/kimi.rs::normalize_kimi_record`:
+- `session` → meta (label `session.header`)
+- `user/message` → role=user; `data.content[].text` → text blocks
+- `assistant/message` → role=assistant; `data.message.content[].type` 分派:
+  - `reasoning` → thinking block
+  - `text` → text block
+  - `tool-call` → tool_use block(`arguments` JSON-string → parse 后填 input)
+- `tool/call` → meta (声明 callId → name 关系)
+- `tool/result` → role=tool; `data.message.content[0].isError` → is_error flag
+- 4 种 streaming chunk (`assistant/chunk` / `reasoning-chunks` /
+  `text-chunks` / `tool-call-chunks`) → null (filter 掉,避免双计)
+- 12 种 lifecycle / permission / sandbox event → meta
+- 未知 type → meta,不 panic
+
+**3. `aggregate_dsh` (单 pass 47 列 — M10 架构延伸)**
+
+`meta_aggregator.rs` 加 `aggregate_dsh` 镜像 `aggregate_kimi`,走
+`for_each_line_auto` 透明支持 zstd:
+- `session` → `agent_name = top-level agentPreset` (v0.9.28 实测:
+  dsh wire `agentPreset` 是 envelope 顶层,不是 `data.agentPreset`)
+- `user/message` → `user_message_count + first_user_time`
+- `assistant/message` → model / thinking_count / text_message_count /
+  token_usage (`kimi_token_usage` 复用,Option A 决策) / repeat_run /
+  idle_gap,跟 kimi 同算法,只是把 `tool.call` event 替换成
+  `data.message.content[]` 内的 `tool-call` part
+- `tool/call` → callId → name 反查表 + tool_usage 计数 (独立 event
+  形态也保留 — 某些 dsh session 不在 content[] 内放 tool-call)
+- `tool/result` → error_count + tool_error[] (反查 `source.callId`)
+
+**4. `build_dsh_session_meta` + DB migration chain-safe**
+
+`commands/sessions.rs` 加 `resolve_dsh_from_jsonl` (parent + grand-parent
+walk) + `build_dsh_session_meta` (47 列 INSERT,沿用 M10 单 pass 架构)。
+`decode_dsh_workspace_guess` strip `--…--` 后 delegate Claude decoder。
+`scan_full_stats` / `get_session_meta_inner` / `sync_one_file` 加 dsh arm。
+
+**5. Frontend 4 元 source 完整 wiring**
+
+- `packages/shared/src/normalize.ts` — `normalizeDshRecord` 镜像
+  Rust 版本 (8 tests)
+- `packages/shared/src/paths.ts` — `decodeDshProjectKey` (5 tests)
+- `packages/frontend/src/state/sessionsStore.ts` — union 加 `dsh`
+- `packages/frontend/src/routes/SessionsRoute.tsx` — 4th radio +
+  badge "DeepSeek Harness"
+- `packages/frontend/src/views/graph/{types.ts, GraphDetailPanel.tsx, analytics.ts}` —
+  Source union 加 `DeepSeekHarness` + 3 个 reverse maps
+- `packages/frontend/src/routes/SettingsRoute.tsx` — heuristic 加
+  `.dsh` 探测 + 默认根加 `~/.dsh`
+- `packages/frontend/src/i18n/zh-CN.ts` — `sessions.source.dsh` + error hints
+
+**6. Reader/aggregator/export/analyze/transcript/graph 全 5 个 call site 接入 dsh**
+
+`db/sync.rs` 加 4th loop (`walker::list_dsh_sessions` →
+`sync_one_file(state, &ds.zst_path, "dsh", ...)`);`commands/{transcript,
+export, analyze}.rs` 加 dsh arm + `for_each_line_auto` 切换;
+`commands/subagents.rs` dsh arm 返回空 Vec (out-of-scope);
+`commands/graph.rs` graph label `dsh => "DeepSeek Harness"`。
+
+### Backlog (out-of-scope for v0.9.28)
+
+| Item | Why deferred | Target |
+| --- | --- | --- |
+| `parent_uuid` for dsh | wire 无 `parentUuid` 字段 | v0.9.29+ |
+| Subagent walk for dsh | 没观察到 `subagents/` layout | v0.9.29+ |
+| `kimi_token_usage` rename → `session_token_usage` | schema migration 成本 | v0.9.29 (low priority) |
+| Streaming-chunk 可视化 | 当前 filter 到 None;可作 timeline ripple | v0.10+ |
+| `meta_banner` for dsh permission/approval/sandbox | 当前 emit meta;可折叠成 banner | v0.9.29+ |
+
+### Tests
+
+- 376 Rust lib tests + 16 migration tests (新增 6 dsh aggregate + 3 migration chain)
+- 54 shared tests (新增 5 dsh path decoder + 8 dsh normalize)
+- 687 frontend tests
+- 真实 `~/.dsh/sessions/` 同步 → DB 行有 `source='dsh'`,badge "DeepSeek Harness",
+  filter chip 工作,transcript 渲染 user/assistant/tool blocks,graph view
+  dsh 节点 + 正确 label
+
 ## [0.9.27] - 2026-08-13
 
 本版落 **M10 — Pass 2 → Pass 1 single-pass cutover**。v0.8.4 起的双

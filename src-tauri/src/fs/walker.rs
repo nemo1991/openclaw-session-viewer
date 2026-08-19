@@ -235,6 +235,112 @@ fn read_kimi_state(path: &Path) -> Option<KimiStateJson> {
     serde_json::from_reader(f).ok()
 }
 
+// ---- v0.9.28: DeepSeek Harness (dsh) walker ---------------------------------
+
+/// v0.9.28: dsh session 描述 — 来自 `~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd`
+///
+/// 跟 Kimi 不同: dsh 没有 state.json 也没有 agent_ids — 单一 transcript 存
+/// 储,所有 turn/step 都在 `session.jsonl.zstd` 内(per-agent 隔离靠 path)。
+/// 所以 enumerate 阶段只取 path + 二级 dir name,不做任何 json 解析。
+#[derive(Debug, Clone)]
+pub struct DshSession {
+    /// session 目录(`<root>/<project>/session-<uuid>`)
+    #[allow(dead_code)]
+    pub session_dir: PathBuf,
+    /// 截取 `session-` 后的 uuid 字符串(不带前缀)
+    pub session_id: String,
+    /// project dir name (e.g. `-<redacted-project>/doc--`)
+    pub project_key: String,
+    /// `<session_dir>/session.jsonl.zstd`
+    pub zst_path: PathBuf,
+}
+
+/// v0.9.28: 列举 `~/.dsh/sessions/` 目录下所有 session 描述
+///
+/// 策略:
+/// - `read_dir(sessions_root)` → 子目录(`<project>`)
+/// - 每个 project 内 `read_dir` → `session-<uuid>` 子目录
+/// - 探测 `session.jsonl.zstd` 是否存在(无则该 session 视为 zombie,跳过)
+pub fn list_dsh_sessions(sessions_root: &Path) -> AppResult<Vec<DshSession>> {
+    if !sessions_root.exists() {
+        return Ok(vec![]);
+    }
+    let mut out = Vec::new();
+
+    let proj_iter = match std::fs::read_dir(sessions_root) {
+        Ok(it) => it,
+        Err(e) => {
+            log::warn!("dsh walker read_dir {:?} 失败: {e}", sessions_root);
+            return Ok(vec![]);
+        }
+    };
+
+    // 顶层 project dir 字典序(稳定遍历)
+    let mut proj_dirs: Vec<PathBuf> = proj_iter
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    proj_dirs.sort();
+
+    for proj_dir in proj_dirs {
+        let project_key = proj_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        if project_key.is_empty() {
+            continue;
+        }
+
+        let sess_iter = match std::fs::read_dir(&proj_dir) {
+            Ok(it) => it,
+            Err(e) => {
+                log::warn!("dsh walker read_dir {:?} 失败: {e}", proj_dir);
+                continue;
+            }
+        };
+
+        let mut sess_dirs: Vec<PathBuf> = sess_iter
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("session-"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        sess_dirs.sort();
+
+        for session_dir in sess_dirs {
+            let zst_path = session_dir.join("session.jsonl.zstd");
+            if !zst_path.exists() {
+                log::debug!("dsh walker 跳过 zombie session: {:?}", session_dir);
+                continue;
+            }
+            let session_id = session_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|s| s.strip_prefix("session-"))
+                .unwrap_or("")
+                .to_string();
+            if session_id.is_empty() {
+                continue;
+            }
+
+            out.push(DshSession {
+                session_dir,
+                session_id,
+                project_key: project_key.clone(),
+                zst_path,
+            });
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,5 +453,60 @@ mod tests {
         assert!(s.main_wire.is_some());
 
         fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// v0.9.28: dsh walker 跳过缺 session.jsonl.zstd 的 zombie session
+    #[test]
+    fn list_dsh_sessions_filters_orphans() {
+        let tmp = std::env::temp_dir().join(format!("ocsv-dsh-walker-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // 完整 session
+        let s_ok = tmp
+            .join("--Users-foo--")
+            .join("session-aaaaaaaa-1111-2222");
+        fs::create_dir_all(&s_ok).unwrap();
+        fs::write(&s_ok.join("session.jsonl.zstd"), b"\x28\xb5\x2f\xfd").unwrap();
+
+        // zombie: 目录在但没 zst file
+        let s_zombie = tmp
+            .join("--Users-foo--")
+            .join("session-bbbbbbbb-3333-4444");
+        fs::create_dir_all(&s_zombie).unwrap();
+
+        // 不是 session-* 命名的目录 → 跳过
+        let s_other = tmp.join("--Users-foo--").join("not-a-session");
+        fs::create_dir_all(&s_other).unwrap();
+
+        // 顶层非 --…-- 包裹目录 → 跳过(防御性)
+        let rl = tmp.join("random");
+        fs::create_dir_all(&rl).unwrap();
+
+        let sessions = list_dsh_sessions(&tmp).unwrap();
+        assert_eq!(
+            sessions.len(),
+            1,
+            "expected only the complete session, got: {:?}",
+            sessions
+        );
+        let s = &sessions[0];
+        assert_eq!(s.session_id, "aaaaaaaa-1111-2222");
+        assert_eq!(s.project_key, "--Users-foo--");
+        assert!(s.zst_path.exists());
+
+        fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// v0.9.28: list_dsh_sessions 缺 sessions_root → 安全返回空 vec
+    #[test]
+    fn list_dsh_sessions_handles_missing_root() {
+        let tmp = std::env::temp_dir().join(format!(
+            "ocsv-dsh-walker-missing-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&tmp);
+        let sessions = list_dsh_sessions(&tmp).unwrap();
+        assert!(sessions.is_empty());
     }
 }

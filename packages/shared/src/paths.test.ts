@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { encodeClaudeProjectKey, decodeClaudeProjectKey, joinPath } from "./paths.js";
+import {
+  encodeClaudeProjectKey,
+  decodeClaudeProjectKey,
+  decodeDshProjectKey,
+  joinPath,
+} from "./paths.js";
 
 describe("encodeClaudeProjectKey", () => {
   it("converts path separators and special chars", () => {
@@ -77,5 +82,29 @@ describe("joinPath", () => {
 
   it("returns empty for all-empty input", () => {
     expect(joinPath("", null, undefined)).toBe("");
+  });
+});
+
+// v0.9.28 (M11): dsh project-key 解码 — `--…--` 包裹 → Claude decoder
+describe("decodeDshProjectKey", () => {
+  it("decodes --Users-foo-bar-- → /Users/foo/bar", () => {
+    expect(decodeDshProjectKey("--Users-foo-bar--")).toBe("/Users/foo/bar");
+  });
+
+  it("decodes already-Claude-encoded -Users-foo-bar → /Users/foo/bar", () => {
+    expect(decodeDshProjectKey("-Users-foo-bar")).toBe("/Users/foo/bar");
+  });
+
+  it("returns null for empty input", () => {
+    expect(decodeDshProjectKey("")).toBeNull();
+  });
+
+  it("returns null for non-encoded dir names", () => {
+    expect(decodeDshProjectKey("myproject")).toBeNull();
+  });
+
+  it("returns null for malformed bracket-only input", () => {
+    // 只有 4 个字符(`--`+`--`)→ 长度 <= 4 防御性返回 null
+    expect(decodeDshProjectKey("----")).toBeNull();
   });
 });

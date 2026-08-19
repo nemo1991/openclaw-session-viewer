@@ -97,6 +97,41 @@ export interface KimiPaths {
   workspacesFile: string;
 }
 
+/** v0.9.28 (M11): DeepSeek Harness 路径布局 */
+export interface DshPaths {
+  /** ~/.dsh */
+  home: string;
+  /** ~/.dsh/sessions (dir walk root) */
+  sessionsRoot: string;
+}
+
+/** v0.9.28 (M11): 把 `--Users-foo-bar--` 形式的 dsh project 目录名解码为猜测路径。
+ *
+ * dsh 用 Claude 风格编码后再包一层 `--…--`:
+ * - 真值: `--Users-foo-bar--` → 剥掉首尾 `--` → `-Users-foo-bar` → 走 `decodeClaudeProjectKey`
+ * - 编码形态(`-Users-…` 开头而不是 `--…--`)→ 当作 Claude 编码,直接 delegate
+ * - 不识别形态(不以 `-` 或 `--` 开头)→ null
+ *
+ * 注: dsh wire 存储的 `project_key` 是不透明 `dsh:<dir-name>`,这是 dir-name 的
+ * decode 仅供 UI 显示 `workspaceGuess` 用,不参与路由/比较。
+ */
+export function decodeDshProjectKey(dirName: string): string | null {
+  if (!dirName) return null;
+  // 1) 优先识别 `--…--` 包裹形式(长度 > 4 排除空心 `----`)
+  // 内层需要前缀 `-` 还原成 Claude 编码(`--Users-foo--` → `-Users-foo`)
+  if (dirName.startsWith("--") && dirName.endsWith("--")) {
+    if (dirName.length <= 4) return null;
+    const inner = "-" + dirName.slice(2, -2);
+    return decodeClaudeProjectKey(inner);
+  }
+  // 2) 已是 Claude 编码形式 (`-Users-…`) → 直接 delegate
+  if (dirName.startsWith("-")) {
+    return decodeClaudeProjectKey(dirName);
+  }
+  // 3) 其他形态(如简单名字)— null
+  return null;
+}
+
 /** 解析 Claude Code 路径布局 */
 export function resolveClaudePaths(homeDir: string): ClaudePaths {
   const home = joinPath(homeDir, ".claude");
@@ -138,6 +173,15 @@ export function resolveKimiPaths(homeDir: string): KimiPaths {
     sessionsRoot: joinPath(home, "sessions"),
     sessionIndexFile: joinPath(home, "session_index.jsonl"),
     workspacesFile: joinPath(home, "workspaces.json"),
+  };
+}
+
+/** v0.9.28 (M11): 解析 DeepSeek Harness 路径布局 */
+export function resolveDshPaths(homeDir: string): DshPaths {
+  const home = joinPath(homeDir, ".dsh");
+  return {
+    home,
+    sessionsRoot: joinPath(home, "sessions"),
   };
 }
 

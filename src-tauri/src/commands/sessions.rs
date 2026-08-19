@@ -177,9 +177,11 @@ pub(crate) fn get_session_meta_inner(path: &str, state: &Arc<AppState>) -> AppRe
         build_openclaw_session_meta(p, &agent_id, agent_label, agent_channel, agent_target)
     } else {
         // v0.9.0: kimi 在 fallback 走 build_kimi_session_meta;
+        // v0.9.28 (M11): dsh 走 build_dsh_session_meta_from_path;
         //       claude 仍是兜底
         match source_from_path(path) {
             "kimi" => build_kimi_session_meta_from_path(p, state),
+            "dsh" => build_dsh_session_meta_from_path(p),
             _ => build_claude_session_meta(p, state, &live_pids),
         }
     }
@@ -218,13 +220,13 @@ pub(crate) fn scan_full_stats(
     let mut first: Option<String> = None;
     let mut last: Option<String> = None;
     let mut count: u32 = 0;
-    jsonl::for_each_line(jsonl_path, |_, _, v| {
+    jsonl::for_each_line_auto(jsonl_path, |_, _, v| {
         let obj = match v.as_object() {
             Some(o) => o,
             None => return,
         };
-        // v0.9.0: kimi 用 `time`(epoch ms);claude/openclaw 用 `timestamp` 字符串
-        let ts_str = if source == "kimi" {
+        // v0.9.0: kimi/dsh 用 `time`(epoch ms);claude/openclaw 用 `timestamp` 字符串
+        let ts_str = if source == "kimi" || source == "dsh" {
             kimi_timestamp(obj)
         } else {
             obj.get("timestamp")
@@ -251,6 +253,8 @@ pub(crate) fn scan_full_stats(
                             .and_then(|t| t.as_str())
                             == Some("step.end"))
             }
+            // v0.9.28 (M11): dsh message 是 envelope `user/message` / `assistant/message`
+            "dsh" => ty == "user/message" || ty == "assistant/message",
             _ => false,
         };
         if is_msg {
@@ -1072,6 +1076,285 @@ pub(crate) fn build_kimi_session_meta(
         kimi_token_usage: extras.kimi_token_usage,
         meta_banner: extras.meta_banner,
     })
+}
+
+// === v0.9.28 (M11): DeepSeek Harness (dsh) source — build_dsh_session_meta ===
+
+/// v0.9.28 (M11): 从 jsonl_path 反查 dsh session 上下文
+///
+/// dsh 路径布局: `<root>/<project-dir>/session-<uuid>/session.jsonl.zstd`
+/// session_dir 是 jsonl 的父目录,project_key 是 session_dir 父目录的名字,
+/// session_id 从 `session-<uuid>` 前缀剥离。
+pub(crate) fn resolve_dsh_from_jsonl(
+    jsonl_path: &Path,
+) -> AppResult<crate::fs::walker::DshSession> {
+    let session_dir = jsonl_path
+        .parent()
+        .ok_or_else(|| AppError::Invalid(format!("dsh path 缺父目录: {:?}", jsonl_path)))?
+        .to_path_buf();
+    let project_key = session_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let session_id = session_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|s| s.strip_prefix("session-"))
+        .unwrap_or("")
+        .to_string();
+    if session_id.is_empty() {
+        return Err(AppError::Invalid(format!(
+            "无法解析 dsh sessionId from {:?}",
+            session_dir
+        )));
+    }
+    let zst_path = session_dir.join("session.jsonl.zstd");
+    Ok(crate::fs::walker::DshSession {
+        session_dir,
+        session_id,
+        project_key,
+        zst_path,
+    })
+}
+
+/// v0.9.28 (M11): dsh quick-path fallback — get_session_meta 拿不到 DB 行时,
+/// 从 jsonl_path 反查 build。
+pub(crate) fn build_dsh_session_meta_from_path(jsonl_path: &Path) -> AppResult<SessionMeta> {
+    let ds = resolve_dsh_from_jsonl(jsonl_path)?;
+    build_dsh_session_meta(&ds)
+}
+
+/// v0.9.28 (M11): dsh session.jsonl.zstd → SessionMeta
+///
+/// 字段映射:
+/// - `session_id = ds.session_id` (uuid 去掉 `session-` 前缀)
+/// - `project_key = "dsh:<dir-name>"` (opaque — 避免重复 lossy decode)
+/// - `workspace_guess = decode_dsh_workspace_guess(ds.project_key)`
+/// - `source = "dsh"`
+/// - 没有 state.json / agent_ids / subagent (v0.9.28 subagents out-of-scope)
+/// - 26 列派生指标走 `aggregate_dsh`
+pub(crate) fn build_dsh_session_meta(
+    ds: &crate::fs::walker::DshSession,
+) -> AppResult<SessionMeta> {
+    let jsonl_path = &ds.zst_path;
+    let meta = std::fs::metadata(jsonl_path)?;
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    // v0.9.28: 复用 kimi 同款 mtime 30s 内 heuristic (dsh 无 PID marker 文件)
+    const DSH_LIVE_MTIME_THRESHOLD_MS: u64 = 30_000;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let live_pid =
+        if mtime_ms > 0 && now_ms > mtime_ms && now_ms - mtime_ms < DSH_LIVE_MTIME_THRESHOLD_MS {
+            Some(1_u32)
+        } else {
+            None
+        };
+
+    // 流式扫全文件 — first_ts / last_ts / message_count
+    let (first_ts, last_ts, message_count) = scan_full_stats(jsonl_path, "dsh")?;
+
+    // 26 列派生指标走 aggregate_dsh (一次算齐)
+    let extras = crate::parser::meta_aggregator::aggregate_dsh(jsonl_path).unwrap_or_default();
+
+    // quick path 50 行: title / first_prompt / primary_model / tool_use_count
+    let head = jsonl::parse_first_n_auto(jsonl_path, 50).unwrap_or_default();
+    let mut primary_model: Option<String> = None;
+    let mut tool_use_count: u32 = 0;
+    let mut tool_name_count: HashMap<String, u32> = HashMap::new();
+    let mut first_prompt: Option<String> = None;
+
+    for v in &head {
+        let obj = match v.as_object() {
+            Some(o) => o,
+            None => continue,
+        };
+        let ty = obj.get("type").and_then(|x| x.as_str()).unwrap_or("");
+        match ty {
+            "assistant/message" => {
+                if primary_model.is_none() {
+                    primary_model = obj
+                        .get("data")
+                        .and_then(|d| d.get("message"))
+                        .and_then(|m| m.get("source"))
+                        .and_then(|s| s.get("model"))
+                        .and_then(|x| x.as_str())
+                        .map(String::from);
+                }
+                if let Some(content) = obj
+                    .get("data")
+                    .and_then(|d| d.get("message"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for part in content {
+                        if part.get("type").and_then(|x| x.as_str()) == Some("tool-call") {
+                            tool_use_count += 1;
+                            if let Some(name) = part.get("name").and_then(|x| x.as_str()) {
+                                *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            "user/message" => {
+                if first_prompt.is_none() {
+                    let text = obj
+                        .get("data")
+                        .and_then(|d| d.get("content"))
+                        .and_then(|c| c.as_array())
+                        .and_then(|arr| {
+                            arr.iter()
+                                .find_map(|b| b.get("text").and_then(|t| t.as_str()))
+                        })
+                        .unwrap_or("");
+                    if !text.is_empty() {
+                        first_prompt = Some(truncate(text, 80));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut tool_pairs: Vec<(String, u32)> = tool_name_count.into_iter().collect();
+    tool_pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let top_tools: Vec<String> = tool_pairs.into_iter().take(5).map(|(n, _)| n).collect();
+
+    // head 50 没拿到 primary_model → fallback 到 aggregator 的 model 列表第一个
+    if primary_model.is_none() {
+        primary_model = extras.available_models.first().cloned();
+    }
+
+    // title — dsh 没有 state.json,直接走 first_prompt (前 80 字) 当 title
+    let title = first_prompt.clone();
+
+    // workspace_guess — dsh 是 Claude 风格带 `--...--` 包裹,strip 后 delegate
+    let workspace_guess = decode_dsh_workspace_guess(&ds.project_key);
+
+    // subagent — v0.9.28 subagents out-of-scope,留 None
+    let subagent_dir: Option<String> = None;
+    let subagent_count: Option<u32> = None;
+    let subagent_ids: Option<Vec<String>> = None;
+
+    Ok(SessionMeta {
+        session_id: format!("session_{}", ds.session_id),
+        project_key: format!("dsh:{}", ds.project_key),
+        workspace_guess,
+        source: "dsh".to_string(),
+        jsonl_path: jsonl_path.to_string_lossy().to_string(),
+        size_bytes: meta.len(),
+        mtime_ms,
+        first_timestamp: first_ts.clone(),
+        last_timestamp: last_ts.clone(),
+        message_count,
+        title,
+        live_pid,
+        subagent_dir,
+        total_tokens: extras.kimi_token_usage.clone(),
+        primary_model,
+        agent_id: Some("main".to_string()),
+        agent_label: None,
+        agent_channel: None,
+        agent_target: None,
+        first_prompt: first_prompt.clone(),
+        last_message_at: last_ts.clone(),
+        thinking_count: Some(extras.thinking_count),
+        tool_use_count: Some(tool_use_count),
+        top_tools: if top_tools.is_empty() {
+            None
+        } else {
+            Some(top_tools)
+        },
+        has_trajectory: None,
+        trajectory_size_bytes: None,
+        subagent_count,
+        subagent_ids,
+        display_title: None,
+        hidden: false,
+        pinned: false,
+        archived: false,
+        notes: None,
+        tags: None,
+        // v0.9.28 (M11): 26 列派生指标 — dsh 跟 kimi 走同一份 MetaExtras
+        error_count: Some(extras.error_count),
+        user_message_count: Some(extras.user_message_count),
+        assistant_message_count: Some(extras.assistant_message_count),
+        duration_seconds: extras.duration_seconds,
+        first_response_latency_ms: extras.first_response_latency_ms,
+        agent_name: extras.agent_name,
+        invoked_skills_count: Some(extras.invoked_skills_count),
+        plan_file_ref_count: Some(extras.plan_file_ref_count),
+        compact_file_ref_count: Some(extras.compact_file_ref_count),
+        queued_command_count: Some(extras.queued_command_count),
+        attached_file_count: Some(extras.attached_file_count),
+        text_message_count: Some(extras.text_message_count),
+        tool_usage: if extras.tool_usage.is_empty() {
+            None
+        } else {
+            Some(extras.tool_usage)
+        },
+        phase_hint: extras.phase_hint,
+        phase_detail: extras.phase_detail,
+        repeat_run_count: Some(extras.repeat_run_count),
+        repeat_run_max_tool: extras.repeat_run_max_tool,
+        repeat_run_max_count: extras.repeat_run_max_count,
+        idle_gap_count: Some(extras.idle_gap_count),
+        idle_gap_max_ms: extras.idle_gap_max_ms,
+        available_models: if extras.available_models.is_empty() {
+            None
+        } else {
+            Some(extras.available_models.clone())
+        },
+        tool_error: if extras.tool_error.is_empty() {
+            None
+        } else {
+            Some(extras.tool_error)
+        },
+        parent_uuids_text: if extras.parent_uuids.is_empty() {
+            None
+        } else {
+            Some(extras.parent_uuids.join("\n"))
+        },
+        // dsh 没有 todo / banner(协议层没有对应字段)— 留 None
+        todo_summary: None,
+        kimi_token_usage: extras.kimi_token_usage,
+        meta_banner: None,
+    })
+}
+
+/// v0.9.28 (M11): dsh project_key `decode_workspace_guess` — 跟 Claude decoder 同算法
+///
+/// dsh 的 project_dir 形如 `--Users-foo-bar--` (Claude encoder 加 `--…--` 包裹
+/// 的 path + 末尾 `--`)。剥外层 `--` 后 delegate 给 Claude decoder。
+///
+/// 注: Claude encoder 用 `-` 作为 path 分隔符 (`/Users/foo/bar` →
+/// `-Users-foo-bar`),但 dsh 实际样本里 `bar` 等子目录是 `-` 还是 `/` 不一
+/// 致(测试 fixture `--Users-foo--` 也只到 `foo`)。本函数只做粗略 decode,
+/// 用于详情页展示,不保证 round-trip。
+fn decode_dsh_workspace_guess(dir_name: &str) -> Option<String> {
+    // strip leading "--" and trailing "--"
+    let inner = dir_name
+        .strip_prefix("--")
+        .and_then(|s| s.strip_suffix("--"))
+        .or_else(|| dir_name.strip_prefix("--"))
+        .or_else(|| dir_name.strip_suffix("--"))
+        .unwrap_or(dir_name);
+    if inner.is_empty() || inner == dir_name {
+        return None;
+    }
+    // delegate: Claude decoder 期望 leading '-', 内部 replace '-' → '/'
+    let leading_dash = format!("-{}", inner);
+    Some(decode_workspace_guess(&leading_dash))
 }
 
 /// v0.9.0: scan_full_stats 第三路 — kimi message count

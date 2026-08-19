@@ -12,8 +12,8 @@ interface SessionsFilter {
   liveOnly: boolean;
   hasSubagents: boolean;
   last7Days: boolean;
-  /** v0.9.0: 加 "kimi" 联合,跟 SessionSource union 对齐 */
-  source: "claude" | "openclaw" | "kimi";
+  /** v0.9.28 (M11): 加 "dsh" 联合,跟 SessionSource union 对齐 */
+  source: "claude" | "openclaw" | "kimi" | "dsh";
   /** 按 agentId 过滤(openclaw 多 agent / kimi 仅 "main");undefined 不过滤 */
   agentId?: string;
 }

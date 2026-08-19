@@ -2,7 +2,7 @@
 
 # OpenClaw Session Viewer
 
-**跨平台桌面应用，本地浏览 OpenClaw 和 Claude Code 的会话转录**
+**跨平台桌面应用，本地浏览 OpenClaw / Claude Code / Kimi / DeepSeek Harness 的会话转录**
 
 [![Tauri](https://img.shields.io/badge/Tauri-2-blue?logo=tauri)](https://tauri.app/)
 [![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev)
@@ -19,7 +19,26 @@
 
 ## 简介
 
-本地优先桌面应用,查看 / 搜索 / 分析 Claude Code 和 OpenClaw 历史会话。解决 CLI JSONL 没法搜、没法 LLM 总结、没法导出、没法跨 session 关联展示的问题。
+本地优先桌面应用,查看 / 搜索 / 分析 Claude Code / OpenClaw / Kimi Code /
+DeepSeek Harness 历史会话。解决 CLI JSONL 没法搜、没法 LLM 总结、没法导出、
+没法跨 session 关联展示的问题。
+
+### 支持的源
+
+| Source | 路径 | 格式 | 版本 |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude/projects/<encoded>/<sid>.jsonl` | jsonl | v0.1 |
+| OpenClaw | `~/.openclaw/agents/<id>/sessions/<sid>.jsonl` | jsonl | v0.2 |
+| Kimi Code | `~/.kimi-code/sessions/wd_*/session_*/agents/main/wire.jsonl` | jsonl | v0.9.0 |
+| DeepSeek Harness | `~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd` | zstd jsonl | v0.9.28 |
+
+**DeepSeek Harness (v0.9.28+)**: dsh 用 `.jsonl.zstd` 压缩存储 wire 格式,
+本应用通过扩展名派发透明解压(详见 [架构](#架构) — zstd reader)。
+项目目录名是 Claude 编码风格的 `--Users-foo-bar--` 包裹形式,
+存储时不透明保留为 `dsh:<dir-name>`,显示时 strip bracket delegate decode。
+
+更多格式细节见 [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md)
++ [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)。
 
 ## 下载
 
@@ -75,13 +94,13 @@ chmod +x OpenClaw*.AppImage
 - **Graph Explorer** (`/graph` 顶 tab,实验) — G1 force-directed 图,节点点击跳主项目原生 `/session/:id`;G2 6 chart + 时间范围(24h/7d/30d/all);G3 hash-embedding + cosine topK + 跨 tab prefill (`?q=query`)。共享 `display_title` 系统。详见 [docs/experiments/](docs/experiments/)
 - **大模型分析** — 4 预置模板(摘要/代码修改/错误陷阱) + 自定义 Prompt,流式响应,支持 Anthropic 兼容 API(MiniMax、自定义代理)
 - **导出** — Markdown + HTML(独立可分享,带暗色主题)
-- **多源支持** — Claude Code (`~/.claude/`) + OpenClaw (`~/.openclaw/`) + 自定义数据源根目录(热重载)
+- **多源支持** — Claude Code (`~/.claude/`) + OpenClaw (`~/.openclaw/`) + Kimi Code (`~/.kimi-code/`) + DeepSeek Harness (`~/.dsh/`, zstd 透明解压) + 自定义数据源根目录(热重载)
 - **扩展设计** — `BlockRegistry` 模式 + 未知 block 自动 `UnknownBlockCard` 兜底
 - **主题与 i18n** — 深色/浅色/跟随系统;默认 zh-CN,可切 en-US
 
 ### 工程化
 
-- **单元测试** — Rust 107 + TS shared 41 + TS frontend 308 = **456 个测试**
+- **单元测试** — Rust 376 + TS shared 54 + TS frontend 687 = **1117 个测试**
 - **路径安全** — Tauri 命令词法检查 + `assert_within_any_root` + Reveal workspace 沙箱(可放开),防 `../../etc/passwd`
 - **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
 - **CI/CD** — GitHub Actions 三平台并行;docs-only 推送跳过 CI (paths-ignore)
@@ -194,7 +213,7 @@ pnpm tauri build
 
 ### 首次使用
 
-1. 启动应用,会话列表默认加载 `~/.openclaw/agents/` 下的所有会话 (项目起点);可在左侧栏切到 `Claude Code` 查看 `~/.claude/projects/` 会话
+1. 启动应用,会话列表默认加载 `~/.openclaw/agents/` 下的所有会话 (项目起点);可在左侧栏切到 `Claude Code` / `Kimi Code` / `DeepSeek Harness` 查看其他 source
 2. 点击任意会话卡片查看完整转录
 3. 按 `Cmd+K` (macOS) 或 `Ctrl+K` (Windows/Linux) 全局搜索
 4. 按 `Cmd+F` 在当前会话内搜索
@@ -239,6 +258,8 @@ pnpm tauri build
 │  ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl           │
 │  ~/.claude/sessions/<pid>.json                           │
 │  ~/.openclaw/agents/<id>/sessions/<uuid>.jsonl          │
+│  ~/.kimi-code/sessions/wd_*/session_*/agents/main/wire.jsonl │
+│  ~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -427,7 +448,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 <details>
 <summary><b>路径穿越攻击防护</b></summary>
 
-所有 Tauri 命令的路径参数都做词法检查,必须在 `~/.claude/` 或 `~/.openclaw/` 下。如果看到 `PathSecurity` 错误,说明传入了非法路径。
+所有 Tauri 命令的路径参数都做词法检查,必须在已知 source root (`~/.claude/` / `~/.openclaw/` / `~/.kimi-code/` / `~/.dsh/`) 下。如果看到 `PathSecurity` 错误,说明传入了非法路径。
 
 </details>
 
@@ -437,8 +458,18 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 完整版本历史看 [CHANGELOG.md](CHANGELOG.md)。
 
-计划中(v0.6.1+):MultiEdit 专属 diff / ToolResultCard spillover / 时区自定义 IANA / 会话对比 / 拖拽导入 JSONL / VS Code 集成 / OpenAI ChatCompletion 兼容 LLM 后端 / i18n 完善(英文/日文)。
+5 行 release timeline:
 
+- **v0.9.28** — DeepSeek Harness 第 4 种 source (zstd 透明解压)
+- **v0.9.27** — M10 Pass 2→Pass 1 单 pass 切流 (47 列 INSERT)
+- **v0.9.26** — M9 Pass 1↔Pass 2 parallel-run validation
+- **v0.9.25** — snake/camel 第二阶段撤兼容
+- **v0.9.24** — `SessionHeader` + `SessionNotesPanel` + `useSessionActions` 抽离
+
+计划中(v0.9.29+):dsh `parent_uuid` / dsh subagent walk / `kimi_token_usage` rename → `session_token_usage` / `meta_banner` for dsh permission·approval·sandbox / dsh streaming-chunk 可视化 / OpenAI ChatCompletion 兼容 LLM 后端 / i18n 完善(英文/日文)。
+
+- [ ] **dsh parent_uuid 关联** — wire 暂无字段,等 dsh schema 加
+- [ ] **dsh subagent walk** — `~/.dsh/sessions/` 没观察到 `subagents/` layout
 - [ ] **OpenAI ChatCompletion 兼容** — 大模型后端多支持
 - [ ] **i18n 完善** — 英文/日文界面
 
@@ -453,7 +484,7 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 文档索引
 
-**架构与格式**:[ARCHITECTURE](docs/ARCHITECTURE.md) · [PARSER_ARCHITECTURE](docs/PARSER_ARCHITECTURE.md) · [OPENCLAW_SESSION_FORMAT](docs/OPENCLAW_SESSION_FORMAT.md)
+**架构与格式**:[ARCHITECTURE](docs/ARCHITECTURE.md) · [PARSER_ARCHITECTURE](docs/PARSER_ARCHITECTURE.md) · [OPENCLAW_SESSION_FORMAT](docs/OPENCLAW_SESSION_FORMAT.md) · [ADR 0002 dsh source](src-tauri/docs/adr/0002-dsh-source-m11.md)
 
 **工程实践**:[RELEASING](docs/RELEASING.md) · [CROSS_PLATFORM_BUILD](docs/CROSS_PLATFORM_BUILD.md) · [SECURITY](docs/SECURITY.md) · [E2E_TESTING](docs/E2E_TESTING.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
 
@@ -470,6 +501,8 @@ API Key 错误或 Base URL 不对。在设置页检查:
 - [Tauri](https://tauri.app/) — 出色的跨平台桌面框架
 - [OpenClaw](https://github.com/openclaw/openclaw) — 启发了本项目
 - [Claude Code](https://claude.com/code) — JSONL schema 的事实标准
+- [Kimi Code](https://kimi.moonshot.cn/) — Moonshot AI CLI
+- [DeepSeek Harness](https://github.com/deepseek-ai) — zstd-compressed wire format
 - [pi-coding-agent](https://github.com/earendil-works/pi-coding-agent) — OpenClaw 会话格式参考
 
 ---

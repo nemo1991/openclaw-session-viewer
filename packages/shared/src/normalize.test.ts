@@ -4,6 +4,7 @@ import type { OpenClawEntry } from "./openclaw-types.js";
 import {
   normalizeClaudeRecord,
   normalizeOpenClawEntry,
+  normalizeDshRecord,
   emptyQuickMeta,
   mergeQuickMeta,
   guessWorkspaceFromProjectKey,
@@ -254,5 +255,134 @@ describe("guessWorkspaceFromProjectKey", () => {
 
   it("decodes standard key", () => {
     expect(guessWorkspaceFromProjectKey("-Users-foo-bar")).toBe("/Users/foo/bar");
+  });
+});
+
+// v0.9.28 (M11): dsh wire normalize
+describe("normalizeDshRecord", () => {
+  it("returns null for null/undefined input", () => {
+    expect(normalizeDshRecord(null, 0)).toBeNull();
+    expect(normalizeDshRecord(undefined, 0)).toBeNull();
+  });
+
+  it("returns null for object missing type", () => {
+    expect(normalizeDshRecord({ foo: "bar" }, 0)).toBeNull();
+  });
+
+  it("normalizes user/message with text content", () => {
+    const r = normalizeDshRecord(
+      {
+        type: "user/message",
+        seq: 1,
+        time: 1787100701000,
+        data: { content: [{ type: "text", text: "hi" }] },
+      },
+      0
+    );
+    expect(r).not.toBeNull();
+    expect(r!.role).toBe("user");
+    expect(r!.blocks).toHaveLength(1);
+    expect(r!.blocks[0]?.kind).toBe("text");
+    expect(r!.timestamp).toBe(new Date(1787100701000).toISOString());
+  });
+
+  it("normalizes assistant/message with reasoning+text+tool-call", () => {
+    const r = normalizeDshRecord(
+      {
+        type: "assistant/message",
+        seq: 2,
+        time: 1787100704000,
+        data: {
+          message: {
+            source: { model: "deepseek-v4-flash" },
+            content: [
+              { type: "reasoning", text: "thinking" },
+              { type: "text", text: "hello" },
+              { type: "tool-call", id: "c1", name: "Bash", arguments: '{"command":"ls"}' },
+            ],
+          },
+          usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 200 },
+        },
+      },
+      1
+    );
+    expect(r).not.toBeNull();
+    expect(r!.role).toBe("assistant");
+    expect(r!.model).toBe("deepseek-v4-flash");
+    expect(r!.blocks).toHaveLength(3);
+    expect(r!.tokenUsage).toEqual({
+      input: 100,
+      output: 50,
+      cacheRead: 200,
+      cacheWrite: 0,
+    });
+    const tool = r!.blocks.find((b) => b.kind === "tool_use");
+    expect(tool?.kind).toBe("tool_use");
+    if (tool?.kind === "tool_use") {
+      expect(tool.name).toBe("Bash");
+      expect(tool.input).toEqual({ command: "ls" });
+    }
+  });
+
+  it("normalizes tool/result with isError=false", () => {
+    const r = normalizeDshRecord(
+      {
+        type: "tool/result",
+        seq: 4,
+        time: 100,
+        data: {
+          message: {
+            source: { callId: "call_00_1" },
+            content: [{ type: "tool-result", isError: false }],
+          },
+        },
+      },
+      3
+    );
+    expect(r).not.toBeNull();
+    expect(r!.role).toBe("tool");
+    expect(r!.blocks).toHaveLength(1);
+    const block = r!.blocks[0]!;
+    expect(block.kind).toBe("tool_result");
+    if (block.kind === "tool_result") {
+      expect(block.toolUseId).toBe("call_00_1");
+      expect(block.isError).toBe(false);
+    }
+  });
+
+  it("filters streaming chunks to null", () => {
+    expect(
+      normalizeDshRecord({ type: "assistant/chunk" }, 0)
+    ).toBeNull();
+    expect(
+      normalizeDshRecord({ type: "reasoning-chunks" }, 0)
+    ).toBeNull();
+    expect(
+      normalizeDshRecord({ type: "text-chunks" }, 0)
+    ).toBeNull();
+    expect(
+      normalizeDshRecord({ type: "tool-call-chunks" }, 0)
+    ).toBeNull();
+  });
+
+  it("emits session header as meta", () => {
+    const r = normalizeDshRecord(
+      { type: "session", id: "s1", agentPreset: "cordis" },
+      0
+    );
+    expect(r).not.toBeNull();
+    expect(r!.role).toBe("meta");
+    expect(r!.rawType).toBe("session");
+    expect(r!.blocks[0]?.kind).toBe("meta");
+  });
+
+  it("emits unknown types as meta without panicking", () => {
+    const r = normalizeDshRecord(
+      { type: "permission/preset", data: { foo: 1 } },
+      0
+    );
+    expect(r).not.toBeNull();
+    expect(r!.role).toBe("meta");
+    expect(r!.rawType).toBe("permission/preset");
   });
 });

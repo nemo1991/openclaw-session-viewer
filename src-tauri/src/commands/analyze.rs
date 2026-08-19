@@ -14,6 +14,7 @@ use crate::fs::source::source_from_path;
 use crate::llm::anthropic::{stream_anthropic, AnthropicRequest};
 use crate::llm::context::build_context;
 use crate::parser::claude::normalize;
+use crate::parser::dsh::normalize_dsh_record;
 use crate::parser::jsonl;
 use crate::parser::kimi::normalize_kimi_record;
 use crate::parser::openclaw::normalize_entry;
@@ -73,10 +74,12 @@ pub async fn analyze_session(
 
     // 1) 解析整个文件
     let mut entries = Vec::new();
-    jsonl::for_each_line(path, |idx, _, v| {
+    jsonl::for_each_line_auto(path, |idx, _, v| {
         let norm = match src {
             "openclaw" => normalize_entry(v, idx),
             "kimi" => normalize_kimi_record(v, idx),
+            // v0.9.28 (M11): dsh wire pre-collapsed → 单 record normalize
+            "dsh" => normalize_dsh_record(v, idx),
             _ => normalize(v, idx),
         };
         if let Some(n) = norm {

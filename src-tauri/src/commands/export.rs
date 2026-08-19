@@ -6,6 +6,7 @@ use std::path::Path;
 use crate::error::AppResult;
 use crate::fs::source::source_from_path;
 use crate::parser::claude::normalize;
+use crate::parser::dsh::normalize_dsh_record;
 use crate::parser::jsonl;
 use crate::parser::kimi::normalize_kimi_record;
 use crate::parser::openclaw::normalize_entry;
@@ -22,10 +23,12 @@ pub async fn export_markdown(path: String, out_path: String) -> AppResult<()> {
     let mut md = String::new();
     md.push_str(&format!("# 会话导出\n\n**文件**: `{}`\n\n", path));
 
-    jsonl::for_each_line(jsonl_path, |idx, _, v| {
+    jsonl::for_each_line_auto(jsonl_path, |idx, _, v| {
         let norm = match src {
             "openclaw" => normalize_entry(v, idx),
             "kimi" => normalize_kimi_record(v, idx),
+            // v0.9.28 (M11): dsh wire pre-collapsed → 单 record normalize
+            "dsh" => normalize_dsh_record(v, idx),
             _ => normalize(v, idx),
         };
         if let Some(n) = norm {
@@ -52,10 +55,12 @@ pub async fn export_html(path: String, out_path: String) -> AppResult<()> {
         escape_html(&path)
     ));
 
-    jsonl::for_each_line(jsonl_path, |idx, _, v| {
+    jsonl::for_each_line_auto(jsonl_path, |idx, _, v| {
         let norm = match src {
             "openclaw" => normalize_entry(v, idx),
             "kimi" => normalize_kimi_record(v, idx),
+            // v0.9.28 (M11): dsh wire pre-collapsed → 单 record normalize
+            "dsh" => normalize_dsh_record(v, idx),
             _ => normalize(v, idx),
         };
         if let Some(n) = norm {

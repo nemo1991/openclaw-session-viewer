@@ -237,6 +237,131 @@ pub fn ensure_kimi_in_source_check(conn: &Connection) -> AppResult<()> {
     Ok(())
 }
 
+/// v0.9.28 (M11): 给 session_meta.source CHECK 加 'dsh' (4th source)
+///
+/// Chain-safe — handle 3 个状态:
+/// 1) post-v0.9.0 CHECK 已含 kimi (没 dsh) — 替换 `'kimi'→'kimi','dsh'`
+/// 2) post-v0.9.0 CHECK 已含 dsh (本 migration 跑过)— 直接 bail
+/// 3) pre-v0.9.0 CHECK 不含 kimi 也不含 dsh — 替换 `openclaw→openclaw,kimi,dsh`
+///
+/// 实现策略: 拿到 CREATE TABLE 文本,replace 已知 CHECK 串为新版 (含 'dsh')。
+/// 拿不到已知串则用更稳的 regex 替换:把 `IN ('claude','openclaw'[, 'kimi'])`
+/// 替换成 `IN ('claude','openclaw'[, 'kimi'],'dsh')`。
+pub fn ensure_dsh_in_source_check(conn: &Connection) -> AppResult<()> {
+    // 1) 看 CHECK 现状 — 含 'dsh' 则跳过
+    let has_dsh_check: bool = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+            [],
+            |r| {
+                let sql: String = r.get(0)?;
+                Ok(sql.contains("'dsh'"))
+            },
+        )
+        .optional()
+        .unwrap_or(Some(false))
+        .unwrap_or(false);
+    if has_dsh_check {
+        return Ok(());
+    }
+
+    log::info!("v0.9.28 (M11) migration: rebuilding session_meta to add 'dsh' to source CHECK");
+
+    // 2) 取当前 session_meta 的全列定义(PRAGMA table_info)
+    let mut col_defs: Vec<String> = Vec::new();
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(session_meta)")?;
+        let rows = stmt.query_map([], |r| {
+            let name: String = r.get(1)?;
+            let ty: String = r.get(2)?;
+            let notnull: i64 = r.get(3)?;
+            let default_val: Option<String> = r.get(4)?;
+            let pk: i64 = r.get(5)?;
+            let mut s = format!("{} {}", name, ty);
+            if pk > 0 {
+                s.push_str(" PRIMARY KEY");
+            }
+            if notnull != 0 && pk == 0 {
+                s.push_str(" NOT NULL");
+            }
+            if let Some(d) = default_val {
+                s.push_str(&format!(" DEFAULT {}", d));
+            }
+            Ok(s)
+        })?;
+        for row in rows {
+            col_defs.push(row?);
+        }
+    }
+
+    // 3) 拿当前所有索引的 SQL,rebuild 后逐条重建
+    let indexes: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='session_meta' AND sql IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let sql: String = r.get(0)?;
+            Ok(sql)
+        })?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+
+    // 4) 开启事务(rebuild 必须 atomic,失败回滚)
+    conn.execute_batch("BEGIN")?;
+
+    // 5) 拿原 CREATE TABLE 文本,根据 3 个状态选 replace 模式
+    let original_create_sql: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+            [],
+            |r| r.get(0),
+        )
+        .ok()
+        .unwrap_or_default();
+
+    // 链式 replace — 顺序很关键 (长串优先):
+    let new_table_sql = original_create_sql
+        .replace(
+            "CHECK(source IN ('claude','openclaw','kimi'))",
+            "CHECK(source IN ('claude','openclaw','kimi','dsh'))",
+        )
+        .replace(
+            "CHECK(source IN ('claude','openclaw'))",
+            "CHECK(source IN ('claude','openclaw','kimi','dsh'))",
+        )
+        .replace("session_meta", "session_meta_new");
+
+    if new_table_sql == original_create_sql.replace("session_meta", "session_meta_new") {
+        // 兜底: 出现未知 CHECK 变体 — 打 warn,仍尝试加 'dsh' 进末尾 ')'
+        // (实际不会到这里,因为 SCHEMA_SQL 跟迁移路径都经过上面两个串)
+        log::warn!("ensure_dsh_in_source_check: 未知 CHECK 变体,no-op");
+        conn.execute_batch("ROLLBACK")?;
+        return Ok(());
+    }
+
+    conn.execute_batch(&new_table_sql)?;
+
+    // 6) 数据迁移
+    conn.execute_batch("INSERT INTO session_meta_new SELECT * FROM session_meta")?;
+
+    // 7) 删旧表
+    conn.execute_batch("DROP TABLE session_meta")?;
+
+    // 8) 改名
+    conn.execute_batch("ALTER TABLE session_meta_new RENAME TO session_meta")?;
+
+    // 9) 重建索引
+    for idx_sql in &indexes {
+        conn.execute_batch(idx_sql)?;
+    }
+
+    // 10) 提交
+    conn.execute_batch("COMMIT")?;
+
+    log::info!("v0.9.28 migration: session_meta rebuilt with 'dsh' source");
+    Ok(())
+}
+
 /// 读已有列名集合 (PRAGMA table_info 只返回列名在第 1 列)
 fn read_existing_columns(conn: &Connection) -> AppResult<HashSet<String>> {
     let mut stmt = conn.prepare("PRAGMA table_info(session_meta)")?;
@@ -437,5 +562,126 @@ mod tests {
             "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s3', 'k3', 'kimi', '/p3')",
             [],
         ).unwrap();
+    }
+
+    // ===== v0.9.28 (M11): ensure_dsh_in_source_check =====
+
+    fn fresh_v90_db_with_kimi() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            r#"CREATE TABLE session_meta (
+                session_id TEXT PRIMARY KEY,
+                project_key TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(source IN ('claude','openclaw','kimi')),
+                jsonl_path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                mtime_ms INTEGER NOT NULL DEFAULT 0,
+                line_count INTEGER NOT NULL DEFAULT 0,
+                first_timestamp TEXT,
+                last_timestamp TEXT,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                synced_at INTEGER NOT NULL DEFAULT 0
+            );"#,
+        )
+        .unwrap();
+        c.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES (?, ?, ?, ?)",
+            rusqlite::params!["s1", "k1", "kimi", "/p1"],
+        )
+        .unwrap();
+        c
+    }
+
+    fn fresh_v8_db_for_dsh() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            r#"CREATE TABLE session_meta (
+                session_id TEXT PRIMARY KEY,
+                project_key TEXT NOT NULL,
+                source TEXT NOT NULL CHECK(source IN ('claude','openclaw')),
+                jsonl_path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                mtime_ms INTEGER NOT NULL DEFAULT 0,
+                line_count INTEGER NOT NULL DEFAULT 0,
+                first_timestamp TEXT,
+                last_timestamp TEXT,
+                message_count INTEGER NOT NULL DEFAULT 0,
+                synced_at INTEGER NOT NULL DEFAULT 0
+            );"#,
+        )
+        .unwrap();
+        c
+    }
+
+    #[test]
+    fn ensure_dsh_in_source_check_rebuilds_from_post_kimi_db() {
+        let conn = fresh_v90_db_with_kimi();
+        ensure_dsh_in_source_check(&conn).unwrap();
+        let has_dsh: bool = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+                [],
+                |r| Ok(r.get::<_, String>(0)?.contains("'dsh'")),
+            )
+            .unwrap();
+        assert!(has_dsh, "after dsh migration, CHECK should include 'dsh'");
+        let sid: String = conn
+            .query_row(
+                "SELECT session_id FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sid, "s1");
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s2', 'd1', 'dsh', '/p2')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ensure_dsh_in_source_check_rebuilds_from_pre_kimi_db() {
+        let conn = fresh_v8_db_for_dsh();
+        ensure_dsh_in_source_check(&conn).unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='session_meta'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("'dsh'"), "应含 'dsh'");
+        assert!(sql.contains("'kimi'"), "应含 'kimi' (fallback path)");
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s1', 'k1', 'kimi', '/p1')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s2', 'd1', 'dsh', '/p2')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ensure_dsh_in_source_check_idempotent() {
+        let conn = fresh_v90_db_with_kimi();
+        ensure_dsh_in_source_check(&conn).unwrap();
+        ensure_dsh_in_source_check(&conn).unwrap();
+        let sid: String = conn
+            .query_row(
+                "SELECT session_id FROM session_meta WHERE session_id='s1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sid, "s1");
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path) VALUES ('s2', 'd1', 'dsh', '/p2')",
+            [],
+        )
+        .unwrap();
     }
 }

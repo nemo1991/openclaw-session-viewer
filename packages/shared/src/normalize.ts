@@ -8,7 +8,8 @@ import type { KimiRecord } from "./kimi-types.js";
 import { decodeClaudeProjectKey } from "./paths.js";
 
 /** v0.9.0: 加 Kimi Code (Moonshot Kimi CLI) 作为第三种 source */
-export type SessionSource = "claude" | "openclaw" | "kimi";
+/** v0.9.28 (M11): 加 DeepSeek Harness (dsh) 作为第四种 source */
+export type SessionSource = "claude" | "openclaw" | "kimi" | "dsh";
 
 /** 单个会话的元数据 */
 export interface SessionMeta {
@@ -555,6 +556,177 @@ function stringifyUnknown(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+// === v0.9.28 (M11): DeepSeek Harness wire normalize ===
+
+/**
+ * v0.9.28 (M11): dsh 单条 record → NormalizedMessage (前端 replay 路径)
+ *
+ * 跟后端 `parser/dsh.rs::normalize_dsh_record` 行为对齐:
+ * - `session` → role=meta (header)
+ * - `user/message` → role=user, content[].text → text blocks
+ * - `assistant/message` → role=assistant;content[].type 分派:
+ *   - `reasoning` → thinking
+ *   - `text` → text
+ *   - `tool-call` → tool_use (arguments 是 JSON string → parse 后填 input)
+ * - `tool/call` → role=meta(独立事件,声明 callId→name 关系)
+ * - `tool/result` → role=tool;`data.message.content[0].isError` → is_error flag
+ * - 流式 chunk(`assistant/chunk`/`reasoning-chunks`/`text-chunks`/`tool-call-chunks`) → null 跳过
+ * - 其他 lifecycle/permission/sandbox → role=meta
+ * - 未知 type → role=meta,不 panic
+ */
+export function normalizeDshRecord(
+  record: unknown,
+  index: number
+): NormalizedMessage | null {
+  if (!record || typeof record !== "object") return null;
+  const obj = record as Record<string, unknown>;
+  const type = typeof obj.type === "string" ? obj.type : "";
+  if (!type) return null;
+
+  const id = `dsh-${type}-${index}`;
+  const timeNum = typeof obj.time === "number" ? obj.time : null;
+  const timestamp = timeNum != null ? new Date(timeNum).toISOString() : undefined;
+  const data = obj.data && typeof obj.data === "object" ? (obj.data as Record<string, unknown>) : null;
+
+  switch (type) {
+    case "session":
+      return {
+        id,
+        role: "meta",
+        timestamp,
+        blocks: [{ kind: "meta", label: "session.header", payload: obj }],
+        rawType: type,
+      };
+    case "user/message": {
+      const content = data?.content;
+      const blocks = dshContentToBlocks(content, "user");
+      if (blocks.length === 0) {
+        blocks.push({ kind: "text", text: "" });
+      }
+      return { id, role: "user", timestamp, blocks, rawType: type };
+    }
+    case "assistant/message": {
+      const message = data?.message;
+      const m = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
+      const source = (m.source && typeof m.source === "object" ? m.source : {}) as Record<string, unknown>;
+      const model = typeof source.model === "string" ? source.model : undefined;
+      const usage = data?.usage && typeof data.usage === "object" ? (data.usage as Record<string, unknown>) : null;
+      const tokenUsage = usage
+        ? {
+            input: asNumber(usage.inputTokens),
+            output: asNumber(usage.outputTokens),
+            cacheRead: asNumber(usage.cacheReadTokens),
+            cacheWrite: asNumber(usage.cacheCreationTokens),
+          }
+        : undefined;
+      const blocks = dshContentToBlocks(m.content, "assistant");
+      return {
+        id,
+        role: "assistant",
+        timestamp,
+        model,
+        tokenUsage,
+        blocks,
+        rawType: type,
+      };
+    }
+    case "tool/call":
+      return {
+        id,
+        role: "meta",
+        timestamp,
+        blocks: [{ kind: "meta", label: "dsh.tool-call", payload: obj }],
+        rawType: type,
+      };
+    case "tool/result": {
+      const message = data?.message;
+      const m = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
+      const firstContent =
+        Array.isArray(m.content) && m.content.length > 0
+          ? (m.content[0] as Record<string, unknown>)
+          : null;
+      const isError = firstContent?.isError === true;
+      const callId =
+        m.source && typeof m.source === "object"
+          ? (m.source as Record<string, unknown>).callId
+          : null;
+      const toolUseId = typeof callId === "string" ? callId : id;
+      const text = firstContent
+        ? firstContent.content != null
+          ? stringifyUnknown(firstContent.content)
+          : ""
+        : "";
+      return {
+        id,
+        role: "tool",
+        timestamp,
+        blocks: [{ kind: "tool_result", toolUseId, content: text, isError }],
+        rawType: type,
+      };
+    }
+    // 流式 chunk — 跳过 (跟后端 dsh.rs 一致)
+    case "assistant/chunk":
+    case "reasoning-chunks":
+    case "text-chunks":
+    case "tool-call-chunks":
+      return null;
+    default:
+      return {
+        id,
+        role: "meta",
+        timestamp,
+        blocks: [{ kind: "meta", label: `dsh.${type}`, payload: obj }],
+        rawType: type,
+      };
+  }
+}
+
+function dshContentToBlocks(content: unknown, _role: string): NormalizedBlock[] {
+  if (!Array.isArray(content)) return [];
+  const out: NormalizedBlock[] = [];
+  for (const item of content) {
+    if (!item || typeof item !== "object") continue;
+    const it = item as { type?: string; text?: string; thinking?: string; name?: string; id?: string; arguments?: unknown; [k: string]: unknown };
+    switch (it.type) {
+      case "reasoning":
+        out.push({ kind: "thinking", text: typeof it.text === "string" ? it.text : "" });
+        break;
+      case "text":
+        out.push({ kind: "text", text: typeof it.text === "string" ? it.text : "" });
+        break;
+      case "tool-call": {
+        let input: unknown = it.arguments;
+        if (typeof it.arguments === "string") {
+          try {
+            input = JSON.parse(it.arguments);
+          } catch {
+            input = it.arguments;
+          }
+        }
+        out.push({
+          kind: "tool_use",
+          id: typeof it.id === "string" ? it.id : "",
+          name: typeof it.name === "string" ? it.name : "",
+          input,
+        });
+        break;
+      }
+      default:
+        out.push({ kind: "meta", label: it.type ?? "unknown", payload: it });
+    }
+  }
+  return out;
+}
+
+function asNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
 }
 
 // === v0.9.0: Kimi Code wire.jsonl normalize ===

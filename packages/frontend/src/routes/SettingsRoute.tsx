@@ -45,12 +45,13 @@ export default function SettingsRoute() {
   const handleAddCustomRoot = async () => {
     const dir = await apiPickExportDir();
     if (!dir) return;
-    // 自动探测 kind:从路径最后一段看是不是 .openclaw/.claude/.kimi
+    // 自动探测 kind:从路径最后一段看是不是 .openclaw/.claude/.kimi/.dsh
     // (更精确的探测在后端 probe,这里只是 UI 初值)
     const lastSeg = dir.split(/[/\\]/).filter(Boolean).pop() ?? dir;
     const looksLikeOpenclaw = lastSeg.toLowerCase().includes("openclaw");
     const looksLikeClaude = lastSeg.toLowerCase().includes("claude");
     const looksLikeKimi = lastSeg.toLowerCase().includes("kimi");
+    const looksLikeDsh = lastSeg.toLowerCase().includes("dsh");
     let kind: CustomRootKind;
     if (looksLikeKimi && (looksLikeClaude || looksLikeOpenclaw)) {
       // 混用 — 落到最宽松,实际 probe 在后端再 refine
@@ -63,6 +64,9 @@ export default function SettingsRoute() {
       kind = "Claude";
     } else if (looksLikeKimi) {
       // v0.9.0: CustomRootKind union 不含 "Kimi"(用 Both 兜底 — 后端 probe 识别)
+      kind = "Both";
+    } else if (looksLikeDsh) {
+      // v0.9.28 (M11): CustomRootKind union 不含 "dsh"(用 Both 兜底 — 后端 probe 识别)
       kind = "Both";
     } else {
       kind = "OpenClaw"; // 默认猜 OpenClaw(用户最常见场景)
@@ -266,6 +270,8 @@ export default function SettingsRoute() {
                 <code>~/.openclaw</code>
                 {/* v0.9.0: Kimi Code — v0.9.1: 默认 home 改为 ~/.kimi-code */}
                 <code>~/.kimi-code</code>
+                {/* v0.9.28 (M11): DeepSeek Harness */}
+                <code>~/.dsh</code>
               </div>
             </div>
           </div>

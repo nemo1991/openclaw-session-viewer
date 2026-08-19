@@ -254,6 +254,36 @@ pub(crate) async fn sync_once_with_sink(state: &AppState, sink: &dyn EventSink) 
         }
     }
 
+    // 4) v0.9.28 (M11): dsh sessions_root — zstd jsonl 走 list_dsh_sessions 拉每个 session
+    for sessions_root in paths_snapshot.all_dsh_sessions_dirs() {
+        if !sessions_root.exists() {
+            continue;
+        }
+        let dsh_sessions = match walker::list_dsh_sessions(sessions_root) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("scan dsh {:?} failed: {e}", sessions_root);
+                continue;
+            }
+        };
+        for ds in dsh_sessions {
+            let jsonl_path = &ds.zst_path;
+            seen_paths.insert(jsonl_path.to_string_lossy().to_string());
+            total += 1;
+            // agent_id 固定 "main" (dsh 无 subagent, 跟 kimi 对齐)
+            match sync_one_file(state, jsonl_path, "dsh", Some("main"), None, None, None).await {
+                Ok(_) => {
+                    done += 1;
+                }
+                Err(e) => {
+                    failed += 1;
+                    log::warn!("sync dsh {:?} failed: {e:?}", jsonl_path);
+                }
+            }
+            emit_progress(sink, total, done, failed, Some(jsonl_path));
+        }
+    }
+
     // v0.8.1: orphan sweep — 删除已被磁盘删除的 session_meta 行。
     // 安全条件:该行不在 seen_paths 内,且 session_id 没有任何 override
     // (placeholder rows: 用户对未同步的 session 做 rename 时,INSERT 一行
@@ -437,6 +467,11 @@ async fn sync_one_file(
         "kimi" => {
             let ks = crate::commands::sessions::resolve_kimi_from_jsonl(path)?;
             crate::commands::sessions::build_kimi_session_meta(&ks)?
+        }
+        // v0.9.28 (M11): dsh — 从 session.jsonl.zstd 父/祖父反查 → build_dsh_session_meta
+        "dsh" => {
+            let ds = crate::commands::sessions::resolve_dsh_from_jsonl(path)?;
+            crate::commands::sessions::build_dsh_session_meta(&ds)?
         }
         _ => return Err(AppError::Invalid(format!("未知 source: {source}"))),
     };

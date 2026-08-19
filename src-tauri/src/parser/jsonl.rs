@@ -12,6 +12,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::error::AppResult;
+use crate::parser::jsonl_zst;
 
 /// 一批解析结果
 pub struct Batch {
@@ -127,6 +128,48 @@ pub fn count_lines(path: &Path) -> AppResult<u64> {
     Ok(count)
 }
 
+// ---- v0.9.28: 透明 `.jsonl.zstd` 派发器 ----------------------------------
+//
+// 现有 3 个 source(claude / openclaw / kimi)继续走非压缩路径,
+// 4th source(deepseek-harness / "dsh")命中 `.zst` 扩展名后由 `jsonl_zst` 透明解压。
+// 调用方无需感知压缩格式存在。
+
+fn is_zstd_path(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("zstd")
+        || path.extension().and_then(|e| e.to_str()) == Some("zst")
+}
+
+/// 派发版 `for_each_line`:扩展名 `.zstd` → zstd 解压,否则 → 普通 JSONL。
+pub fn for_each_line_auto<F>(path: &Path, on_line: F) -> AppResult<()>
+where
+    F: FnMut(usize, u64, &serde_json::Value),
+{
+    if is_zstd_path(path) {
+        jsonl_zst::for_each_line_zst(path, on_line)
+    } else {
+        for_each_line(path, on_line)
+    }
+}
+
+/// 派发版 `parse_first_n`:同上的派发逻辑。
+pub fn parse_first_n_auto(path: &Path, max: usize) -> AppResult<Vec<serde_json::Value>> {
+    if is_zstd_path(path) {
+        jsonl_zst::parse_first_n_zst(path, max)
+    } else {
+        parse_first_n(path, max)
+    }
+}
+
+/// 派发版 `count_lines`:同上的派发逻辑。
+#[allow(dead_code)]
+pub fn count_lines_auto(path: &Path) -> AppResult<u64> {
+    if is_zstd_path(path) {
+        jsonl_zst::count_lines_zst(path)
+    } else {
+        count_lines(path)
+    }
+}
+
 /// 从文件尾部读取(用于"加载更新的尾部")
 #[allow(dead_code)]
 pub fn tail_lines(path: &Path, n: usize) -> AppResult<Vec<serde_json::Value>> {
@@ -235,5 +278,37 @@ mod tests {
         let p = write_temp("fewer.jsonl", content);
         let first = parse_first_n(&p, 10).unwrap();
         assert_eq!(first.len(), 2);
+    }
+
+    // v0.9.28: 派发器 *_auto 透传到 zstd 分支
+    #[test]
+    fn test_dispatch_wrappers_route_to_zstd() {
+        let dir = std::env::temp_dir().join("ocsv_test_dispatch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let zst_path = dir.join("dispatch.jsonl.zstd");
+        let raw = std::fs::File::create(&zst_path).unwrap();
+        let mut enc = zstd::Encoder::new(raw, 3).unwrap();
+        enc.write_all(b"{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n")
+            .unwrap();
+        enc.finish().unwrap();
+
+        assert_eq!(count_lines_auto(&zst_path).unwrap(), 3);
+        let first = parse_first_n_auto(&zst_path, 2).unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0]["a"], 1);
+        let mut got = vec![];
+        for_each_line_auto(&zst_path, |_, _, v| {
+            got.push(v["a"].as_i64().unwrap());
+        })
+        .unwrap();
+        assert_eq!(got, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_dispatch_wrappers_route_to_plain_jsonl() {
+        let p = write_temp("dispatch.jsonl", "{\"a\":1}\n{\"a\":2}\n");
+        assert_eq!(count_lines_auto(&p).unwrap(), 2);
+        let first = parse_first_n_auto(&p, 1).unwrap();
+        assert_eq!(first.len(), 1);
     }
 }

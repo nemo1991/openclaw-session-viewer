@@ -24,6 +24,8 @@ pub fn apply(conn: &Connection) -> AppResult<()> {
     crate::db::migrations::ensure_tables(conn)?;
     // v0.9.0: 给老 v0.8.x DB 的 session_meta.source CHECK 加 'kimi' (rebuild dance)
     crate::db::migrations::ensure_kimi_in_source_check(conn)?;
+    // v0.9.28 (M11): 给 session_meta.source CHECK 加 'dsh' (chain-safe rebuild dance)
+    crate::db::migrations::ensure_dsh_in_source_check(conn)?;
     Ok(())
 }
 
@@ -33,7 +35,7 @@ CREATE TABLE IF NOT EXISTS session_meta (
   session_id        TEXT PRIMARY KEY,
   project_key       TEXT NOT NULL,
   workspace_guess   TEXT,
-  source            TEXT NOT NULL CHECK(source IN ('claude','openclaw','kimi')),
+  source            TEXT NOT NULL CHECK(source IN ('claude','openclaw','kimi','dsh')),
   agent_id          TEXT,
   jsonl_path        TEXT NOT NULL UNIQUE,
   size_bytes        INTEGER NOT NULL,

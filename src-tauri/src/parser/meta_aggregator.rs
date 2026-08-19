@@ -831,6 +831,272 @@ fn flush_repeat_run_kimi(
     }
 }
 
+// ===== v0.9.28 (M11): DeepSeek Harness (dsh) wire format aggregator =====
+/// v0.9.28 (M11): dsh wire envelope 全量 enrich — 跟 kimi 同思路(读 envelope
+/// `data.*` 子对象),但字段名映射 dsh 的 `assistant/message` / `tool/result`
+/// / `user/message` 形态。token 列复用 `kimi_token_usage` (Option A 决策:
+/// 推迟到 v0.9.29 重命名列)。
+///
+/// 关键差异:
+/// - 用 `for_each_line_auto` 透明支持 `.jsonl.zstd`
+/// - `assistant/message` 已经是 pre-collapsed 终态(per-turn aggregate),
+///   一条 record 计一个 assistant message,thinking/text/tool-call 都从
+///   `data.message.content[]` 内 sub-part 派生
+/// - `tool/call` 提供 `data.callId → data.name` 反查,`tool/result` 错
+///   误时按 `data.message.source.callId` 反查到 tool name
+pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
+    use std::collections::{BTreeSet, HashMap};
+    let mut out = MetaExtras::default();
+    let mut tool_counts: HashMap<String, u32> = HashMap::new();
+    let mut model_set: BTreeSet<String> = BTreeSet::new();
+    // E: first/last assistant/message.time + first user/message.time
+    let mut first_user_time: Option<i64> = None;
+    let mut first_assistant_time: Option<i64> = None;
+    let mut last_assistant_time: Option<i64> = None;
+    // A: callId → tool name (tool/call 反查 tool/result)
+    let mut call_id_to_name: HashMap<String, String> = HashMap::new();
+    let mut tool_error_counts: HashMap<String, u32> = HashMap::new();
+    // B: repeat_run tracking (consecutive assistant/message 同 tool ≥ REPEAT_RUN_MIN)
+    let mut current_tool: Option<String> = None;
+    let mut current_count: u32 = 0;
+    // B: idle_gap tracking (相邻 assistant/message.time gap)
+    let mut prev_assistant_time: Option<i64> = None;
+    // token 聚合
+    let mut token_input: u64 = 0;
+    let mut token_output: u64 = 0;
+    let mut token_cache_read: u64 = 0;
+    let mut token_cache_write: u64 = 0;
+    let mut token_seen: bool = false;
+
+    jsonl::for_each_line_auto(path, |_idx, _byte, v| {
+        let obj = match v.as_object() {
+            Some(o) => o,
+            None => return,
+        };
+        let top_type = match obj.get("type").and_then(|x| x.as_str()) {
+            Some(t) => t,
+            None => return,
+        };
+        let data = obj.get("data").and_then(|x| x.as_object());
+        let time = obj.get("time").and_then(|x| x.as_i64());
+
+        match top_type {
+            "session" => {
+                if out.agent_name.is_none() {
+                    // v0.9.28: agentPreset 在 dsh wire 上是 envelope 顶层字段 (跟 data.agentPreset 不同)
+                    let preset = obj
+                        .get("agentPreset")
+                        .and_then(|x| x.as_str())
+                        .or_else(|| data.and_then(|d| d.get("agentPreset")).and_then(|x| x.as_str()));
+                    if let Some(p) = preset {
+                        out.agent_name = Some(p.to_string());
+                    }
+                }
+            }
+            "user/message" => {
+                out.user_message_count += 1;
+                if first_user_time.is_none() {
+                    first_user_time = time;
+                }
+            }
+            "assistant/message" => {
+                out.assistant_message_count += 1;
+                let message = data.and_then(|d| d.get("message")).and_then(|x| x.as_object());
+
+                // model from data.message.source.model
+                if let Some(model) = message
+                    .and_then(|m| m.get("source"))
+                    .and_then(|s| s.get("model"))
+                    .and_then(|x| x.as_str())
+                {
+                    model_set.insert(model.to_string());
+                }
+
+                // content[] → reasoning/text/tool-call 计数 + repeat_run tracking
+                // v0.9.28: 每条 assistant/message 可能含多个 tool-call part,按
+                // 出现顺序累加 repeat_run — 跟 kimi 同算法,只是把 tool.call event
+                // 替换成 content[] 内的 tool-call part。
+                let mut tool_call_count: u32 = 0;
+                if let Some(arr) = message
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for part in arr {
+                        let pt = part.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                        match pt {
+                            "reasoning" => {
+                                out.thinking_count += 1;
+                                out.text_message_count += 1;
+                            }
+                            "text" => {
+                                out.text_message_count += 1;
+                            }
+                            "tool-call" => {
+                                tool_call_count += 1;
+                                if let Some(name) = part.get("name").and_then(|x| x.as_str()) {
+                                    *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                                    // B: repeat_run — 同名累加, 改名 flush
+                                    if Some(name) == current_tool.as_deref() {
+                                        current_count += 1;
+                                    } else {
+                                        flush_repeat_run_dsh(
+                                            &mut out,
+                                            &mut current_tool,
+                                            &mut current_count,
+                                        );
+                                        current_tool = Some(name.to_string());
+                                        current_count = 1;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                // 整条 assistant/message 无 tool-call → flush 上一 run
+                if tool_call_count == 0 {
+                    flush_repeat_run_dsh(
+                        &mut out,
+                        &mut current_tool,
+                        &mut current_count,
+                    );
+                }
+
+                // B + E: assistant/message.time → first/last + idle_gap
+                if let Some(t) = time {
+                    if first_assistant_time.is_none() {
+                        first_assistant_time = Some(t);
+                    }
+                    last_assistant_time = Some(t);
+                    if let Some(prev) = prev_assistant_time {
+                        let delta = t - prev;
+                        if delta >= IDLE_GAP_THRESHOLD_MS {
+                            out.idle_gap_count += 1;
+                            out.idle_gap_max_ms = Some(match out.idle_gap_max_ms {
+                                Some(p) => p.max(delta as u64),
+                                None => delta as u64,
+                            });
+                        }
+                    }
+                    prev_assistant_time = Some(t);
+                }
+
+                // token 聚合 (data.usage.{input,output,cacheRead,cacheCreation,reasoning}Tokens)
+                if let Some(u) = data.and_then(|d| d.get("usage")) {
+                    token_seen = true;
+                    token_input += u.get("inputTokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                    token_output += u.get("outputTokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                    token_cache_read +=
+                        u.get("cacheReadTokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                    token_cache_write += u
+                        .get("cacheCreationTokens")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
+                    // reasoningTokens 不进 TokenUsage (4 元组没位置) — 静默 skip
+                }
+            }
+            "tool/call" => {
+                // A: 反查表 — tool/result 用 callId 找 name
+                let call_id = data.and_then(|d| d.get("callId")).and_then(|x| x.as_str());
+                let name = data.and_then(|d| d.get("name")).and_then(|x| x.as_str());
+                if let (Some(cid), Some(n)) = (call_id, name) {
+                    call_id_to_name.insert(cid.to_string(), n.to_string());
+                    // v0.9.28: 独立 `tool/call` event 也算一次 tool_usage(某些 dsh
+                    // session 把 tool-call 信息放在独立 envelope,不在
+                    // assistant/message.content[] 内)
+                    *tool_counts.entry(n.to_string()).or_insert(0) += 1;
+                }
+            }
+            "tool/result" => {
+                // A: data.message.content[0].isError → 反查 source.callId → name
+                let message = data.and_then(|d| d.get("message"));
+                let first_part = message
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| arr.first());
+                let is_error = first_part
+                    .and_then(|p| p.get("isError"))
+                    .and_then(|x| x.as_bool())
+                    .unwrap_or(false);
+                if is_error {
+                    out.error_count += 1;
+                    let call_id = message
+                        .and_then(|m| m.get("source"))
+                        .and_then(|s| s.get("callId"))
+                        .and_then(|x| x.as_str());
+                    if let Some(cid) = call_id {
+                        if let Some(name) = call_id_to_name.get(cid) {
+                            *tool_error_counts.entry(name.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    })?;
+
+    // 末尾 flush
+    flush_repeat_run_dsh(&mut out, &mut current_tool, &mut current_count);
+
+    // E: duration_seconds = last_assistant_time - first_assistant_time
+    if let (Some(f), Some(l)) = (first_assistant_time, last_assistant_time) {
+        let dur_ms = (l - f).max(0) as u64;
+        out.duration_seconds = Some(dur_ms / 1000);
+    }
+    // E: first_response_latency_ms = first_assistant_time - first_user_time
+    if let (Some(ut), Some(at)) = (first_user_time, first_assistant_time) {
+        let delta = at - ut;
+        if delta > 0 {
+            out.first_response_latency_ms = Some(delta as u64);
+        }
+    }
+    // A: tool_error sort desc
+    let mut tool_err_vec: Vec<(String, u32)> = tool_error_counts.into_iter().collect();
+    tool_err_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.tool_error = tool_err_vec;
+    // tool_usage sort desc
+    let mut tool_vec: Vec<(String, u32)> = tool_counts.into_iter().collect();
+    tool_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out.tool_usage = tool_vec;
+    // available_models BTreeSet → Vec (字典序)
+    out.available_models = model_set.into_iter().collect();
+    // kimi_token_usage (复用, dsh 也写这里)
+    if token_seen {
+        out.kimi_token_usage = Some(crate::model::TokenUsage {
+            input: token_input,
+            output: token_output,
+            cache_read: token_cache_read,
+            cache_write: token_cache_write,
+        });
+    }
+
+    Ok(out)
+}
+
+/// v0.9.28 (M11): dsh 专属 repeat_run flush — 跟 kimi flush 同算法,隔离命名空间
+fn flush_repeat_run_dsh(
+    out: &mut MetaExtras,
+    current_tool: &mut Option<String>,
+    current_count: &mut u32,
+) {
+    if let Some(tool) = current_tool.take() {
+        if *current_count as usize >= REPEAT_RUN_MIN {
+            out.repeat_run_count += 1;
+            let should_update = match (out.repeat_run_max_tool.as_ref(), out.repeat_run_max_count) {
+                (None, _) => true,
+                (Some(_), Some(prev)) if *current_count > prev => true,
+                _ => false,
+            };
+            if should_update {
+                out.repeat_run_max_tool = Some(tool);
+                out.repeat_run_max_count = Some(*current_count);
+            }
+        }
+        *current_count = 0;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1599,5 +1865,126 @@ mod tests {
         assert_eq!(tok.output, 90);
         assert_eq!(tok.cache_read, 1500);
         // context 跳过
+    }
+
+    // ===== v0.9.28 (M11): aggregate_dsh tests =====
+
+    #[test]
+    fn aggregate_dsh_basic_envelope_counts() {
+        // v0.9.28: 1 user/message + 1 assistant/message + 1 tool/result
+        let jsonl = r#"{"type":"session","id":"s1","agentPreset":"cordis","createdAt":1787100548509}
+{"type":"user/message","seq":1,"time":1787100701000,"data":{"id":"u1","content":[{"type":"text","text":"hi"}],"role":"user"}}
+{"type":"assistant/message","seq":2,"time":1787100704000,"data":{"turn":1,"step":1,"message":{"role":"assistant","source":{"kind":"model","provider":"deepseek-official","model":"deepseek-v4-flash"},"id":"a1","content":[{"type":"reasoning","text":"thinking"},{"type":"text","text":"hello"}]}}}
+{"type":"tool/call","seq":3,"time":1787100704100,"data":{"callId":"call_00_1","name":"Bash","arguments":"{\"command\":\"ls\"}"}}
+{"type":"tool/result","seq":4,"time":1787100704200,"data":{"message":{"source":{"kind":"tool","callId":"call_00_1"},"content":[{"type":"tool-result","isError":false}]}}}
+"#;
+        let p = write_tmp("dsh_basic.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        assert_eq!(m.agent_name.as_deref(), Some("cordis"));
+        assert_eq!(m.user_message_count, 1);
+        assert_eq!(m.assistant_message_count, 1);
+        assert_eq!(m.thinking_count, 1, "1 个 reasoning part");
+        assert_eq!(m.text_message_count, 2, "1 reasoning + 1 text 都算 text_message_count");
+        assert_eq!(m.tool_usage, vec![("Bash".to_string(), 1)]);
+        assert_eq!(m.available_models, vec!["deepseek-v4-flash".to_string()]);
+        assert_eq!(m.error_count, 0, "isError=false 不计数");
+        // duration = last - first assistant = 0 (只有 1 条 assistant)
+        assert_eq!(m.duration_seconds, Some(0));
+        // first_response_latency = assistant.time - user.time = 4000-1000 = 3000ms
+        assert_eq!(m.first_response_latency_ms, Some(3000));
+    }
+
+    #[test]
+    fn aggregate_dsh_aggregates_tokens_and_writes_to_kimi_column() {
+        // v0.9.28 Option A 决策: dsh token 复用 `kimi_token_usage` 列
+        let jsonl = r#"{"type":"assistant/message","seq":1,"time":1000,"data":{"message":{"role":"assistant","source":{"model":"m1"},"content":[{"type":"text","text":"x"}]},"usage":{"inputTokens":100,"outputTokens":50,"cacheReadTokens":200,"cacheCreationTokens":10}}}
+{"type":"assistant/message","seq":2,"time":2000,"data":{"message":{"role":"assistant","source":{"model":"m1"},"content":[{"type":"text","text":"y"}]},"usage":{"inputTokens":150,"outputTokens":75,"cacheReadTokens":300,"cacheCreationTokens":20}}}
+"#;
+        let p = write_tmp("dsh_tokens.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        let tok = m.kimi_token_usage.expect("token 应该有");
+        assert_eq!(tok.input, 250);
+        assert_eq!(tok.output, 125);
+        assert_eq!(tok.cache_read, 500);
+        assert_eq!(tok.cache_write, 30);
+    }
+
+    #[test]
+    fn aggregate_dsh_counts_errors_with_call_id_reverse_lookup() {
+        // v0.9.28: tool/result isError=true 累加 error_count,反查 tool/call.callId → tool name
+        let jsonl = r#"{"type":"tool/call","seq":1,"time":100,"data":{"callId":"c1","name":"Bash"}}
+{"type":"tool/result","seq":2,"time":200,"data":{"message":{"source":{"kind":"tool","callId":"c1"},"content":[{"type":"tool-result","isError":true,"content":[{"type":"text","text":"ENOENT"}]}]}}}
+{"type":"tool/call","seq":3,"time":300,"data":{"callId":"c2","name":"Read"}}
+{"type":"tool/result","seq":4,"time":400,"data":{"message":{"source":{"kind":"tool","callId":"c2"},"content":[{"type":"tool-result","isError":false}]}}}
+{"type":"tool/call","seq":5,"time":500,"data":{"callId":"c3","name":"Edit"}}
+{"type":"tool/result","seq":6,"time":600,"data":{"message":{"source":{"kind":"tool","callId":"c3"},"content":[{"type":"tool-result","isError":true}]}}}
+"#;
+        let p = write_tmp("dsh_errors.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        assert_eq!(m.error_count, 2, "2 个 isError=true 事件");
+        assert_eq!(
+            m.tool_error,
+            vec![
+                ("Bash".to_string(), 1),
+                ("Edit".to_string(), 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn aggregate_dsh_detects_repeat_run_and_idle_gap() {
+        // v0.9.28: 同 kimi 算法,锚点 assistant/message.time (epoch ms)
+        let jsonl = r#"{"type":"user/message","seq":1,"time":0,"data":{"content":[{"type":"text","text":"u"}]}}
+{"type":"assistant/message","seq":2,"time":100,"data":{"message":{"content":[{"type":"tool-call","name":"Bash","id":"c1"}]}}}
+{"type":"assistant/message","seq":3,"time":200,"data":{"message":{"content":[{"type":"tool-call","name":"Bash","id":"c2"}]}}}
+{"type":"assistant/message","seq":4,"time":300,"data":{"message":{"content":[{"type":"tool-call","name":"Bash","id":"c3"}]}}}
+{"type":"assistant/message","seq":5,"time":400,"data":{"message":{"content":[{"type":"tool-call","name":"Read","id":"c4"}]}}}
+{"type":"assistant/message","seq":6,"time":400000,"data":{"message":{"content":[{"type":"text","text":"done"}]}}}
+"#;
+        let p = write_tmp("dsh_repeat.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        // 3 连续 Bash + 1 Read + 1 text-only → repeat_run_count=1 (Bash × 3 ≥ minCount=3)
+        assert_eq!(m.repeat_run_count, 1);
+        assert_eq!(m.repeat_run_max_tool.as_deref(), Some("Bash"));
+        assert_eq!(m.repeat_run_max_count, Some(3));
+        // idle_gap: 400→400000 = 399600ms ≈ 6.66min > 5min → 1 个
+        assert_eq!(m.idle_gap_count, 1);
+        assert!(m.idle_gap_max_ms.unwrap_or(0) >= 5 * 60 * 1000);
+    }
+
+    #[test]
+    fn aggregate_dsh_thinking_count_distinguishes_reasoning_from_text() {
+        // v0.9.28: reasoning → thinking_count+1, text → thinking_count 不动;两者都 +text_message_count
+        let jsonl = r#"{"type":"assistant/message","seq":1,"time":1000,"data":{"message":{"content":[{"type":"reasoning","text":"r1"},{"type":"text","text":"t1"},{"type":"reasoning","text":"r2"}]}}}
+{"type":"assistant/message","seq":2,"time":2000,"data":{"message":{"content":[{"type":"text","text":"t2"}]}}}
+"#;
+        let p = write_tmp("dsh_thinking.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        assert_eq!(m.thinking_count, 2, "2 reasoning parts");
+        assert_eq!(m.text_message_count, 4, "reasoning+text 都算 text_message_count");
+    }
+
+    #[test]
+    fn aggregate_dsh_handles_zstd_fixture_transparently() {
+        // v0.9.28: for_each_line_auto 透明支持 .jsonl.zstd — 写一个 zstd fixture 确认 aggregator 走得通
+        let dir = std::env::temp_dir().join(format!("ocsv_dsh_zst_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zst_path = dir.join("dsh.jsonl.zstd");
+        let jsonl = r#"{"type":"session","agentPreset":"a","id":"s1","createdAt":1}
+{"type":"user/message","seq":1,"time":100,"data":{"content":[{"type":"text","text":"u"}]}}
+{"type":"assistant/message","seq":2,"time":200,"data":{"message":{"source":{"model":"m"},"content":[{"type":"text","text":"a"}]}}}
+"#;
+        let raw = std::fs::File::create(&zst_path).unwrap();
+        let mut enc = zstd::Encoder::new(raw, 3).unwrap();
+        use std::io::Write;
+        enc.write_all(jsonl.as_bytes()).unwrap();
+        enc.finish().unwrap();
+
+        let m = aggregate_dsh(&zst_path).expect("aggregate_dsh over zstd");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(m.agent_name.as_deref(), Some("a"));
+        assert_eq!(m.user_message_count, 1);
+        assert_eq!(m.assistant_message_count, 1);
+        assert_eq!(m.available_models, vec!["m".to_string()]);
     }
 }

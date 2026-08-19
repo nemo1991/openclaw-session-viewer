@@ -127,7 +127,7 @@ pub fn run() {
             let paths = AppPaths::new(home.clone(), &runtime_roots);
 
             log::info!(
-                "应用启动: claude_home={}, openclaw_home={:?}, custom_roots={}, db={:?}",
+                "应用启动: claude_home={}, openclaw_home={:?}, kimi_home={:?}, dsh_home={:?}, custom_roots={}, db={:?}",
                 paths
                     .default_root
                     .claude
@@ -139,6 +139,16 @@ pub fn run() {
                     .openclaw
                     .as_ref()
                     .map(|o| o.home.display().to_string()),
+                paths
+                    .default_root
+                    .kimi
+                    .as_ref()
+                    .map(|k| k.home.display().to_string()),
+                paths
+                    .default_root
+                    .dsh
+                    .as_ref()
+                    .map(|d| d.home.display().to_string()),
                 paths.custom_roots.len(),
                 app_config_dir.join("observer.db")
             );

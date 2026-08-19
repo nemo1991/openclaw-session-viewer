@@ -22,6 +22,8 @@ const zhCN = {
       openclaw: "OpenClaw",
       // v0.9.0: Kimi Code (Moonshot Kimi CLI)
       kimi: "Kimi Code",
+      // v0.9.28 (M11): DeepSeek Harness
+      dsh: "DeepSeek Harness",
     },
     sort: {
       recent: "最近活跃",
@@ -183,7 +185,7 @@ const zhCN = {
     pathSecurity: {
       title: "文件路径安全",
       hint: "从 Read / Edit / Write 工具结果点击文件路径会触发 reveal in Finder。默认仅允许 workspace 内, 越界会被拒绝。",
-      allowRelaxed: "允许 reveal 到任一已知会话主目录 (放宽到 ~/.claude / ~/.openclaw 子树)",
+      allowRelaxed: "允许 reveal 到任一已知会话主目录 (放宽到 ~/.claude / ~/.openclaw / ~/.kimi-code / ~/.dsh 子树)",
       allowRelaxedHint:
         "打开后 reveal 仍受 assert_within_any_root 兜底防 ~/.ssh 等敏感路径, 但允许跨 workspace",
     },
@@ -203,6 +205,8 @@ const zhCN = {
     noClaudeDir: "找不到 ~/.claude 目录",
     // v0.9.0: Kimi Code
     noKimiDir: "找不到 ~/.kimi-code 目录",
+    // v0.9.28 (M11): DeepSeek Harness
+    noDshDir: "找不到 ~/.dsh 目录",
     network: "网络错误",
     unknown: "未知错误",
   },

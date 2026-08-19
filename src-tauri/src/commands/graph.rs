@@ -218,6 +218,8 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 "claude" => "Claude",
                 // v0.9.0: kimi 节点用 "Kimi" 显示标签 (跟 GraphDetailPanel.tsx:189 反向映射对齐)
                 "kimi" => "Kimi",
+                // v0.9.28 (M11): dsh 节点用 "DeepSeek Harness" 标签 (M11-E 跟 GraphDetailPanel.tsx 反向映射对齐)
+                "dsh" => "DeepSeek Harness",
                 _ => "OpenClaw",
             };
 

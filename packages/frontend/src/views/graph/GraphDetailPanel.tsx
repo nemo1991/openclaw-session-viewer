@@ -190,7 +190,9 @@ export function GraphDetailPanel({
           ? "openclaw"
           : session.source === "Kimi"
             ? "kimi"
-            : "claude") as any,
+            : session.source === "DeepSeekHarness"
+              ? "dsh"
+              : "claude") as any,
         subagentCount: session.subagent_count,
         topTools: session.top_tools,
         thinkingCount: session.thinking_count,
@@ -224,7 +226,9 @@ export function GraphDetailPanel({
           ? "openclaw"
           : session.source === "Kimi"
             ? "kimi"
-            : "claude") as any,
+            : session.source === "DeepSeekHarness"
+              ? "dsh"
+              : "claude") as any,
       };
       navigate(
         `/session/${encodeURIComponent(node.agent_id)}?path=${encodeURIComponent(jsonlPath)}`,
@@ -478,7 +482,9 @@ export function GraphDetailPanel({
                         ? "openclaw"
                         : sib.node.source === "Kimi"
                           ? "kimi"
-                          : "claude") as any,
+                          : sib.node.source === "DeepSeekHarness"
+                            ? "dsh"
+                            : "claude") as any,
                     };
                     navigate(`/session/${encodeURIComponent(sib.node.session_id)}`, {
                       state: { session: sibMeta },

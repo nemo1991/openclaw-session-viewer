@@ -311,6 +311,16 @@ export default function SessionsRoute() {
               />
               {t("sessions.source.kimi")}
             </label>
+            {/* v0.9.28 (M11): 第四种 source — DeepSeek Harness */}
+            <label>
+              <input
+                type="radio"
+                name="source"
+                checked={filter.source === "dsh"}
+                onChange={() => setFilter({ source: "dsh" })}
+              />
+              {t("sessions.source.dsh")}
+            </label>
 
             {agents.length > 1 && (
               <>
@@ -521,7 +531,7 @@ function SessionCard({
           </span>
         )}
         <span className={`source-badge source-${s.source}`}>
-          {s.source === "claude" ? "Claude" : s.source === "openclaw" ? "OpenClaw" : "Kimi"}
+          {s.source === "claude" ? "Claude" : s.source === "openclaw" ? "OpenClaw" : s.source === "dsh" ? "DeepSeek Harness" : "Kimi"}
         </span>
         <span className="override-badges">
           {isPinned && <span className="badge-pinned">📌</span>}

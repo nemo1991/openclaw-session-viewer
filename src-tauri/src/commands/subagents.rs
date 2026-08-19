@@ -559,6 +559,7 @@ mod tests {
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: Some(OpenClawPaths::new(&home)),
                 kimi: None,
+                dsh: None,
             },
             custom_roots: vec![],
         }
@@ -743,6 +744,7 @@ mod tests {
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: Some(OpenClawPaths::new(&home)),
                 kimi: Some(crate::fs::paths::KimiPaths::new(&home)),
+                dsh: None,
             },
             custom_roots: vec![],
         }

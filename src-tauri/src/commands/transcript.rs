@@ -13,6 +13,7 @@ use crate::parser::claude::{
     normalize, normalize_session as normalize_claude_session, NormalizedBlock, NormalizedMessage,
     TokenUsageOut,
 };
+use crate::parser::dsh::normalize_dsh_record;
 use crate::parser::jsonl;
 use crate::parser::kimi::normalize_session as normalize_kimi_session;
 use crate::parser::openclaw::normalize_entry;
@@ -137,6 +138,51 @@ pub async fn stream_transcript(
             })();
             if let Err(e) = result {
                 log::error!("kimi batch transcript 失败 ({}): {}", path_for_log, e);
+                let _ = err_tx.blocking_send(e);
+            }
+        } else if src == "dsh" {
+            // v0.9.28 (M11): dsh wire 已 pre-collapsed(per-turn assistant/message 是终态),
+            // 跟 claude/kimi 不同 — 走单 record 归一化,无 state machine。
+            // streaming chunk (assistant/chunk/reasoning-chunks/text-chunks/tool-call-chunks)
+            // 在 normalize_dsh_record 里 filter 到 None,避免双计。
+            // dsh 是 .jsonl.zstd — 必须走 for_each_line_auto 透明解压。
+            let result: Result<(), String> = (|| {
+                const SUB_BATCH: usize = 200;
+                let mut global_idx: usize = 0;
+                let mut buf: Vec<TranscriptEntryOut> = Vec::new();
+                jsonl::for_each_line_auto(&p, |_idx, _byte, v| {
+                    if let Some(norm) = normalize_dsh_record(v, global_idx) {
+                        let out = TranscriptEntryOut {
+                            index: global_idx,
+                            byte_offset: 0,
+                            raw: v.clone(),
+                            normalized: norm,
+                        };
+                        buf.push(out);
+                        if buf.len() >= SUB_BATCH {
+                            let entries = std::mem::take(&mut buf);
+                            let _ = tx.blocking_send(StreamBatch {
+                                start_index: global_idx - entries.len(),
+                                entries,
+                                charts: Vec::new(),
+                            });
+                        }
+                    }
+                    global_idx += 1;
+                })
+                .map_err(|e| e.to_string())?;
+                if !buf.is_empty() {
+                    let start = global_idx - buf.len();
+                    let _ = tx.blocking_send(StreamBatch {
+                        start_index: start,
+                        entries: buf,
+                        charts: Vec::new(),
+                    });
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                log::error!("dsh batch transcript 失败 ({}): {}", path_for_log, e);
                 let _ = err_tx.blocking_send(e);
             }
         } else if src == "claude" {

@@ -95,6 +95,34 @@ impl KimiPaths {
     }
 }
 
+/// v0.9.28: DeepSeek Harness (dsh) 路径解析
+///
+/// 目录布局:
+/// - `~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd`
+///   - project 目录名格式: `--Users-foo-bar--` (Claude 编码 + `--…--` 包裹)
+///   - session 目录: `session-<uuid>` (全局 UUID v4)
+/// - `~/.dsh/cache/` (可忽略)
+/// - `~/.dsh/state.json` (可忽略)
+#[derive(Debug, Clone)]
+pub struct DshPaths {
+    pub home: PathBuf,
+    pub sessions_root: PathBuf,
+}
+
+impl DshPaths {
+    pub fn new(home_dir: &Path) -> Self {
+        let home = home_dir.join(".dsh");
+        Self {
+            home: home.clone(),
+            sessions_root: home.join("sessions"),
+        }
+    }
+
+    pub fn exists(&self) -> bool {
+        self.home.exists()
+    }
+}
+
 /// v0.2.5: 自定义根目录,自动探测含 Claude 和/或 OpenClaw 数据
 ///
 /// `path` 是用户在 settings 里填的绝对路径(可能是 `~/Downloads/.openclaw/` 这种)。
@@ -113,6 +141,8 @@ pub struct CustomRoot {
     pub openclaw_agents_dir: Option<PathBuf>,
     /// v0.9.0: path/sessions/wd_*/session_*/* 路径(仅 kind 含 Kimi 时 Some)
     pub kimi_sessions_root: Option<PathBuf>,
+    /// v0.9.28: path/sessions/<project>/session-<uuid>/* 路径(仅 kind 含 Dsh 时 Some)
+    pub dsh_sessions_root: Option<PathBuf>,
 }
 
 /// 自动探测一个根目录含哪种数据
@@ -120,13 +150,15 @@ pub struct CustomRoot {
 /// 约定:
 /// - 含 `projects/` 子目录 → 视作 Claude
 /// - 含 `agents/` 子目录 → 视作 OpenClaw
-/// - 含 `sessions/` 子目录 → 视作 Kimi
+/// - 含 `sessions/` 子目录 → 视作 Kimi 或 Dsh (按文件内容区分)
 /// - 多源 → Both / All
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RootKind {
     Claude,
     OpenClaw,
     Kimi,
+    /// v0.9.28: DeepSeek Harness 单独 (sessions/ 目录下若有 `wire.jsonl` 子树 → Kimi,否则 Dsh)
+    Dsh,
     /// Claude + OpenClaw (兼容老 case)
     Both,
     /// Claude + OpenClaw + Kimi (v0.9.0 自定义根三源混用)
@@ -146,14 +178,35 @@ impl CustomRoot {
         let has_openclaw = openclaw_agents.exists() && openclaw_agents.is_dir();
         let has_kimi = kimi_sessions.exists() && kimi_sessions.is_dir();
 
-        let kind = match (has_claude, has_openclaw, has_kimi) {
-            (false, false, false) => return None,
-            (true, false, false) => RootKind::Claude,
-            (false, true, false) => RootKind::OpenClaw,
-            (false, false, true) => RootKind::Kimi,
-            // 多源混用: Claude+OpenClaw (兼容) vs All (含 Kimi)
-            (true, true, false) => RootKind::Both,
-            (true, false, true) | (false, true, true) | (true, true, true) => RootKind::All,
+        // v0.9.28: dsh 探测 — sessions/ 下有 `--…--` 包裹的 project dir → dsh
+        // kimi project dir 用 `wd_<workspace>_<hash>` 前缀,清晰区分
+        let has_dsh = if has_kimi {
+            std::fs::read_dir(&kimi_sessions)
+                .ok()
+                .map(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().is_dir())
+                        .any(|e| {
+                            let name = e.file_name().to_string_lossy().to_string();
+                            // dsh 用 `--…--` 包裹(`--Users-foo-bar--`)
+                            name.starts_with("--") && name.ends_with("--")
+                        })
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let kind = match (has_claude, has_openclaw, has_kimi, has_dsh) {
+            (false, false, false, _) => return None,
+            (true, false, false, _) => RootKind::Claude,
+            (false, true, false, _) => RootKind::OpenClaw,
+            (false, false, true, false) => RootKind::Kimi,
+            (false, false, true, true) => RootKind::Dsh,
+            // 多源混用: Claude+OpenClaw (兼容) vs All (含 Kimi/Dsh)
+            (true, true, false, _) => RootKind::Both,
+            (true, false, true, _) | (false, true, true, _) | (true, true, true, _) => RootKind::All,
         };
 
         Some(Self {
@@ -165,7 +218,12 @@ impl CustomRoot {
             kind,
             claude_projects_dir: has_claude.then_some(claude_projects),
             openclaw_agents_dir: has_openclaw.then_some(openclaw_agents),
-            kimi_sessions_root: has_kimi.then_some(kimi_sessions),
+            kimi_sessions_root: if has_kimi && !has_dsh {
+                Some(kimi_sessions.clone())
+            } else {
+                None
+            },
+            dsh_sessions_root: if has_dsh { Some(kimi_sessions) } else { None },
         })
     }
 }
@@ -181,7 +239,7 @@ pub struct AppPaths {
     pub custom_roots: Vec<RootSource>,
 }
 
-/// 单个数据根来源(默认或自定义),含 Claude + OpenClaw + Kimi 子目录
+/// 单个数据根来源(默认或自定义),含 Claude + OpenClaw + Kimi + Dsh 子目录
 #[derive(Debug, Clone)]
 pub struct RootSource {
     pub label: String,
@@ -189,6 +247,8 @@ pub struct RootSource {
     pub claude: Option<ClaudePaths>,
     pub openclaw: Option<OpenClawPaths>,
     pub kimi: Option<KimiPaths>,
+    /// v0.9.28: DeepSeek Harness paths
+    pub dsh: Option<DshPaths>,
 }
 
 impl AppPaths {
@@ -204,6 +264,11 @@ impl AppPaths {
             },
             kimi: if KimiPaths::new(&home_dir).exists() {
                 Some(KimiPaths::new(&home_dir))
+            } else {
+                None
+            },
+            dsh: if DshPaths::new(&home_dir).exists() {
+                Some(DshPaths::new(&home_dir))
             } else {
                 None
             },
@@ -239,6 +304,10 @@ impl AppPaths {
                     sessions_root: cr.kimi_sessions_root.clone().unwrap(),
                     session_index_file: cr.path.join("session_index.jsonl"),
                     workspaces_file: cr.path.join("workspaces.json"),
+                }),
+                dsh: cr.dsh_sessions_root.as_ref().map(|_| DshPaths {
+                    home: cr.path.clone(),
+                    sessions_root: cr.dsh_sessions_root.clone().unwrap(),
                 }),
             })
             .collect();
@@ -292,6 +361,20 @@ impl AppPaths {
         out
     }
 
+    /// v0.9.28: 列出所有 dsh sessions 根目录(default + custom)
+    pub fn all_dsh_sessions_dirs(&self) -> Vec<&Path> {
+        let mut out = Vec::new();
+        if let Some(d) = &self.default_root.dsh {
+            out.push(d.sessions_root.as_path());
+        }
+        for cr in &self.custom_roots {
+            if let Some(d) = &cr.dsh {
+                out.push(d.sessions_root.as_path());
+            }
+        }
+        out
+    }
+
     /// 默认 Claude 路径(兼容老代码 — 主要供 lib.rs 启动 log 用)
     pub fn claude(&self) -> Option<&ClaudePaths> {
         self.default_root.claude.as_ref()
@@ -305,6 +388,11 @@ impl AppPaths {
     /// v0.9.0: 默认 Kimi 路径
     pub fn kimi(&self) -> Option<&KimiPaths> {
         self.default_root.kimi.as_ref()
+    }
+
+    /// v0.9.28: 默认 dsh 路径
+    pub fn dsh(&self) -> Option<&DshPaths> {
+        self.default_root.dsh.as_ref()
     }
 }
 
@@ -380,6 +468,9 @@ fn collect_root_paths(paths: &AppPaths) -> Vec<&Path> {
     if let Some(k) = &paths.default_root.kimi {
         out.push(k.home.as_path());
     }
+    if let Some(d) = &paths.default_root.dsh {
+        out.push(d.home.as_path());
+    }
     for cr in &paths.custom_roots {
         out.push(cr.path.as_path());
         if let Some(c) = &cr.claude {
@@ -390,6 +481,9 @@ fn collect_root_paths(paths: &AppPaths) -> Vec<&Path> {
         }
         if let Some(k) = &cr.kimi {
             out.push(k.home.as_path());
+        }
+        if let Some(d) = &cr.dsh {
+            out.push(d.home.as_path());
         }
     }
     out
@@ -540,6 +634,7 @@ mod tests {
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: None,
                 kimi: None,
+                dsh: None,
             },
             custom_roots: vec![],
         };
@@ -568,6 +663,7 @@ mod tests {
                 claude: None,
                 openclaw: None,
                 kimi: None,
+                dsh: None,
             },
             custom_roots: vec![RootSource {
                 label: "my-root".to_string(),
@@ -575,6 +671,7 @@ mod tests {
                 claude: None,
                 openclaw: None,
                 kimi: None,
+                dsh: None,
             }],
         };
         // 自定义 root 下任何路径都接受
@@ -689,6 +786,7 @@ mod tests {
                 claude: Some(ClaudePaths::new(&home)),
                 openclaw: None,
                 kimi: None,
+                dsh: None,
             },
             custom_roots: vec![],
         }
@@ -776,5 +874,98 @@ mod tests {
                 "/etc/passwd 应被拒绝"
             );
         }
+    }
+
+    // ===== v0.9.28: dsh path discovery =====
+
+    #[test]
+    fn test_dsh_paths_new_resolves_layout() {
+        let home = PathBuf::from("/Users/test");
+        let p = DshPaths::new(&home);
+        assert_eq!(p.home, home.join(".dsh"));
+        assert_eq!(p.sessions_root, home.join(".dsh/sessions"));
+        assert!(!p.exists()); // tmpdir-based,not actually created
+    }
+
+    #[test]
+    fn test_custom_root_probe_dsh_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        // 加 dsh 风格的 project dir (--…-- 包裹)
+        let proj = sessions.join("--Users-foo-bar--");
+        std::fs::create_dir(&proj).unwrap();
+        let result = CustomRoot::probe(dir.path().to_path_buf()).expect("probe dsh");
+        assert_eq!(result.kind, RootKind::Dsh);
+        assert_eq!(result.dsh_sessions_root, Some(sessions));
+        assert!(result.kimi_sessions_root.is_none());
+    }
+
+    #[test]
+    fn test_custom_root_probe_kimi_distinct_from_dsh() {
+        // Kimi 用 `wd_` 前缀 → 不被误判为 dsh
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir(&sessions).unwrap();
+        let proj = sessions.join("wd_Users_foo_abc");
+        std::fs::create_dir(&proj).unwrap();
+        let result = CustomRoot::probe(dir.path().to_path_buf()).expect("probe kimi");
+        assert_eq!(result.kind, RootKind::Kimi);
+        assert!(result.dsh_sessions_root.is_none());
+    }
+
+    #[test]
+    fn test_assert_within_any_root_accepts_dsh_session_file() {
+        use crate::fs::paths::{assert_within_any_root, AppPaths, DshPaths, RootSource};
+        let home = PathBuf::from("/Users/test");
+        let paths = AppPaths {
+            home: home.clone(),
+            default_root: RootSource {
+                label: "default".to_string(),
+                path: home.join(".dsh"),
+                claude: None,
+                openclaw: None,
+                kimi: None,
+                dsh: Some(DshPaths::new(&home)),
+            },
+            custom_roots: vec![],
+        };
+        let target = Path::new(
+            "/Users/test/.dsh/sessions/--Users-foo-bar--/session-abc/session.jsonl.zstd",
+        );
+        assert!(assert_within_any_root(&paths, target).is_ok());
+    }
+
+    #[test]
+    fn test_all_dsh_sessions_dirs_merges_default_and_custom() {
+        use crate::fs::paths::{AppPaths, DshPaths, RootSource};
+        let home = PathBuf::from("/Users/foo");
+        let custom_path = PathBuf::from("/tmp/dsh-custom");
+        let paths = AppPaths {
+            home: home.clone(),
+            default_root: RootSource {
+                label: "default".to_string(),
+                path: home.clone(),
+                claude: None,
+                openclaw: None,
+                kimi: None,
+                dsh: Some(DshPaths::new(&home)),
+            },
+            custom_roots: vec![RootSource {
+                label: "custom".to_string(),
+                path: custom_path.clone(),
+                claude: None,
+                openclaw: None,
+                kimi: None,
+                dsh: Some(DshPaths {
+                    home: custom_path.clone(),
+                    sessions_root: custom_path.join("sessions"),
+                }),
+            }],
+        };
+        let dirs = paths.all_dsh_sessions_dirs();
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs.contains(&home.join(".dsh/sessions").as_path()));
+        assert!(dirs.contains(&custom_path.join("sessions").as_path()));
     }
 }
