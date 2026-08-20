@@ -144,6 +144,35 @@ describe("SessionOverview", () => {
     expect(screen.queryByTestId("meta-banner-fold")).not.toBeInTheDocument();
   });
 
+  it("metaBanner 渲染 sandbox + approval policy (M11.5 dsh)", () => {
+    // v0.9.28 (M11.5): dsh session 的 sandbox_mode 和 approval_policy
+    // (M11.5 之前 sandbox/mode 被错写到 permission_mode、approval/policy 值被丢)
+    // 现在作为独立 pill 在折叠头部渲染。
+    render(
+      <SessionOverview
+        meta={{
+          ...baseMeta,
+          source: "dsh",
+          metaBanner: {
+            protocolVersion: "0",
+            permissionMode: "workspace-write",
+            sandboxMode: "workspace-write",
+            approvalPolicy: "ask",
+            configChangeCount: 0,
+            approvalCount: 1,
+            compactionCount: 0,
+            lastCompactionDurationMs: undefined,
+          },
+        }}
+      />
+    );
+    const fold = screen.getByTestId("meta-banner-fold");
+    expect(fold).toBeInTheDocument();
+    expect(fold.textContent).toMatch(/🔐 workspace-write/);
+    expect(fold.textContent).toMatch(/🧪 workspace-write/);
+    expect(fold.textContent).toMatch(/⚖ ask/);
+  });
+
   it("metaBanner 点击 toggle 展开 detail", () => {
     render(
       <SessionOverview

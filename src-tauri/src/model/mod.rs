@@ -40,8 +40,16 @@ pub struct MetaBanner {
     pub model_alias: Option<String>,
     /// thinking effort
     pub thinking_effort: Option<String>,
-    /// 当前 permission mode
+    /// 当前 permission mode (来自 dsh `permission/preset.data.preset`)
     pub permission_mode: Option<String>,
+    /// 当前 sandbox mode (来自 dsh `sandbox/mode.data.mode`,v0.9.28 M11.5 之前
+    /// 被错写到 permission_mode,sandbox 是独立语义维度)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_mode: Option<String>,
+    /// 当前 approval policy "ask" / "auto" / "deny" 等
+    /// (来自 dsh `approval/policy.data.policy`,v0.9.28 M11.5 之前只计 count、值被丢)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_policy: Option<String>,
     /// active tools 数
     pub active_tool_count: Option<u32>,
     /// config.update 次数(系统提示/profile/model 演化)

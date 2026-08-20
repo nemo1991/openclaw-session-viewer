@@ -1138,9 +1138,7 @@ pub(crate) fn build_dsh_session_meta_from_path(jsonl_path: &Path) -> AppResult<S
 /// - `source = "dsh"`
 /// - 没有 state.json / agent_ids / subagent (v0.9.28 subagents out-of-scope)
 /// - 26 列派生指标走 `aggregate_dsh`
-pub(crate) fn build_dsh_session_meta(
-    ds: &crate::fs::walker::DshSession,
-) -> AppResult<SessionMeta> {
+pub(crate) fn build_dsh_session_meta(ds: &crate::fs::walker::DshSession) -> AppResult<SessionMeta> {
     let jsonl_path = &ds.zst_path;
     let meta = std::fs::metadata(jsonl_path)?;
     let mtime_ms = meta
@@ -1169,12 +1167,17 @@ pub(crate) fn build_dsh_session_meta(
     // 26 列派生指标走 aggregate_dsh (一次算齐)
     let extras = crate::parser::meta_aggregator::aggregate_dsh(jsonl_path).unwrap_or_default();
 
-    // quick path 50 行: title / first_prompt / primary_model / tool_use_count
+    // quick path 50 行: title / first_prompt / primary_model / tool_use_count / session/title
     let head = jsonl::parse_first_n_auto(jsonl_path, 50).unwrap_or_default();
     let mut primary_model: Option<String> = None;
     let mut _tool_use_count: u32 = 0;
     let mut tool_name_count: HashMap<String, u32> = HashMap::new();
     let mut first_prompt: Option<String> = None;
+    // v0.9.28 (M11.3): dsh 真实 wire 有 `session/title` event(2 次,source.kind 分别是
+    // "fallback" / "provider"),last "provider" kind 是 LLM 生成的可读标题(比 truncated
+    // first_prompt 80 字更可读)。这里记录下来作为 title 优先,fallback 用 first_prompt。
+    let mut provider_title: Option<String> = None;
+    let mut fallback_title: Option<String> = None;
 
     for v in &head {
         let obj = match v.as_object() {
@@ -1209,20 +1212,45 @@ pub(crate) fn build_dsh_session_meta(
                     }
                 }
             }
-            "user/message" => {
-                if first_prompt.is_none() {
-                    let text = obj
-                        .get("data")
-                        .and_then(|d| d.get("content"))
-                        .and_then(|c| c.as_array())
-                        .and_then(|arr| {
-                            arr.iter()
-                                .find_map(|b| b.get("text").and_then(|t| t.as_str()))
-                        })
-                        .unwrap_or("");
-                    if !text.is_empty() {
-                        first_prompt = Some(truncate(text, 80));
+            "session/title" => {
+                // v0.9.28 (M11.3): 末次 session/title 优先 — LLM 生成的 provider kind 更可读
+                let kind = obj
+                    .get("data")
+                    .and_then(|d| d.get("source"))
+                    .and_then(|s| s.get("kind"))
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("");
+                let title = obj
+                    .get("data")
+                    .and_then(|d| d.get("title"))
+                    .and_then(|t| t.as_str())
+                    .map(String::from);
+                match kind {
+                    "provider" => {
+                        if title.is_some() {
+                            provider_title = title;
+                        }
                     }
+                    _ => {
+                        // "fallback" / 未知 kind: 兜底用 first_prompt 格式
+                        if fallback_title.is_none() && title.is_some() {
+                            fallback_title = title;
+                        }
+                    }
+                }
+            }
+            "user/message" if first_prompt.is_none() => {
+                let text = obj
+                    .get("data")
+                    .and_then(|d| d.get("content"))
+                    .and_then(|c| c.as_array())
+                    .and_then(|arr| {
+                        arr.iter()
+                            .find_map(|b| b.get("text").and_then(|t| t.as_str()))
+                    })
+                    .unwrap_or("");
+                if !text.is_empty() {
+                    first_prompt = Some(truncate(text, 80));
                 }
             }
             _ => {}
@@ -1238,8 +1266,13 @@ pub(crate) fn build_dsh_session_meta(
         primary_model = extras.available_models.first().cloned();
     }
 
-    // title — dsh 没有 state.json,直接走 first_prompt (前 80 字) 当 title
-    let title = first_prompt.clone();
+    // v0.9.28 (M11.3): title 优先级 — provider-title (LLM 生成,最可读) >
+    //   fallback-title (heuristic 截断 first_prompt) > first_prompt (80 字截断)
+    // 之前的 v0.9.28 直走 first_prompt,LLM 标题不可见,详情页全是 "把paper.pdf 文件每段增加中文翻..."。
+    let title = provider_title
+        .clone()
+        .or_else(|| fallback_title.clone())
+        .or_else(|| first_prompt.clone());
 
     // workspace_guess — dsh 是 Claude 风格带 `--...--` 包裹,strip 后 delegate
     let workspace_guess = decode_dsh_workspace_guess(&ds.project_key);
@@ -1329,10 +1362,12 @@ pub(crate) fn build_dsh_session_meta(
         } else {
             Some(extras.parent_uuids.join("\n"))
         },
-        // dsh 没有 todo / banner(协议层没有对应字段)— 留 None
-        todo_summary: None,
+        // v0.9.28 (M11.3): todo_summary (todo/write) + meta_banner (session.version /
+        // permission/preset + sandbox/mode + approval/policy + request/header.config)
+        // 之前 v0.9.28 直填 None,dsh session 在 frontend 不显示 todo chip 和 banner fold。
+        todo_summary: extras.todo_summary,
         kimi_token_usage: extras.kimi_token_usage,
-        meta_banner: None,
+        meta_banner: extras.meta_banner,
     })
 }
 
@@ -2195,5 +2230,108 @@ mod tests {
 
         // 4. primary_model: 首个 usage.record.model (deepseek-v4-flash)
         assert_eq!(sm.primary_model.as_deref(), Some("deepseek-v4-flash"));
+    }
+
+    // ===== v0.9.28 (M11.3): dsh build_dsh_session_meta 测试 =====
+
+    /// 写一个 dsh `session.jsonl.zstd` 到临时路径并组装 DshSession
+    fn make_dsh_session(tmp: &tempfile::TempDir, content: &str) -> crate::fs::walker::DshSession {
+        let sess_dir = tmp
+            .path()
+            .join("--Users-foo-bar--")
+            .join("session-test-uuid");
+        std::fs::create_dir_all(&sess_dir).unwrap();
+        let zst_path = sess_dir.join("session.jsonl.zstd");
+        let raw = std::fs::File::create(&zst_path).unwrap();
+        let mut enc = zstd::Encoder::new(raw, 3).unwrap();
+        use std::io::Write;
+        enc.write_all(content.as_bytes()).unwrap();
+        enc.finish().unwrap();
+        crate::fs::walker::DshSession {
+            session_dir: sess_dir,
+            session_id: "test-uuid".to_string(),
+            project_key: "--Users-foo-bar--".to_string(),
+            zst_path,
+        }
+    }
+
+    #[test]
+    fn build_dsh_session_meta_uses_provider_title_over_first_prompt() {
+        // v0.9.28 (M11.3): session/title provider kind (LLM 生成) 优先于 truncated first_prompt。
+        // 真实 wire 数据 seq=10 fallback / seq=14 provider,title 分别 17/13 字;
+        // provider 是 LLM 总结的可读标题,作为 `title` 字段写到 SessionMeta。
+        let jsonl = r#"{"type":"user/message","seq":1,"time":100,"data":{"content":[{"type":"text","text":"把 paper.pdf 文件每段增加中文翻译,生成 markdown 双语对照文件"}]}}
+{"type":"session/title","seq":10,"time":110,"data":{"title":"把 paper.pdf 文件每段增加中文翻译","messageSeqs":[7],"source":{"kind":"fallback"}}}
+{"type":"session/title","seq":14,"time":120,"data":{"title":"将论文 PDF 每段添加中文翻译","messageSeqs":[7],"source":{"kind":"provider","provider":"session-title-first-prompt-llm"}}}
+{"type":"assistant/message","seq":2,"time":200,"data":{"message":{"source":{"model":"deepseek-v4-flash"},"content":[{"type":"text","text":"ok"}]}}}
+"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let ds = make_dsh_session(&tmp, jsonl);
+        let sm = build_dsh_session_meta(&ds).expect("build dsh");
+        // provider-title 胜出,不是 truncated first_prompt
+        assert_eq!(
+            sm.title.as_deref(),
+            Some("将论文 PDF 每段添加中文翻译"),
+            "provider kind 的 session/title 应作 title 字段(覆盖 truncated first_prompt)"
+        );
+        // first_prompt 仍然独立保留 (preview 行用)
+        assert!(sm.first_prompt.is_some());
+        assert!(sm.first_prompt.as_deref().unwrap().contains("把 paper.pdf"));
+    }
+
+    #[test]
+    fn build_dsh_session_meta_falls_back_to_first_prompt_without_provider_title() {
+        // v0.9.28 (M11.3): 没有 provider kind 的 session/title 时,fallback 到 truncated first_prompt
+        let jsonl = r#"{"type":"user/message","seq":1,"time":100,"data":{"content":[{"type":"text","text":"hello world test prompt"}]}}
+{"type":"session/title","seq":10,"time":110,"data":{"title":"hello world test prompt","source":{"kind":"fallback"}}}
+{"type":"assistant/message","seq":2,"time":200,"data":{"message":{"content":[{"type":"text","text":"hi"}]}}}
+"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let ds = make_dsh_session(&tmp, jsonl);
+        let sm = build_dsh_session_meta(&ds).expect("build dsh");
+        // fallback kind → first_prompt 兜底
+        assert_eq!(
+            sm.title.as_deref(),
+            Some("hello world test prompt"),
+            "fallback kind 不算 provider,落到 first_prompt"
+        );
+    }
+
+    #[test]
+    fn build_dsh_session_meta_populates_todo_summary_and_meta_banner() {
+        // v0.9.28 (M11.3): todo_summary + meta_banner 从 aggregator 拿过来,
+        // 不再 hardcode None。之前 dsh session 在 frontend 没显示 📋 todo chip
+        // 也没 MetaBannerFold 折叠面板。
+        let jsonl = r#"{"type":"session","version":0,"agentPreset":"cordis","id":"s1","createdAt":1}
+{"type":"permission/preset","seq":1,"time":100,"data":{"preset":"workspace-write"}}
+{"type":"approval/policy","seq":2,"time":101,"data":{"policy":"ask"}}
+{"type":"approval/policy","seq":3,"time":102,"data":{"policy":"ask"}}
+{"type":"request/header","seq":4,"time":103,"data":{"header":{"config":{"model":"deepseek-v4-flash","reasoningEffort":"high"},"tools":[{"name":"a"},{"name":"b"},{"name":"c"}]}}}
+{"type":"todo/write","seq":5,"time":104,"data":{"todos":[{"content":"step 1","status":"completed"},{"content":"step 2","status":"in_progress"},{"content":"step 3","status":"pending"}]}}
+{"type":"user/message","seq":6,"time":105,"data":{"content":[{"type":"text","text":"do work"}]}}
+{"type":"assistant/message","seq":7,"time":200,"data":{"message":{"content":[{"type":"text","text":"ok"}]}}}
+"#;
+        let tmp = tempfile::tempdir().unwrap();
+        let ds = make_dsh_session(&tmp, jsonl);
+        let sm = build_dsh_session_meta(&ds).expect("build dsh");
+
+        // 1. todo_summary 填充 (1 done / 3 total / 1 in_progress "step 2")
+        let todo = sm.todo_summary.as_ref().expect("todo_summary 应有");
+        assert_eq!(todo.total, 3);
+        assert_eq!(todo.done, 1);
+        assert_eq!(todo.current.as_deref(), Some("step 2"));
+
+        // 2. meta_banner 填充 (4 字段:permission_mode, approval_count, model_alias,
+        //    thinking_effort, active_tool_count, protocol_version)
+        let banner = sm.meta_banner.as_ref().expect("meta_banner 应有");
+        assert_eq!(banner.permission_mode.as_deref(), Some("workspace-write"));
+        assert_eq!(banner.approval_count, 2);
+        assert_eq!(banner.model_alias.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(banner.thinking_effort.as_deref(), Some("high"));
+        assert_eq!(banner.active_tool_count, Some(3));
+        assert_eq!(banner.protocol_version.as_deref(), Some("0"));
+        // dsh 协议层没有 config_change_count / compaction_count — 仍是 0 (默认)
+        assert_eq!(banner.config_change_count, 0);
+        assert_eq!(banner.compaction_count, 0);
     }
 }

@@ -288,8 +288,7 @@ mod tests {
         let zst_path = dir.join("dispatch.jsonl.zstd");
         let raw = std::fs::File::create(&zst_path).unwrap();
         let mut enc = zstd::Encoder::new(raw, 3).unwrap();
-        enc.write_all(b"{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n")
-            .unwrap();
+        enc.write_all(b"{\"a\":1}\n{\"a\":2}\n{\"a\":3}\n").unwrap();
         enc.finish().unwrap();
 
         assert_eq!(count_lines_auto(&zst_path).unwrap(), 3);

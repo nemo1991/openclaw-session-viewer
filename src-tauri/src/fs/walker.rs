@@ -463,16 +463,12 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
 
         // 完整 session
-        let s_ok = tmp
-            .join("--Users-foo--")
-            .join("session-aaaaaaaa-1111-2222");
+        let s_ok = tmp.join("--Users-foo--").join("session-aaaaaaaa-1111-2222");
         fs::create_dir_all(&s_ok).unwrap();
         fs::write(&s_ok.join("session.jsonl.zstd"), b"\x28\xb5\x2f\xfd").unwrap();
 
         // zombie: 目录在但没 zst file
-        let s_zombie = tmp
-            .join("--Users-foo--")
-            .join("session-bbbbbbbb-3333-4444");
+        let s_zombie = tmp.join("--Users-foo--").join("session-bbbbbbbb-3333-4444");
         fs::create_dir_all(&s_zombie).unwrap();
 
         // 不是 session-* 命名的目录 → 跳过
@@ -501,10 +497,8 @@ mod tests {
     /// v0.9.28: list_dsh_sessions 缺 sessions_root → 安全返回空 vec
     #[test]
     fn list_dsh_sessions_handles_missing_root() {
-        let tmp = std::env::temp_dir().join(format!(
-            "ocsv-dsh-walker-missing-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("ocsv-dsh-walker-missing-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let sessions = list_dsh_sessions(&tmp).unwrap();
         assert!(sessions.is_empty());

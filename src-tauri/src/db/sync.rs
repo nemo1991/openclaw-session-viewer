@@ -442,7 +442,17 @@ async fn sync_one_file(
             })
             .unwrap_or(false))
     })?;
-    if unchanged {
+    // v0.9.28 (M11.5): 增量判断通过后,还要检查 aggregator 是否需要重跑。
+    // 历史 session (v0.9.28 M11 之前 sync 的 dsh / kimi) meta_banner_json 是 NULL,
+    // 因为它们 sync 时 aggregator 还没实现 banner 聚合。仅靠 size+mtime+line_count
+    // 三元组不会变,所以 unchanged 永远 true,新 aggregator 不会跑。
+    // 这里再查一次 banner 列 — NULL 且 source 是有 banner 的 (dsh / kimi) 就强制 re-sync。
+    let banner_stale = matches!(source, "dsh" | "kimi")
+        && state
+            .db
+            .with(|c| crate::db::schema::is_meta_banner_null_by_path(c, &path_str))
+            .unwrap_or(false);
+    if unchanged && !banner_stale {
         return Ok(());
     }
 

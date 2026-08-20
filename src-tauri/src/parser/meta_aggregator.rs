@@ -867,6 +867,10 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
     let mut token_cache_read: u64 = 0;
     let mut token_cache_write: u64 = 0;
     let mut token_seen: bool = false;
+    // v0.9.28 (M11.3): todo_summary (todo/write 末次 value) + meta_banner
+    // (permission/preset, sandbox/mode, approval/policy, session.version, request/header.config)
+    let mut todo_summary: Option<crate::model::TodoSummary> = None;
+    let mut banner = crate::model::MetaBanner::default();
 
     jsonl::for_each_line_auto(path, |_idx, _byte, v| {
         let obj = match v.as_object() {
@@ -884,12 +888,100 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
             "session" => {
                 if out.agent_name.is_none() {
                     // v0.9.28: agentPreset 在 dsh wire 上是 envelope 顶层字段 (跟 data.agentPreset 不同)
-                    let preset = obj
-                        .get("agentPreset")
-                        .and_then(|x| x.as_str())
-                        .or_else(|| data.and_then(|d| d.get("agentPreset")).and_then(|x| x.as_str()));
+                    let preset = obj.get("agentPreset").and_then(|x| x.as_str()).or_else(|| {
+                        data.and_then(|d| d.get("agentPreset"))
+                            .and_then(|x| x.as_str())
+                    });
                     if let Some(p) = preset {
                         out.agent_name = Some(p.to_string());
+                    }
+                }
+                // v0.9.28 (M11.3): banner.protocol_version ← envelope.version (u64, 转字符串)
+                if banner.protocol_version.is_none() {
+                    if let Some(v) = obj.get("version").and_then(|x| x.as_u64()) {
+                        banner.protocol_version = Some(v.to_string());
+                    }
+                }
+            }
+            "todo/write" => {
+                // v0.9.28 (M11.3): 末次 todo/write 的 value 数组聚合。
+                // dsh 状态值跟 kimi 不同:done / completed 都算完成;in_progress / pending / cancelled 各算一类。
+                // 真实 wire 样本:status ∈ {"completed", "in_progress", "pending"}
+                let arr = data.and_then(|d| d.get("todos")).and_then(|v| v.as_array());
+                if let Some(arr) = arr {
+                    let mut total: u32 = 0;
+                    let mut done: u32 = 0;
+                    let mut current: Option<String> = None;
+                    for item in arr {
+                        total += 1;
+                        let status = item.get("status").and_then(|x| x.as_str()).unwrap_or("");
+                        let title = item
+                            .get("content")
+                            .and_then(|x| x.as_str())
+                            .map(String::from);
+                        if status == "done" || status == "completed" {
+                            done += 1;
+                        } else if status == "in_progress" && current.is_none() {
+                            current = title.clone();
+                        }
+                    }
+                    todo_summary = Some(crate::model::TodoSummary {
+                        total,
+                        done,
+                        current,
+                        updated_at_ms: time,
+                    });
+                }
+            }
+            "permission/preset" => {
+                // v0.9.28 (M11.3): banner.permission_mode ← data.preset
+                if let Some(m) = data.and_then(|d| d.get("preset")).and_then(|x| x.as_str()) {
+                    banner.permission_mode = Some(m.to_string());
+                }
+            }
+            "sandbox/mode" => {
+                // v0.9.28 (M11.5): sandbox 是独立语义维度(workspace-write / docker /
+                // restricted 等),不再覆盖 permission_mode。permission/preset 跟 sandbox/mode
+                // 在真实 wire 里通常是同值 ("workspace-write") 但语义不同 — M11.3 错写到
+                // permission_mode 会 silent 改写 preset 值,这次修到 sandbox_mode。
+                if let Some(m) = data.and_then(|d| d.get("mode")).and_then(|x| x.as_str()) {
+                    banner.sandbox_mode = Some(m.to_string());
+                }
+            }
+            "approval/policy" => {
+                // v0.9.28 (M11.5): banner.approval_count 累加 (每次 policy 切换一次)
+                // 同时 banner.approval_policy ← data.policy ("ask" / "auto" / "deny")
+                // — 之前只计 count、policy 值被丢,UI 看不出当前生效策略。
+                banner.approval_count += 1;
+                if banner.approval_policy.is_none() {
+                    if let Some(p) = data.and_then(|d| d.get("policy")).and_then(|x| x.as_str()) {
+                        banner.approval_policy = Some(p.to_string());
+                    }
+                }
+            }
+            "request/header" => {
+                // v0.9.28 (M11.3): banner.model_alias / thinking_effort / active_tool_count
+                let header = data.and_then(|d| d.get("header"));
+                let config = header.and_then(|h| h.get("config"));
+                if banner.model_alias.is_none() {
+                    if let Some(m) = config.and_then(|c| c.get("model")).and_then(|x| x.as_str()) {
+                        banner.model_alias = Some(m.to_string());
+                    }
+                }
+                if banner.thinking_effort.is_none() {
+                    if let Some(e) = config
+                        .and_then(|c| c.get("reasoningEffort"))
+                        .and_then(|x| x.as_str())
+                    {
+                        banner.thinking_effort = Some(e.to_string());
+                    }
+                }
+                if banner.active_tool_count.is_none() {
+                    if let Some(arr) = header
+                        .and_then(|h| h.get("tools"))
+                        .and_then(|t| t.as_array())
+                    {
+                        banner.active_tool_count = Some(arr.len() as u32);
                     }
                 }
             }
@@ -901,7 +993,9 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
             }
             "assistant/message" => {
                 out.assistant_message_count += 1;
-                let message = data.and_then(|d| d.get("message")).and_then(|x| x.as_object());
+                let message = data
+                    .and_then(|d| d.get("message"))
+                    .and_then(|x| x.as_object());
 
                 // model from data.message.source.model
                 if let Some(model) = message
@@ -956,11 +1050,7 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
 
                 // 整条 assistant/message 无 tool-call → flush 上一 run
                 if tool_call_count == 0 {
-                    flush_repeat_run_dsh(
-                        &mut out,
-                        &mut current_tool,
-                        &mut current_count,
-                    );
+                    flush_repeat_run_dsh(&mut out, &mut current_tool, &mut current_count);
                 }
 
                 // B + E: assistant/message.time → first/last + idle_gap
@@ -987,8 +1077,10 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                     token_seen = true;
                     token_input += u.get("inputTokens").and_then(|x| x.as_u64()).unwrap_or(0);
                     token_output += u.get("outputTokens").and_then(|x| x.as_u64()).unwrap_or(0);
-                    token_cache_read +=
-                        u.get("cacheReadTokens").and_then(|x| x.as_u64()).unwrap_or(0);
+                    token_cache_read += u
+                        .get("cacheReadTokens")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
                     token_cache_write += u
                         .get("cacheCreationTokens")
                         .and_then(|x| x.as_u64())
@@ -1070,6 +1162,9 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
             cache_write: token_cache_write,
         });
     }
+    // v0.9.28 (M11.3): todo_summary + meta_banner
+    out.todo_summary = todo_summary;
+    out.meta_banner = Some(banner);
 
     Ok(out)
 }
@@ -1884,7 +1979,10 @@ mod tests {
         assert_eq!(m.user_message_count, 1);
         assert_eq!(m.assistant_message_count, 1);
         assert_eq!(m.thinking_count, 1, "1 个 reasoning part");
-        assert_eq!(m.text_message_count, 2, "1 reasoning + 1 text 都算 text_message_count");
+        assert_eq!(
+            m.text_message_count, 2,
+            "1 reasoning + 1 text 都算 text_message_count"
+        );
         assert_eq!(m.tool_usage, vec![("Bash".to_string(), 1)]);
         assert_eq!(m.available_models, vec!["deepseek-v4-flash".to_string()]);
         assert_eq!(m.error_count, 0, "isError=false 不计数");
@@ -1924,10 +2022,7 @@ mod tests {
         assert_eq!(m.error_count, 2, "2 个 isError=true 事件");
         assert_eq!(
             m.tool_error,
-            vec![
-                ("Bash".to_string(), 1),
-                ("Edit".to_string(), 1)
-            ]
+            vec![("Bash".to_string(), 1), ("Edit".to_string(), 1)]
         );
     }
 
@@ -1961,7 +2056,10 @@ mod tests {
         let p = write_tmp("dsh_thinking.jsonl", jsonl);
         let m = aggregate_dsh(&p).unwrap();
         assert_eq!(m.thinking_count, 2, "2 reasoning parts");
-        assert_eq!(m.text_message_count, 4, "reasoning+text 都算 text_message_count");
+        assert_eq!(
+            m.text_message_count, 4,
+            "reasoning+text 都算 text_message_count"
+        );
     }
 
     #[test]
@@ -1986,5 +2084,98 @@ mod tests {
         assert_eq!(m.user_message_count, 1);
         assert_eq!(m.assistant_message_count, 1);
         assert_eq!(m.available_models, vec!["m".to_string()]);
+    }
+
+    #[test]
+    fn aggregate_dsh_todo_summary_uses_last_todo_write_with_completed_status() {
+        // v0.9.28 (M11.3): todo/write 末次 value 聚合;status "completed" 跟 kimi 的 "done" 同义。
+        // 3 次 todo/write:首次 1/2 done → 中间 2/3 done → 末次 2/4 completed。
+        // 末次 todo_summary 应该是 4 total / 2 done / 1 in_progress。
+        let jsonl = r#"{"type":"todo/write","seq":1,"time":100,"data":{"todos":[{"content":"a","status":"done"},{"content":"b","status":"pending"}]}}
+{"type":"todo/write","seq":2,"time":200,"data":{"todos":[{"content":"a","status":"done"},{"content":"b","status":"done"},{"content":"c","status":"pending"}]}}
+{"type":"todo/write","seq":3,"time":300,"data":{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"completed"},{"content":"c","status":"in_progress"},{"content":"d","status":"pending"}]}}
+"#;
+        let p = write_tmp("dsh_todo.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        let t = m.todo_summary.expect("todo_summary 应有");
+        assert_eq!(t.total, 4);
+        assert_eq!(t.done, 2, "completed 算 done");
+        assert_eq!(
+            t.current.as_deref(),
+            Some("c"),
+            "首个 in_progress 的 content 作为 current"
+        );
+        assert_eq!(t.updated_at_ms, Some(300));
+    }
+
+    #[test]
+    fn aggregate_dsh_meta_banner_fills_protocol_permission_sandbox_approval_and_request_header() {
+        // v0.9.28 (M11.5): banner 全字段聚合。
+        // - session.version → protocol_version
+        // - permission/preset → permission_mode (独立字段,不再被 sandbox/mode 覆盖)
+        // - sandbox/mode → sandbox_mode (M11.5 之前被错写到 permission_mode)
+        // - approval/policy × 2 → approval_count + 首次 policy 提到 approval_policy
+        //   (M11.5 之前 policy 值被丢)
+        // - request/header.config.{model,reasoningEffort} → model_alias / thinking_effort
+        // - request/header.tools[].length → active_tool_count
+        let jsonl = r#"{"type":"session","version":0,"agentPreset":"cordis","id":"s1","createdAt":1}
+{"type":"permission/preset","seq":1,"time":100,"data":{"preset":"workspace-write"}}
+{"type":"sandbox/mode","seq":2,"time":101,"data":{"mode":"workspace-write"}}
+{"type":"approval/policy","seq":3,"time":102,"data":{"policy":"ask"}}
+{"type":"approval/policy","seq":4,"time":103,"data":{"policy":"ask"}}
+{"type":"request/header","seq":5,"time":104,"data":{"header":{"config":{"provider":"deepseek-official","model":"deepseek-v4-flash","reasoningEffort":"high"},"tools":[{"name":"a"},{"name":"b"},{"name":"c"}]}}}
+"#;
+        let p = write_tmp("dsh_banner.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        let b = m.meta_banner.expect("meta_banner 应有");
+        assert_eq!(
+            b.protocol_version.as_deref(),
+            Some("0"),
+            "session.version=0 → \"0\""
+        );
+        assert_eq!(
+            b.permission_mode.as_deref(),
+            Some("workspace-write"),
+            "permission/preset 写到 permission_mode"
+        );
+        assert_eq!(
+            b.sandbox_mode.as_deref(),
+            Some("workspace-write"),
+            "M11.5: sandbox/mode 独立字段,不再覆盖 permission_mode"
+        );
+        assert_eq!(
+            b.approval_policy.as_deref(),
+            Some("ask"),
+            "M11.5: 首次 approval/policy 提取 policy 值"
+        );
+        assert_eq!(b.approval_count, 2, "2 次 approval/policy");
+        assert_eq!(b.model_alias.as_deref(), Some("deepseek-v4-flash"));
+        assert_eq!(b.thinking_effort.as_deref(), Some("high"));
+        assert_eq!(
+            b.active_tool_count,
+            Some(3),
+            "request/header.tools[].length"
+        );
+        assert_eq!(b.config_change_count, 0, "dsh 没有 config.update event");
+        assert_eq!(b.compaction_count, 0, "dsh 没有 full_compaction event");
+    }
+
+    #[test]
+    fn aggregate_dsh_sandbox_mode_does_not_overwrite_permission_mode_when_different() {
+        // v0.9.28 (M11.5) regression: M11.3 行为是 sandbox 后发 silent 覆盖 preset,
+        // 一旦两者值不同会丢信息。真实 wire 通常同值 ("workspace-write"),但
+        // sandbox 切到 docker 时必须保持 preset = "workspace-write"。
+        let jsonl = r#"{"type":"permission/preset","seq":1,"time":100,"data":{"preset":"workspace-write"}}
+{"type":"sandbox/mode","seq":2,"time":101,"data":{"mode":"docker"}}
+"#;
+        let p = write_tmp("dsh_sandbox_diff.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        let b = m.meta_banner.expect("meta_banner 应有");
+        assert_eq!(b.permission_mode.as_deref(), Some("workspace-write"));
+        assert_eq!(
+            b.sandbox_mode.as_deref(),
+            Some("docker"),
+            "sandbox/mode 切到 docker 后,permission_mode 应保持 preset 值"
+        );
     }
 }

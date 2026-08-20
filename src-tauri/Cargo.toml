@@ -1,7 +1,7 @@
 [package]
 name = "openclaw-session-viewer"
-version = "0.9.28"
-description = "跨平台桌面应用 - 浏览本地 OpenClaw / Claude Code 会话"
+version = "0.9.29"
+description = "跨平台桌面应用 - 浏览本地 Claude Code / OpenClaw / Kimi Code / DeepSeek Harness 会话 (zstd 透明解压 + 聚合 KPI + subagent tracking)"
 authors = ["OpenClaw Viewer Contributors"]
 edition = "2021"
 rust-version = "1.77"

@@ -242,6 +242,23 @@ pub fn get_size_mtime_by_path(conn: &Connection, path: &str) -> AppResult<Option
     Ok(row)
 }
 
+/// v0.9.28 (M11.5): 检查现有行的 `meta_banner_json` 是否为 NULL。
+/// 给 `sync_one_file` 用 — 历史 dsh / kimi session 在 M11.3 之前 sync 过,
+/// meta_banner_json 是 NULL,但 size+mtime+line_count 三元组不变会让 unchanged 永远 true,
+/// 新 aggregator 不会跑。这里 banner NULL 就强制 re-sync。
+/// 返回 `true` 当且仅当行存在且 banner 是 NULL (新 session 行不存在不算 stale,
+/// 因为新 session `unchanged` 本来就是 false 会跑完整 build 流程)。
+pub fn is_meta_banner_null_by_path(conn: &Connection, path: &str) -> AppResult<bool> {
+    let row: Option<Option<String>> = conn
+        .query_row(
+            "SELECT meta_banner_json FROM session_meta WHERE jsonl_path = ?1",
+            params![path],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(matches!(row, Some(None)))
+}
+
 /// UPSERT 一行 session_meta
 ///
 /// v0.9.27 (M10): 一次 INSERT 写全 47 列 (Pass 1 only, 没有 enrich_session_meta 第二次 UPDATE)。
@@ -819,6 +836,44 @@ mod sync_helpers_tests {
         assert_eq!(r.size_bytes, 1234);
         assert_eq!(r.mtime_ms, 5678);
         assert_eq!(r.line_count, 100);
+    }
+
+    #[test]
+    fn is_meta_banner_null_returns_true_when_unset_and_false_when_set() {
+        // v0.9.28 (M11.5): sync_one_file 用这个 helper 检测 stale aggregator —
+        // 历史 session 在 M11.3 之前 sync 过、meta_banner_json 是 NULL,新 aggregator
+        // 需要再跑一次把 banner 写进来。
+        let conn = fresh_conn();
+
+        // 1. 没有这个 path → false (不存在不算 banner NULL)
+        assert!(
+            !is_meta_banner_null_by_path(&conn, "/no/such/path").unwrap(),
+            "missing path 不算 banner NULL"
+        );
+
+        // 2. 行存在但 meta_banner_json 是 NULL → true (需要 re-sync)
+        conn.execute(
+            "INSERT INTO session_meta (session_id, project_key, source, jsonl_path,
+                                       size_bytes, mtime_ms, line_count, synced_at)
+             VALUES ('s1', 'p', 'dsh', '/tmp/foo.jsonl', 1234, 5678, 100, 0)",
+            [],
+        )
+        .unwrap();
+        assert!(
+            is_meta_banner_null_by_path(&conn, "/tmp/foo.jsonl").unwrap(),
+            "M11.3 之前 sync 过的 dsh session banner NULL → 触发 re-sync"
+        );
+
+        // 3. 写入 meta_banner_json → false (已经聚合,不再 re-sync)
+        conn.execute(
+            "UPDATE session_meta SET meta_banner_json = '{\"protocolVersion\":\"0\"}' WHERE session_id = 's1'",
+            [],
+        )
+        .unwrap();
+        assert!(
+            !is_meta_banner_null_by_path(&conn, "/tmp/foo.jsonl").unwrap(),
+            "已有 banner 不再强制 re-sync"
+        );
     }
 }
 

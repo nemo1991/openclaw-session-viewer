@@ -55,16 +55,57 @@ beforeEach(() => {
 });
 
 describe("v0.8.4 HomeStatusBar", () => {
-  it("默认 pill 可见, 显示 age + synced/seen 计数", async () => {
+  // v0.9.28 (M11.2): mount 默认乐观显示 "扫描中…" (避免 250ms race 期间 pill 停留在 idle),
+  // 真实 sync-progress 事件到达后覆盖。下面 5 个测试都断言初始 freshness=scanning,
+  // freshness 反映 status 的 case 由 "v0.8.5 sync-progress → pill live state" describe 块覆盖
+  // (它们显式 emit 事件把 live 从 scanning 切到目标态)。
+
+  it("默认 pill 可见, 乐观显示 '扫描中…'", async () => {
     render(<HomeStatusBar />);
     const pill = await screen.findByTestId("home-status-pill");
     expect(pill).toBeInTheDocument();
-    expect(pill.textContent).toMatch(/30s ago/);
-    expect(pill.textContent).toMatch(/50\/50 synced/);
+    expect(pill.textContent).toMatch(/扫描中/);
+    const bar = document.querySelector(".home-status-bar")!;
+    expect(bar.getAttribute("data-freshness")).toBe("scanning");
+    expect(bar.getAttribute("data-live")).toBe("scanning");
     expect(screen.queryByTestId("home-status-panel")).toBeNull();
   });
 
-  it("green freshness: 最近 sync (<60s)", async () => {
+  it("v0.9.28 (M11.2): 乐观 scanning 默认被 sync-progress 事件覆盖 → 回落 idle", async () => {
+    // 完整生命周期: mount → optimistic scanning → done event → 2s 后回落 idle
+    // 这是用户首次开 app 看到的视觉路径,验证 optimistic 状态能被真实事件正确覆盖。
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HomeStatusBar />);
+      const pill = await screen.findByTestId("home-status-pill");
+      const bar = document.querySelector(".home-status-bar")!;
+      // mount: 乐观 scanning
+      expect(bar.getAttribute("data-live")).toBe("scanning");
+      expect(screen.getByTestId("home-status-pill-text").textContent).toMatch(/扫描中/);
+      // done 事件覆盖 → 显示 "同步完成"
+      emitProgress({ phase: "done", total: 50, done: 50, failed: 0 });
+      expect(bar.getAttribute("data-live")).toBe("done");
+      expect(screen.getByTestId("home-status-pill-text").textContent).toMatch(/同步完成 50\/50/);
+      // 2s 后回落 idle
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100);
+        await Promise.resolve();
+      });
+      expect(bar.getAttribute("data-live")).toBe("idle");
+      // 回落 idle 后 buildPillText 退回 status 分支,显示 "30s ago · 50/50 synced" (允许 ±2s 误差)
+      expect(screen.getByTestId("home-status-pill-text").textContent).toMatch(/\d+s ago/);
+      expect(screen.getByTestId("home-status-pill-text").textContent).toMatch(/50\/50 synced/);
+      // 不应误触发 panel 展开
+      expect(screen.queryByTestId("home-status-panel")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("green freshness: 最近 sync (<60s) → optimistic scanning 期间覆盖 status 新鲜度", async () => {
+    // v0.9.28 (M11.2): mount 默认 live=scanning 优先于 status 新鲜度。
+    // 这个测试只断言 optimistic 状态生效;真实 status 新鲜度在 done 回落 idle 后
+    // 由 "v0.8.5 sync-progress → pill live state" describe 块里 done → idle 路径验证。
     mockApiGetSyncStatus.mockResolvedValue({
       lastRunAt: Date.now() - 10_000,
       lastError: null,
@@ -74,10 +115,12 @@ describe("v0.8.4 HomeStatusBar", () => {
     });
     const { container } = render(<HomeStatusBar />);
     await screen.findByTestId("home-status-pill");
-    expect(container.querySelector(".home-status-bar")!.getAttribute("data-freshness")).toBe("ok");
+    expect(container.querySelector(".home-status-bar")!.getAttribute("data-freshness")).toBe(
+      "scanning"
+    );
   });
 
-  it("yellow freshness: 1-10 min stale", async () => {
+  it("yellow freshness: 1-10 min stale → optimistic scanning 覆盖 status", async () => {
     mockApiGetSyncStatus.mockResolvedValue({
       lastRunAt: Date.now() - 5 * 60_000,
       lastError: null,
@@ -88,11 +131,11 @@ describe("v0.8.4 HomeStatusBar", () => {
     const { container } = render(<HomeStatusBar />);
     await screen.findByTestId("home-status-pill");
     expect(container.querySelector(".home-status-bar")!.getAttribute("data-freshness")).toBe(
-      "stale"
+      "scanning"
     );
   });
 
-  it("red freshness: lastError 非空", async () => {
+  it("red freshness: lastError 非空 → optimistic scanning 覆盖 status", async () => {
     mockApiGetSyncStatus.mockResolvedValue({
       lastRunAt: Date.now() - 30_000,
       lastError: "sync failed: IO error",
@@ -103,11 +146,11 @@ describe("v0.8.4 HomeStatusBar", () => {
     const { container } = render(<HomeStatusBar />);
     await screen.findByTestId("home-status-pill");
     expect(container.querySelector(".home-status-bar")!.getAttribute("data-freshness")).toBe(
-      "error"
+      "scanning"
     );
   });
 
-  it("blue freshness: status inProgress === true", async () => {
+  it("blue freshness: status inProgress === true → optimistic scanning 覆盖 status", async () => {
     mockApiGetSyncStatus.mockResolvedValue({
       lastRunAt: Date.now() - 1000,
       lastError: null,
@@ -117,6 +160,11 @@ describe("v0.8.4 HomeStatusBar", () => {
     });
     const { container } = render(<HomeStatusBar />);
     await screen.findByTestId("home-status-pill");
+    // mount 后 live=scanning 优先;emit syncing 切到 syncing 后才能反映 status.inProgress
+    expect(container.querySelector(".home-status-bar")!.getAttribute("data-freshness")).toBe(
+      "scanning"
+    );
+    emitProgress({ phase: "syncing", total: 100, done: 20, failed: 0 });
     expect(container.querySelector(".home-status-bar")!.getAttribute("data-freshness")).toBe(
       "syncing"
     );

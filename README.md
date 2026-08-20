@@ -2,283 +2,119 @@
 
 # OpenClaw Session Viewer
 
-**跨平台桌面应用，本地浏览 OpenClaw / Claude Code / Kimi / DeepSeek Harness 的会话转录**
+**跨平台桌面应用，本地浏览 Claude Code / OpenClaw / Kimi Code / DeepSeek Harness 的会话转录**
 
 [![Tauri](https://img.shields.io/badge/Tauri-2-blue?logo=tauri)](https://tauri.app/)
-[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev)
-[![Rust](https://img.shields.io/badge/Rust-1.77+-orange?logo=rust)](https://www.rust-lang.org)
+[![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev)
+[![Rust](https://img.shields.io/badge/Rust-2021-orange?logo=rust)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)]()
 [![Release](https://img.shields.io/github/v/release/nemo1991/openclaw-session-viewer)](https://github.com/nemo1991/openclaw-session-viewer/releases/latest)
 
-[下载](#下载) · [功能](#功能) · [快速开始](#快速开始) · [架构](#架构) · [开发](#开发) · [故障排除](#故障排除) · [路线图](#路线图) · [文档索引](#文档索引)
+[下载](#下载) · [快速开始](#快速开始) · [架构](#架构) · [开发](#开发) · [故障排除](#故障排除) · [文档索引](#文档索引)
 
 </div>
 
 ---
 
-## 简介
+## 支持的源
 
-本地优先桌面应用,查看 / 搜索 / 分析 Claude Code / OpenClaw / Kimi Code /
-DeepSeek Harness 历史会话。解决 CLI JSONL 没法搜、没法 LLM 总结、没法导出、
-没法跨 session 关联展示的问题。
+| Source               | 路径                                                          | 格式       | 自      |
+| -------------------- | ------------------------------------------------------------- | ---------- | ------- |
+| **Claude Code**      | `~/.claude/projects/<encoded>/<sid>.jsonl`                    | jsonl      | v0.1    |
+| **OpenClaw**         | `~/.openclaw/agents/<id>/sessions/<sid>.jsonl`                | jsonl      | v0.2    |
+| **Kimi Code**        | `~/.kimi-code/sessions/wd_*/session_*/agents/main/wire.jsonl` | jsonl      | v0.9.0  |
+| **DeepSeek Harness** | `~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd` | zstd jsonl | v0.9.28 |
 
-### 支持的源
+更多格式细节见 [docs/OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md) + [src-tauri/docs/adr/0002-dsh-source-m11.md](src-tauri/docs/adr/0002-dsh-source-m11.md)。
 
-| Source | 路径 | 格式 | 版本 |
-| --- | --- | --- | --- |
-| Claude Code | `~/.claude/projects/<encoded>/<sid>.jsonl` | jsonl | v0.1 |
-| OpenClaw | `~/.openclaw/agents/<id>/sessions/<sid>.jsonl` | jsonl | v0.2 |
-| Kimi Code | `~/.kimi-code/sessions/wd_*/session_*/agents/main/wire.jsonl` | jsonl | v0.9.0 |
-| DeepSeek Harness | `~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd` | zstd jsonl | v0.9.28 |
+---
 
-**DeepSeek Harness (v0.9.28+)**: dsh 用 `.jsonl.zstd` 压缩存储 wire 格式,
-本应用通过扩展名派发透明解压(详见 [架构](#架构) — zstd reader)。
-项目目录名是 Claude 编码风格的 `--Users-foo-bar--` 包裹形式,
-存储时不透明保留为 `dsh:<dir-name>`,显示时 strip bracket delegate decode。
+## DeepSeek Harness 支持 (v0.9.28+)
 
-更多格式细节见 [OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md)
-+ [PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)。
+dsh 是第 4 种支持的 wire 源,有几个独特之处:
+
+**`.jsonl.zstd` 透明解压** — 所有 dsh 文件用 zstd 压缩存储,本应用通过扩展名派发:
+
+```rust
+// parser/jsonl.rs
+pub fn for_each_line_auto(path, cb) {
+    if path.extension() == "zstd" {
+        for_each_line_zst(path, cb)  // 走 zstd::Decoder 透明解压
+    } else {
+        for_each_line(path, cb)      // 原 jsonl 路径不变
+    }
+}
+```
+
+Claude / OpenClaw / Kimi 走非 zstd 分支,零侵入。
+
+**Envelope 形 wire 事件** — 每条事件 `{type, seq, time, data}`:
+
+- `user/message` → `role: user`, text blocks
+- `assistant/message` → `role: assistant`, reasoning / text / tool-call 混合 blocks
+- `tool/result` → `role: tool`, `is_error` 标记
+- `session` / `session/title` / `permission/preset` / `sandbox/mode` / `approval/policy` / `todo/write` → meta block
+- **流式 chunk** (`assistant/chunk` / `reasoning-chunks` / `text-chunks` / `tool-call-chunks`) → 返回 `None`,被终态 `assistant/message` 覆盖避免双计
+- **协议层 noise** (`step/start` / `step/end` / `turn/start` / `tool/call` / `llm/retry` 等) → 返回 `None`,避免 9337 行 session 详情页被 541 个 noise meta pill 主导 (v0.9.28 M11.4)
+
+**聚合 MetaBanner** (v0.9.28 M11.3+) — 顶部折叠面板汇总:
+
+- `protocol_version` (从 `session.version`)
+- `permission_mode` / `sandbox_mode` / `approval_policy` (从同名 event,M11.5 修复 sandbox 覆盖 permission 的 bug)
+- `model_alias` / `thinking_effort` / `active_tool_count` (从 `request/header.config`)
+- `approval_count` / `compaction_count`
+
+**项目目录名** — dsh 用 `--Users-foo-bar--` 包裹形式,存储时透明保留为 `dsh:<dir-name>`,显示时 strip brackets delegate decode (跟 Claude 编码算法相同)。
+
+详细架构决策见 [ADR 0002](src-tauri/docs/adr/0002-dsh-source-m11.md)。
+
+---
 
 ## 下载
 
-从 [Releases 页面](https://github.com/nemo1991/openclaw-session-viewer/releases/latest) 下载适合你平台的安装包:
+从 [Releases 页面](https://github.com/nemo1991/openclaw-session-viewer/releases/latest) 下载:
 
-| 平台                  | 文件                                               |
-| --------------------- | -------------------------------------------------- |
-| macOS (Apple Silicon) | `OpenClaw Session Viewer_<version>_aarch64.dmg`    |
-| Linux (便携)          | `OpenClaw Session Viewer_<version>_amd64.AppImage` |
-| Linux (Debian/Ubuntu) | `OpenClaw Session Viewer_<version>_amd64.deb`      |
-| Windows (MSI)         | `OpenClaw Session Viewer_<version>_x64_en-US.msi`  |
-| Windows (NSIS)        | `OpenClaw Session Viewer_<version>_x64-setup.exe`  |
+- **macOS** — `OpenClaw Session Viewer_<version>_aarch64.dmg` (Apple Silicon) / `_x64.dmg` (Intel)
+- **Linux** — `_<version>_amd64.AppImage` (便携) / `_amd64.deb` (Debian/Ubuntu)
+- **Windows** — `_<version>_x64_en-US.msi` (MSI) / `_x64-setup.exe` (NSIS)
 
-### 校验
+每个 release 附带 `SHA256SUMS.txt`,用 `shasum -a 256 -c` 校验。
 
-每个 release 都附带 `SHA256SUMS.txt`:
-
-```bash
-# macOS / Linux
-shasum -a 256 -c SHA256SUMS.txt
-
-# Windows (PowerShell)
-Get-FileHash .\OpenClaw*.dmg -Algorithm SHA256
-```
-
-### Linux AppImage
-
-```bash
-chmod +x OpenClaw*.AppImage
-./OpenClaw*.AppImage
-```
-
-变更记录见 [CHANGELOG.md](CHANGELOG.md)。
-
-## 功能
-
-### 核心
-
-- **完整会话转录** — 文本、思考、工具调用、工具结果、图片、附件、压缩事件,所有类型
-- **主-子 agent 关联展示** (v0.6.0) — 子代理消息自动缩进(紫色 accent 边 + 小三角箭头),主 session timeline 显示子代理计数 badge,Agent 卡片底部内嵌子代理摘要(消息数 + 工具分布 + 时长),不再 navigate 跳走
-- **文件路径一键 reveal** (v0.6.0) — `Read`/`Edit`/`Write` 工具结果、`.plan` 文件、tracked file snapshot 全可点击 Finder/Explorer。Workspace 沙箱保护(默认锁紧 `workspaceGuess` 子树,设置里可放开),防 `~/.ssh/id_rsa` 等
-- **三种搜索**:
-  - 全局跨会话 (`Cmd/Ctrl+K`) — 跨所有 .jsonl 文件搜索
-  - 会话内 (`Cmd/Ctrl+F`) — 当前会话内客户端搜索,`n`/`p` 跳转
-  - URL 跳转 (`?line=N`) — 直接定位到任意消息
-- **排序切换** — 会话详情顶部 `正序 / 倒序` 自由切换
-- **流式加载** — Rust `BufReader` 64KB 缓冲,500 条/批,8MB+ 大文件秒开
-- **实时状态** — 5 秒轮询 `~/.claude/sessions/<pid>.json`,显示运行中的 CLI 进程
-- **工具溢出文件** — 自动加载 `tool-results/*.txt` 长输出
-
-### 高级
-
-- **Graph Explorer** (`/graph` 顶 tab,实验) — G1 force-directed 图,节点点击跳主项目原生 `/session/:id`;G2 6 chart + 时间范围(24h/7d/30d/all);G3 hash-embedding + cosine topK + 跨 tab prefill (`?q=query`)。共享 `display_title` 系统。详见 [docs/experiments/](docs/experiments/)
-- **大模型分析** — 4 预置模板(摘要/代码修改/错误陷阱) + 自定义 Prompt,流式响应,支持 Anthropic 兼容 API(MiniMax、自定义代理)
-- **导出** — Markdown + HTML(独立可分享,带暗色主题)
-- **多源支持** — Claude Code (`~/.claude/`) + OpenClaw (`~/.openclaw/`) + Kimi Code (`~/.kimi-code/`) + DeepSeek Harness (`~/.dsh/`, zstd 透明解压) + 自定义数据源根目录(热重载)
-- **扩展设计** — `BlockRegistry` 模式 + 未知 block 自动 `UnknownBlockCard` 兜底
-- **主题与 i18n** — 深色/浅色/跟随系统;默认 zh-CN,可切 en-US
-
-### 工程化
-
-- **单元测试** — Rust 376 + TS shared 54 + TS frontend 687 = **1117 个测试**
-- **路径安全** — Tauri 命令词法检查 + `assert_within_any_root` + Reveal workspace 沙箱(可放开),防 `../../etc/passwd`
-- **跨平台** — macOS (.dmg) / Windows (.msi) / Linux (.AppImage/.deb)
-- **CI/CD** — GitHub Actions 三平台并行;docs-only 推送跳过 CI (paths-ignore)
-- **自动更新** — Tauri updater + GitHub Releases
-
-## 截图
-
-> 待补充:运行 `pnpm tauri dev` 后截图
-
-### 会话详情 (含 tool 卡片 / 时间筛选 / 搜索下拉 / 轨迹按钮)
-
-```
-┌─ OpenClaw 会话查看器 ──────────────────── [K] [] [− □ ×] ─┐
-│┌─ 会话 (247) ─┐ │▸ /Users/alice/website   [● 实时] [运行轨迹]│
-││[+ Claude][+OC]│ │Claude Opus 4 · 142 条 · Asia/Shanghai ·2天前│
-││               │ │── 时间筛选 ─────────────────────────────  │
-││▼ alice/website│ │ [全部][1h][24h][7d][自定义]  from:[…][to:…]│
-││ ● 重构 8MB    │ │───────────────────────────────────────────│
-││   "能否把…    │ │┌─ 用户 · 14:08:32 ─────────────────────┐  │
-││ ● 加深色 3MB  │ ││ 能否把 header 重构成 sticky 定位?       │  │
-││ ● 修 bug 1MB  │ │└───────────────────────────────────────┘  │
-││               │ │┌─ 助手 · 14:08:35 · Opus 4 ─────────────┐  │
-││过滤:          │ ││▾ 思考 (4 秒) ─────────────────────────  │  │
-││  含子代理    │ ││  先看一下 Header 当前的 CSS…           │  │
-│└───────────────┘ ││▾ Edit · src/Header.tsx                │  │
-│                  ││  -   position: static;                │  │
-│                  ││  +   position: sticky; top: 0;        │  │
-│                  ││▾ Bash · npm run build                 │  │
-│                  ││   > vite build && echo "ok"           │  │
-│                  ││▾ Read · src/Header.tsx [1-30]         │  │
-│                  ││   import React from "react"; …        │  │
-│                  │└───────────────────────────────────────┘  │
-│                  │  [F]  sticky header ──────────────  │  │
-│                  │   ┌──────────────────────────────────┐    │  │
-│                  │   │ #42 · assistant · 14:08:35       │◀─ │  │  │
-│                  │   │   Edit · src/Header.tsx          │    │  │
-│                  │   │ #88 · user · 14:08:32            │    │  │
-│                  │   │   能否把 header 重构…             │    │  │
-│                  │   └──────────────────────────────────┘    │  │
-└──────────────────────────────────────────────────────────────┘
-```
-
-### App icon (v0.4.4)
-
-设计原则:1024×1024 SVG 源 `pnpm tauri icon` 自动按平台 mask
-
-- **macOS** (`.icns`):自动 squircle 圆角,渐变背景在 dock / Finder / Launchpad 一致显示
-- **Windows** (`.ico`):方形 tile,16-256 多尺寸打包,任务栏 / 开始菜单 / Alt-Tab 都清晰
-- **Linux** (PNG):透明背景,跟系统 icon theme 配合(launcher / dock)
-
-```
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ ░░░░░░░░░░░░░░░ │  │ ██████████████  │  │                 │
-│ ░░  渐变  ░░░░ │  │ ██   C   █████  │  │   渐变 + C      │
-│ ░░  (蓝紫青) ░ │  │ ██ (粗笔画) ███  │  │  (透明背景,    │
-│ ░░   ⊂  ░░░░░ │  │ ██  ⊂  █████  │  │   系统主题适配) │
-│ ░░░░░░░░░░░░░░ │  │ ██████████████  │  │                 │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-   macOS squircle     Windows tile        Linux transparent
-```
-
-重新生成 icon:
-
-```bash
-# SVG  1024×1024 PNG  全套平台 icon
-pnpm build:icons
-```
+---
 
 ## 快速开始
 
-### 前置要求
-
-- **Node.js** ≥ 20
-- **pnpm** ≥ 9 (`npm i -g pnpm`)
-- **Rust** ≥ 1.77 (`curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`)
-- **Tauri 系统依赖**: 见 [跨平台构建指南](docs/CROSS_PLATFORM_BUILD.md)
-
-### 安装与运行
+**前置**:Node ≥ 20 · pnpm ≥ 9 · Rust ≥ 1.77 · [Tauri 系统依赖](docs/CROSS_PLATFORM_BUILD.md)
 
 ```bash
-# 1. 克隆
-git clone https://github.com/yourname/openclaw-session-viewer.git
+git clone https://github.com/nemo1991/openclaw-session-viewer.git
 cd openclaw-session-viewer
-
-# 2. 安装依赖 (注意:有些镜像源不稳定,推荐 registry.npmjs.org)
-pnpm config set registry https://registry.npmjs.org/
 pnpm install
-
-# 3. 开发模式 (热重载 + devtools)
-pnpm tauri dev
-
-# 4. 生产构建
-pnpm tauri build
+pnpm tauri dev      # 开发模式
+pnpm tauri build    # 生产构建
 ```
 
-构建产物:
+详细多平台构建说明见 [docs/CROSS_PLATFORM_BUILD.md](docs/CROSS_PLATFORM_BUILD.md)。
 
-- **macOS**: `src-tauri/target/release/bundle/macos/OpenClaw Session Viewer.app`
-- **DMG**: `src-tauri/target/release/bundle/dmg/*.dmg`
-- **Linux AppImage/deb**: `src-tauri/target/release/bundle/{appimage,deb}/*`
-- **Windows MSI**: `src-tauri/target/release/bundle/msi/*.msi`
-
-> ℹ **为什么是英文文件名?**: Tauri bundler 在 Windows MSI 阶段用 WiX 3.x 的
-> `light.exe`,对非 ASCII 文件名支持差
-> ([tauri-apps/tauri#8363](https://github.com/tauri-apps/tauri/issues/8363))。
-> 所以 `productName` 用 ASCII,只在窗口标题(`app.windows[].title`)
-> 保留中文显示。
-
-> **不要** 直接运行 `target/release/openclaw-session-viewer` 裸二进制。macOS 上 Tauri 2 必须在 `.app` bundle 内运行才能正确初始化 webview,否则窗口会出现但内容空白。详见 [故障排除](#-故障排除)。
-
-### 首次使用
-
-1. 启动应用,会话列表默认加载 `~/.openclaw/agents/` 下的所有会话 (项目起点);可在左侧栏切到 `Claude Code` / `Kimi Code` / `DeepSeek Harness` 查看其他 source
-2. 点击任意会话卡片查看完整转录
-3. 按 `Cmd+K` (macOS) 或 `Ctrl+K` (Windows/Linux) 全局搜索
-4. 按 `Cmd+F` 在当前会话内搜索
-5. 进入设置页填写 Anthropic API Key 以启用大模型分析
+---
 
 ## 架构
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                     Frontend (React)                      │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
-│  │Sessions  │ │Session   │ │Analyze   │ │Settings  │     │
-│  │Route     │ │Detail    │ │Route     │ │Route     │     │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  Zustand Stores (sessions, transcript, search, …)  │ │
-│  └─────────────────────────────────────────────────────┘ │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  Tauri IPC: invoke() + listen() events              │ │
-│  └─────────────────────────────────────────────────────┘ │
-└──────────────────────────┬───────────────────────────────┘
-                           │ Tauri commands
-┌──────────────────────────┴───────────────────────────────┐
-│                    Backend (Rust)                         │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  Commands (16 个 Tauri commands)                    │ │
-│  │  list_sessions / stream_transcript / search_all /  │ │
-│  │  analyze_session / export_markdown / …             │ │
-│  └─────────────────────────────────────────────────────┘ │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐      │
-│  │  JSONL Parser│ │  Anthropic   │ │  Path Safety │      │
-│  │  (streaming) │ │  Client (SSE)│ │  (词法校验)  │      │
-│  └──────────────┘ └──────────────┘ └──────────────┘      │
-│  ┌─────────────────────────────────────────────────────┐ │
-│  │  Moka mtime 缓存 + Notify 文件监听                  │ │
-│  └─────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌──────────────────────────────────────────────────────────┐
-│                   Local Filesystem                        │
-│  ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl           │
-│  ~/.claude/sessions/<pid>.json                           │
-│  ~/.openclaw/agents/<id>/sessions/<uuid>.jsonl          │
-│  ~/.kimi-code/sessions/wd_*/session_*/agents/main/wire.jsonl │
-│  ~/.dsh/sessions/<project>/session-<uuid>/session.jsonl.zstd │
-└──────────────────────────────────────────────────────────┘
-```
+**Tauri 2 + Rust 后端** (流式 JSONL 解析 + SQLite 聚合) + **React 19 + Zustand 前端** (虚拟列表 + TanStack Router)。
 
-**关键设计决策**:
+关键设计:
 
-1. **Tauri 2 + Rust 后端** — 包小(~5MB)、性能好(8MB JSONL 流式解析 600ms)
-2. **共享类型包 (`packages/shared`)** — 前端和后端共用 TypeScript 类型定义
-3. **BlockRegistry 模式** — `BlockHandler` trait + 可注册 registry，新增 block type 无需改 match
-4. **Moka 缓存 + mtime 失效** — 重复打开会话零延迟
-5. **虚拟列表 (`@tanstack/react-virtual`)** — 2 万条记录仍 60fps
-6. **路径白名单** — 所有 FS 操作必须落在已知 root 下
+- **3 个 workspace 包** — `packages/shared` (跨进程类型) · `packages/frontend` (UI) · `src-tauri` (Rust)
+- **扩展名派发 reader** — `.jsonl` vs `.jsonl.zstd` 走不同解析器,单一 dispatch 入口
+- **BlockRegistry 模式** — `BlockHandler` trait + 可注册 registry,新增 block type 无需改 match,未知 block 走 `UnknownBlockCard` 兜底
+- **Pass 1 单次 sync** (v0.9.27+) — `build_*_session_meta` 直接 47 列 INSERT,删了旧的两阶段 enrich loop
+- **Moka mtime 缓存** — 重复打开会话零延迟;`sync_one_file` 三元组 (size+mtime+line_count) 缓存跳过未变化文件;**stale banner 检测** (v0.9.28 M11.5) 让 M11 之前 sync 的 dsh/kimi session 自动重跑 aggregator
+- **路径白名单** — 所有 FS 操作必须落在已知 source root (`~/.claude/` / `~/.openclaw/` / `~/.kimi-code/` / `~/.dsh/`) 下
 
-详见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+完整架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) + [docs/PARSER_ARCHITECTURE.md](docs/PARSER_ARCHITECTURE.md)。
 
-### 数据格式
-
-OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语义,以及本应用
-如何归一化/过滤,见 [docs/OPENCLAW_SESSION_FORMAT.md](docs/OPENCLAW_SESSION_FORMAT.md)
-(从 openclaw 源码 + 官方文档交叉验证)。
+---
 
 ## 开发
 
@@ -290,207 +126,108 @@ OpenClaw / Claude Code 各自的 session 目录布局、JSONL schema、字段语
 │   ├── shared/           # 跨进程共享 TypeScript 类型
 │   └── frontend/         # React + Vite + TS UI
 ├── src-tauri/            # Rust 后端 (Tauri 2)
-│   ├── src/
-│   │   ├── parser/       # 流式 JSONL 解析 + 归一化
-│   │   │   ├── blocks/   # BlockRegistry + 独立 handler 文件 (text/thinking/tool_use/…)
-│   │   │   ├── claude.rs
-│   │   │   └── openclaw.rs
-│   │   ├── commands/     # 12 个 Tauri 命令
-│   │   ├── llm/          # Anthropic 兼容 API 客户端
-│   │   ├── fs/           # 路径解析 + 安全检查
-│   │   └── cache/        # Moka mtime 缓存
-│   └── icons/            # PNG/ICNS/ICO 图标
+│   ├── src/parser/       # 流式 JSONL 解析 + 归一化
+│   │   ├── claude.rs / openclaw.rs / kimi.rs / dsh.rs / meta_aggregator.rs
+│   │   └── blocks/       # BlockRegistry + 独立 handler
+│   ├── src/commands/     # Tauri commands (sessions / transcript / analyze / export / graph / subagents)
+│   ├── src/db/           # SQLite schema + migrations + sync
+│   └── docs/adr/         # 架构决策记录
 ├── docs/                 # 项目文档
-│   ├── ARCHITECTURE.md
-│   ├── PARSER_ARCHITECTURE.md   # BlockRegistry 详解
-│   ├── CROSS_PLATFORM_BUILD.md
-│   ├── OPENCLAW_SESSION_FORMAT.md
-│   ├── RELEASING.md
-│   ├── SECURITY.md             # v0.6.0: 文件路径 reveal 安全模型
-│   └── TROUBLESHOOTING.md
-├── scripts/
-│   └── seed-fixture.ts   # 生成测试 JSONL
-├── fixtures/             # 测试数据
-└── .github/workflows/    # CI/CD
+├── fixtures/             # 测试数据 (claude / openclaw / kimi / dsh)
+└── .github/workflows/    # CI/CD (3 平台并行, docs-only 跳过)
 ```
 
 ### 测试
 
 ```bash
-# Rust 单元测试 (94 个)
+# Rust 单元测试
 cd src-tauri && cargo test --lib
 
-# TypeScript 单元测试 (shared 41 + frontend 308 = 349)
-cd packages/shared && pnpm test
-
-# 类型检查
-cd packages/frontend && pnpm exec tsc --noEmit
-
-# Clippy (lint)
-cd src-tauri && cargo clippy --all-targets -- -D warnings
-
-# 全部
+# TypeScript 单元测试
 pnpm -r test
+
+# 类型检查 + Lint
+pnpm typecheck
+cd src-tauri && cargo clippy --lib -- -D warnings && cargo fmt --check
 ```
+
+当前测试覆盖:390 Rust + ~50 shared + 689 frontend = **1129+ tests**。
 
 ### 添加新会话源
 
-假设要支持新的存储格式 (例如 `~/.myagent/sessions/`):
+以 dsh 为参考 (canonical example):
 
-1. 在 `packages/shared/src/` 添加类型定义
-2. 在 `src-tauri/src/parser/` 添加归一化函数
-3. 在 `src-tauri/src/commands/sessions.rs` 添加扫描逻辑
-4. 在 `src-tauri/src/fs/paths.rs` 添加路径布局
-5. 在前端 `SessionMeta.source` 加新枚举值
+1. **`packages/shared/src/normalize.ts`** — `SessionSource` union 加 `"dsh"`
+2. **`src-tauri/src/parser/`** — 新建 `dsh.rs` 写 `normalize_dsh_record(record, idx) -> Option<NormalizedMessage>`,返回 `None` 过滤流式 chunk / 协议层 noise
+3. **`src-tauri/src/parser/meta_aggregator.rs`** — 新增 `aggregate_dsh(path)`,写到 `MetaExtras.{error_count, thinking_count, meta_banner, todo_summary, kimi_token_usage}`
+4. **`src-tauri/src/commands/sessions.rs`** — `build_dsh_session_meta(ds)` 装配 SessionMeta(quick path 50 行 head + full aggregator)
+5. **`src-tauri/src/fs/{paths,walker,source}.rs`** — 路径发现 + 遍历
+6. **`src-tauri/src/db/{schema,migrations,sync}.rs`** — `source` CHECK 加新值 + sync loop 加新分支
+7. **`packages/frontend/src/{state, routes, i18n}/`** — filter chip + source badge + i18n label
+8. **`docs/adr/000N-<name>.md`** — 记录架构决策
 
-### 大模型分析自定义 Prompt
-
-在 `packages/shared/src/analysis-prompts.ts` 修改模板,或在前端"自定义"模式下输入任意 prompt。
+详细 M11 拆分参考 [src-tauri/docs/adr/0002-dsh-source-m11.md](src-tauri/docs/adr/0002-dsh-source-m11.md)。
 
 ### 快捷键
 
-| 快捷键       | 功能              |
-| ------------ | ----------------- |
-| `Cmd/Ctrl+K` | 全局跨会话搜索    |
-| `Cmd/Ctrl+F` | 当前会话内搜索    |
-| `Cmd/Ctrl+E` | 导出当前会话      |
-| `Cmd/Ctrl+,` | 设置              |
-| `n` / `p`    | 搜索结果下一/上一 |
-| `Esc`        | 关闭弹窗          |
+| 快捷键       | 功能           |
+| ------------ | -------------- |
+| `Cmd/Ctrl+K` | 全局跨会话搜索 |
+| `Cmd/Ctrl+F` | 当前会话内搜索 |
+| `Cmd/Ctrl+E` | 导出当前会话   |
+| `Cmd/Ctrl+,` | 设置           |
+
+---
 
 ## 故障排除
 
-<details>
-<summary><b>macOS: 启动后窗口是空白</b></summary>
-
-**原因**: 直接运行了 `target/release/openclaw-session-viewer` 裸二进制,而非 `.app` bundle。
-
-**解决**:
+**macOS 窗口空白** — 必须从 `.app` bundle 启动,不能直接跑裸二进制:
 
 ```bash
-#  正确:
-open "src-tauri/target/release/bundle/macos/OpenClaw 会话查看器.app"
-
-#  错误:
-./src-tauri/target/release/openclaw-session-viewer
+open "src-tauri/target/release/bundle/macos/OpenClaw Session Viewer.app"
 ```
 
-Tauri 2 在 macOS 上必须从 `.app` bundle 启动,LaunchServices 才能正确初始化 webview 子进程。否则窗口出现但 `WebContent.xpc` 不派生,看不到内容。
-
-</details>
-
-<details>
-<summary><b>macOS: 从 GitHub Releases 下载的 DMG 提示"已损坏,无法打开"</b></summary>
-
-**原因**: CI 构建的 DMG 没有 Apple 开发者签名,未经公证的应用被 Gatekeeper 拦截。
-
-**临时解决**:
+**macOS DMG 提示"已损坏"** — 没 Apple 开发者签名被 Gatekeeper 拦截:
 
 ```bash
-# 将 App 拖到 Applications 文件夹后,终端执行:
 sudo xattr -rd com.apple.quarantine /Applications/OpenClaw\ Session\ Viewer.app
 ```
 
-或者右键 App 打开 对话框中点「打开」。
+**dsh session banner 没显示新字段** (sandbox / approval policy) — 旧 DB 行 `meta_banner_json` 是 NULL,但 sync 缓存 (`size+mtime+line_count`) 不会变,所以新 aggregator 不会跑。修复见 [v0.9.28 M11.5 commit](src-tauri/src/db/sync.rs): `is_meta_banner_null_by_path` 检测 stale 行,自动触发 re-sync。
 
-> 后续会接入 Apple 开发者签名 + 公证流程,届时不再有此提示。
+更多问题见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
-</details>
-
-<details>
-<summary><b>搜索点击后程序崩溃</b></summary>
-
-**原因**: `useSearchInSessionStore()` 返回整个 store 对象,作为 `useEffect` 的依赖会导致:
-
-```
-store 引用变化  useEffect 重跑  调用 search() 更新 store  引用再变  死循环
- React: Maximum update depth exceeded  组件卸载
-```
-
-**解决**: 用 selector 模式分别订阅:
-
-```tsx
-//  错
-const search = useSearchInSessionStore();
-useEffect(() => {
-  search.search(entries);
-}, [entries, search]);
-
-//  对
-const search = useSearchInSessionStore((s) => s.search);
-useEffect(() => {
-  search(entries);
-}, [entries]);
-```
-
-</details>
-
-<details>
-<summary><b>大文件加载慢 / 卡顿</b></summary>
-
-8MB+ JSONL 首次打开需要 ~600ms 解析。已做流式分批 (500 条/批),前端用虚拟列表。如果仍然慢:
-
-- 检查是否启用了 moka 缓存(默认开启)
-- 关闭其他读取 `~/.claude/` 的程序
-
-</details>
-
-<details>
-<summary><b>大模型分析报 401/403</b></summary>
-
-API Key 错误或 Base URL 不对。在设置页检查:
-
-- **Base URL**: 默认 `https://api.anthropic.com`,用 MiniMax 则改为 `https://api.minimaxi.com/anthropic`
-- **API Key**: 填 `sk-ant-...` 或对应平台的密钥
-
-</details>
-
-<details>
-<summary><b>路径穿越攻击防护</b></summary>
-
-所有 Tauri 命令的路径参数都做词法检查,必须在已知 source root (`~/.claude/` / `~/.openclaw/` / `~/.kimi-code/` / `~/.dsh/`) 下。如果看到 `PathSecurity` 错误,说明传入了非法路径。
-
-</details>
-
-更多问题及解决方案见 [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+---
 
 ## 路线图
 
-完整版本历史看 [CHANGELOG.md](CHANGELOG.md)。
-
 5 行 release timeline:
 
-- **v0.9.28** — DeepSeek Harness 第 4 种 source (zstd 透明解压)
+- **v0.9.28** — DeepSeek Harness 第 4 种 source (zstd 透明解压) + M11.3 banner 聚合 + M11.4 noise filter + M11.5 sandbox/approval routing 修复
 - **v0.9.27** — M10 Pass 2→Pass 1 单 pass 切流 (47 列 INSERT)
 - **v0.9.26** — M9 Pass 1↔Pass 2 parallel-run validation
 - **v0.9.25** — snake/camel 第二阶段撤兼容
 - **v0.9.24** — `SessionHeader` + `SessionNotesPanel` + `useSessionActions` 抽离
 
-计划中(v0.9.29+):dsh `parent_uuid` / dsh subagent walk / `kimi_token_usage` rename → `session_token_usage` / `meta_banner` for dsh permission·approval·sandbox / dsh streaming-chunk 可视化 / OpenAI ChatCompletion 兼容 LLM 后端 / i18n 完善(英文/日文)。
+完整版本历史: [CHANGELOG.md](CHANGELOG.md)
 
-- [ ] **dsh parent_uuid 关联** — wire 暂无字段,等 dsh schema 加
-- [ ] **dsh subagent walk** — `~/.dsh/sessions/` 没观察到 `subagents/` layout
-- [ ] **OpenAI ChatCompletion 兼容** — 大模型后端多支持
-- [ ] **i18n 完善** — 英文/日文界面
+v0.9.29+ backlog:dsh `parent_uuid` (等 dsh schema 加字段) · dsh subagent walk · `kimi_token_usage` rename → `session_token_usage` · dsh streaming-chunk 可视化 · OpenAI ChatCompletion 兼容 LLM 后端 · i18n (en-US / ja-JP)。
 
-## 贡献
-
-欢迎 PR! 一些建议:
-
-1. 添加新功能前先开 issue 讨论
-2. 保持单元测试覆盖
-3. 遵循现有代码风格(rustfmt + prettier)
-4. 提交前跑 `pnpm -r test && pnpm typecheck`(docs-only 自动跳过 CI,见"工程化"段)
+---
 
 ## 文档索引
 
-**架构与格式**:[ARCHITECTURE](docs/ARCHITECTURE.md) · [PARSER_ARCHITECTURE](docs/PARSER_ARCHITECTURE.md) · [OPENCLAW_SESSION_FORMAT](docs/OPENCLAW_SESSION_FORMAT.md) · [ADR 0002 dsh source](src-tauri/docs/adr/0002-dsh-source-m11.md)
+**架构** — [ARCHITECTURE](docs/ARCHITECTURE.md) · [PARSER_ARCHITECTURE](docs/PARSER_ARCHITECTURE.md) · [OPENCLAW_SESSION_FORMAT](docs/OPENCLAW_SESSION_FORMAT.md)
 
-**工程实践**:[RELEASING](docs/RELEASING.md) · [CROSS_PLATFORM_BUILD](docs/CROSS_PLATFORM_BUILD.md) · [SECURITY](docs/SECURITY.md) · [E2E_TESTING](docs/E2E_TESTING.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
+**ADR** — [0001 Claude batch normalize](src-tauri/docs/adr/0001-claude-batch-normalize-v0917.md) · [0002 dsh source M11](src-tauri/docs/adr/0002-dsh-source-m11.md)
 
-**Graph Explorer 实验** ([docs/experiments/](docs/experiments/)):[README](docs/experiments/README.md) · [embed-db-findings](docs/experiments/embed-db-findings.md) · [G1](docs/experiments/embed-db-G1-graph-findings.md) · [G2](docs/experiments/embed-db-G2-olap-findings.md) · [G3](docs/experiments/embed-db-G3-rag-findings.md)
+**工程** — [RELEASING](docs/RELEASING.md) · [CROSS_PLATFORM_BUILD](docs/CROSS_PLATFORM_BUILD.md) · [SECURITY](docs/SECURITY.md) · [E2E_TESTING](docs/E2E_TESTING.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
 
-**变更**:[CHANGELOG.md](CHANGELOG.md)
+**Graph Explorer 实验** ([docs/experiments/](docs/experiments/)) — [README](docs/experiments/README.md) · [G1 graph](docs/experiments/embed-db-G1-graph-findings.md) · [G2 OLAP](docs/experiments/embed-db-G2-olap-findings.md) · [G3 RAG](docs/experiments/embed-db-G3-rag-findings.md)
+
+**变更** — [CHANGELOG.md](CHANGELOG.md)
+
+---
 
 ## 许可证
 
@@ -498,17 +235,12 @@ API Key 错误或 Base URL 不对。在设置页检查:
 
 ## 致谢
 
-- [Tauri](https://tauri.app/) — 出色的跨平台桌面框架
-- [OpenClaw](https://github.com/openclaw/openclaw) — 启发了本项目
-- [Claude Code](https://claude.com/code) — JSONL schema 的事实标准
-- [Kimi Code](https://kimi.moonshot.cn/) — Moonshot AI CLI
-- [DeepSeek Harness](https://github.com/deepseek-ai) — zstd-compressed wire format
-- [pi-coding-agent](https://github.com/earendil-works/pi-coding-agent) — OpenClaw 会话格式参考
+[Tauri](https://tauri.app/) · [OpenClaw](https://github.com/openclaw/openclaw) · [Claude Code](https://claude.com/code) · [Kimi Code](https://kimi.moonshot.cn/) · [DeepSeek Harness](https://github.com/deepseek-ai) · [pi-coding-agent](https://github.com/earendil-works/pi-coding-agent)
 
 ---
 
 <div align="center">
 
-如果这个项目对你有帮助,给个 !
+如果这个项目对你有帮助,给个 ⭐ !
 
 </div>

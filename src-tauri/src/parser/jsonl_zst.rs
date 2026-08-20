@@ -12,7 +12,6 @@ use std::path::Path;
 
 use crate::error::AppResult;
 
-
 /// 流式遍历整个 `.jsonl.zstd` 文件(逐行解压 + JSON 解析)。
 ///
 /// 与 `jsonl::for_each_line` 行为一致:空行跳过,损坏行 warn + 跳过继续。
@@ -42,7 +41,12 @@ where
                 index += 1;
             }
             Err(e) => {
-                log::warn!("跳过损坏的 JSONL.zstd 行 ({}:{}): {}", path.display(), index, e);
+                log::warn!(
+                    "跳过损坏的 JSONL.zstd 行 ({}:{}): {}",
+                    path.display(),
+                    index,
+                    e
+                );
             }
         }
     }

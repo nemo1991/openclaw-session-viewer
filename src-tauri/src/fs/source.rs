@@ -57,10 +57,7 @@ mod tests {
             source_from_path("/tmp/backup/.openclaw/x.jsonl"),
             "openclaw"
         );
-        assert_eq!(
-            source_from_path("/data/backup/.dsh/x.jsonl.zstd"),
-            "dsh"
-        );
+        assert_eq!(source_from_path("/data/backup/.dsh/x.jsonl.zstd"), "dsh");
     }
 
     #[test]

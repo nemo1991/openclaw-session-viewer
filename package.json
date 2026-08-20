@@ -1,8 +1,8 @@
 {
   "name": "openclaw-session-viewer",
-  "version": "0.9.28",
+  "version": "0.9.29",
   "private": true,
-  "description": "跨平台桌面应用 - 浏览本地 OpenClaw / Claude Code 会话",
+  "description": "跨平台桌面应用 - 浏览本地 Claude Code / OpenClaw / Kimi Code / DeepSeek Harness 会话 (zstd 透明解压 + 聚合 KPI + subagent tracking)",
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @ocsv/frontend dev",

@@ -133,7 +133,12 @@ export function HomeStatusBar() {
   const [expanded, setExpanded] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
-  const [live, setLive] = useState<LivePhase>({ kind: "idle" });
+  // v0.9.28 (M11.2): mount 时乐观显示 "扫描中…",避免 250ms race 期间 pill 停留在 idle/stale。
+  // 后端 sync_loop 在 tokio::spawn 启动时就跑第一轮,首个 "sync-progress: scanning"
+  // 事件在 frontend listener 注册前发出来会被丢;App.tsx refresh() 触发第二轮才进 listener。
+  // 这里默认 scanning 让用户立刻看到同步在进行,真实事件到达后覆盖(扫描中→同步 N/M→完成)。
+  // 唯一副作用:sync 已完成才 mount 的场景会闪一下 "扫描中…"(<200ms),可接受。
+  const [live, setLive] = useState<LivePhase>({ kind: "scanning" });
 
   const refresh = useSessionsStore((s) => s.refresh);
   const load = useSessionsStore((s) => s.load);

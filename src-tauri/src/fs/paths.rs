@@ -206,7 +206,9 @@ impl CustomRoot {
             (false, false, true, true) => RootKind::Dsh,
             // 多源混用: Claude+OpenClaw (兼容) vs All (含 Kimi/Dsh)
             (true, true, false, _) => RootKind::Both,
-            (true, false, true, _) | (false, true, true, _) | (true, true, true, _) => RootKind::All,
+            (true, false, true, _) | (false, true, true, _) | (true, true, true, _) => {
+                RootKind::All
+            }
         };
 
         Some(Self {
@@ -930,9 +932,8 @@ mod tests {
             },
             custom_roots: vec![],
         };
-        let target = Path::new(
-            "/Users/test/.dsh/sessions/--Users-foo-bar--/session-abc/session.jsonl.zstd",
-        );
+        let target =
+            Path::new("/Users/test/.dsh/sessions/--Users-foo-bar--/session-abc/session.jsonl.zstd");
         assert!(assert_within_any_root(&paths, target).is_ok());
     }
 

@@ -234,8 +234,21 @@ function MetaBannerFold({ banner }: { banner: NonNullable<SessionMeta["metaBanne
           </span>
         )}
         {banner.permissionMode && (
-          <span className="mb-pill mb-perm" title="permission mode">
+          <span className="mb-pill mb-perm" title="permission mode (dsh permission/preset)">
             🔐 {banner.permissionMode}
+          </span>
+        )}
+        {banner.sandboxMode && (
+          <span className="mb-pill mb-sandbox" title="sandbox mode (dsh sandbox/mode, M11.5)">
+            🧪 {banner.sandboxMode}
+          </span>
+        )}
+        {banner.approvalPolicy && (
+          <span
+            className="mb-pill mb-approval"
+            title="approval policy (dsh approval/policy, M11.5)"
+          >
+            ⚖ {banner.approvalPolicy}
           </span>
         )}
         {totalChanges > 0 && (

@@ -140,7 +140,14 @@ export interface SessionMeta {
     profileName?: string;
     modelAlias?: string;
     thinkingEffort?: string;
+    /** 当前 permission mode — dsh `permission/preset.data.preset` */
     permissionMode?: string;
+    /** 当前 sandbox mode — dsh `sandbox/mode.data.mode` (v0.9.28 M11.5 独立字段,
+     * 之前被错写到 permissionMode) */
+    sandboxMode?: string;
+    /** 当前 approval policy "ask" / "auto" / "deny" —
+     * dsh `approval/policy.data.policy` (v0.9.28 M11.5 之前只计 count、值被丢) */
+    approvalPolicy?: string;
     activeToolCount?: number;
     configChangeCount: number;
     approvalCount: number;
@@ -576,10 +583,7 @@ function stringifyUnknown(v: unknown): string {
  * - 其他 lifecycle/permission/sandbox → role=meta
  * - 未知 type → role=meta,不 panic
  */
-export function normalizeDshRecord(
-  record: unknown,
-  index: number
-): NormalizedMessage | null {
+export function normalizeDshRecord(record: unknown, index: number): NormalizedMessage | null {
   if (!record || typeof record !== "object") return null;
   const obj = record as Record<string, unknown>;
   const type = typeof obj.type === "string" ? obj.type : "";
@@ -588,7 +592,8 @@ export function normalizeDshRecord(
   const id = `dsh-${type}-${index}`;
   const timeNum = typeof obj.time === "number" ? obj.time : null;
   const timestamp = timeNum != null ? new Date(timeNum).toISOString() : undefined;
-  const data = obj.data && typeof obj.data === "object" ? (obj.data as Record<string, unknown>) : null;
+  const data =
+    obj.data && typeof obj.data === "object" ? (obj.data as Record<string, unknown>) : null;
 
   switch (type) {
     case "session":
@@ -610,9 +615,15 @@ export function normalizeDshRecord(
     case "assistant/message": {
       const message = data?.message;
       const m = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
-      const source = (m.source && typeof m.source === "object" ? m.source : {}) as Record<string, unknown>;
+      const source = (m.source && typeof m.source === "object" ? m.source : {}) as Record<
+        string,
+        unknown
+      >;
       const model = typeof source.model === "string" ? source.model : undefined;
-      const usage = data?.usage && typeof data.usage === "object" ? (data.usage as Record<string, unknown>) : null;
+      const usage =
+        data?.usage && typeof data.usage === "object"
+          ? (data.usage as Record<string, unknown>)
+          : null;
       const tokenUsage = usage
         ? {
             input: asNumber(usage.inputTokens),
@@ -688,7 +699,15 @@ function dshContentToBlocks(content: unknown, _role: string): NormalizedBlock[] 
   const out: NormalizedBlock[] = [];
   for (const item of content) {
     if (!item || typeof item !== "object") continue;
-    const it = item as { type?: string; text?: string; thinking?: string; name?: string; id?: string; arguments?: unknown; [k: string]: unknown };
+    const it = item as {
+      type?: string;
+      text?: string;
+      thinking?: string;
+      name?: string;
+      id?: string;
+      arguments?: unknown;
+      [k: string]: unknown;
+    };
     switch (it.type) {
       case "reasoning":
         out.push({ kind: "thinking", text: typeof it.text === "string" ? it.text : "" });
