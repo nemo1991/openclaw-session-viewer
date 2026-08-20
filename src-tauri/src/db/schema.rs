@@ -311,7 +311,9 @@ pub fn upsert_session_meta(
           repeat_run_count, repeat_run_max_tool, repeat_run_max_count,
           idle_gap_count, idle_gap_max_ms,
           available_models_json, tool_error_json, parent_uuids_text,
-          todo_summary_json, kimi_token_usage_json, meta_banner_json
+          todo_summary_json, kimi_token_usage_json, meta_banner_json,
+          -- v0.9.28 (M11.1): first_prompt 列 — SessionCard preview 用 (之前 schema 有列但 INSERT 漏了, dsh 受影响最大)
+          first_prompt
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5,
           ?6, ?7, ?8, ?9,
@@ -330,7 +332,8 @@ pub fn upsert_session_meta(
           ?37, ?38, ?39,
           ?40, ?41,
           ?42, ?43, ?44,
-          ?45, ?46, ?47
+          ?45, ?46, ?47,
+          ?48
         )
         ON CONFLICT(session_id) DO UPDATE SET
           project_key      = excluded.project_key,
@@ -380,7 +383,9 @@ pub fn upsert_session_meta(
           parent_uuids_text         = excluded.parent_uuids_text,
           todo_summary_json         = excluded.todo_summary_json,
           kimi_token_usage_json     = excluded.kimi_token_usage_json,
-          meta_banner_json          = excluded.meta_banner_json
+          meta_banner_json          = excluded.meta_banner_json,
+          -- v0.9.28 (M11.1): first_prompt 更新
+          first_prompt = excluded.first_prompt
         "#,
         params![
             m.session_id,
@@ -440,6 +445,8 @@ pub fn upsert_session_meta(
             todo_summary_json.as_deref(),
             kimi_token_usage_json.as_deref(),
             meta_banner_json.as_deref(),
+            // v0.9.28 (M11.1): first_prompt 写入(之前 schema 有列,但 INSERT 漏了 → DB 永远 NULL)
+            m.first_prompt.as_deref(),
         ],
     )?;
     Ok(())
@@ -519,7 +526,9 @@ SELECT
   -- v0.9.8: kimi 专属聚合列 (TodoWrite + token + MetaBanner)
   m.todo_summary_json,
   m.kimi_token_usage_json,
-  m.meta_banner_json
+  m.meta_banner_json,
+  -- v0.9.28 (M11.1): first_prompt — SessionCard preview 用
+  m.first_prompt
 FROM session_meta m
 LEFT JOIN session_override o ON m.session_id = o.session_id
 LEFT JOIN session_tag st     ON m.session_id = st.session_id
@@ -584,7 +593,6 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         agent_label: None,
         agent_channel: None,
         agent_target: None,
-        first_prompt: None,
         display_title: None,
         hidden: false,
         pinned: false,
@@ -638,6 +646,8 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
         meta_banner: row
             .get::<_, Option<String>>(51)?
             .and_then(|s| serde_json::from_str(&s).ok()),
+        // v0.9.28 (M11.1): first_prompt — SessionCard preview 用 (之前 schema 有列但 joined_row_mapper 硬填 None)
+        first_prompt: row.get(52)?,
     };
 
     Ok(JoinedRow {
@@ -976,7 +986,7 @@ mod round_trip_tests {
             agent_label: None,
             agent_channel: None,
             agent_target: None,
-            first_prompt: None,
+            first_prompt: Some("此 prompt 由 47-column round-trip 测试填".into()),
             display_title: None,
             hidden: false,
             pinned: false,
@@ -1095,6 +1105,12 @@ mod round_trip_tests {
                 approval_count: 2,
                 ..Default::default()
             })
+        );
+        // v0.9.28 (M11.1): first_prompt 写到 DB(round-trip)
+        assert_eq!(
+            r.first_prompt.as_deref(),
+            Some("此 prompt 由 47-column round-trip 测试填"),
+            "first_prompt 应原值 round-trip"
         );
     }
 

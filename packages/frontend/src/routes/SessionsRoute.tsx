@@ -86,8 +86,14 @@ export default function SessionsRoute() {
       // load() 走只读 list_sessions,不触发 sync,断回路。
       void load();
     }).then((u) => {
+      // v0.9.28 (M11.1): 修启动 race — listener 注册完成后强制 load() 一次,
+      // 防止 sync_loop 在 listener 未注册前 emit "sessions-updated" 事件被丢
+      // (用户感知:"打开应用后没有自动同步,需要手动同步")。
       if (cancelled) u();
-      else unlisten = u;
+      else {
+        unlisten = u;
+        void load();
+      }
     });
     return () => {
       cancelled = true;

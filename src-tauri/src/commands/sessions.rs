@@ -299,7 +299,7 @@ pub(crate) fn build_claude_session_meta(
     let mut token_total = TokenUsage::default();
     let mut model_count: HashMap<String, u32> = HashMap::new();
     // v0.9.27 (M10): thinking_count 局部累加删除 — aggregator 一次性算全文件
-    let mut tool_use_count: u32 = 0;
+    let mut _tool_use_count: u32 = 0;
     let mut tool_name_count: HashMap<String, u32> = HashMap::new();
 
     for v in &head {
@@ -362,7 +362,7 @@ pub(crate) fn build_claude_session_meta(
                             // v0.9.27 (M10): thinking block 计数由 aggregator 算 (扫全文件,更准)
                             // — 之前 head 50 行累加的局部变量已删
                             if bt == "tool_use" {
-                                tool_use_count += 1;
+                                _tool_use_count += 1;
                                 if let Some(name) = item.get("name").and_then(|x| x.as_str()) {
                                     *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
                                 }
@@ -486,7 +486,8 @@ pub(crate) fn build_claude_session_meta(
         // v0.9.27 (M10): thinking_count 由 aggregator 算 (claude: message.content[].type=="thinking" 累加,
         // 跟 quick path 50 行的局部累加一样,aggregator 扫全文件 → 数字更准)
         thinking_count: Some(extras.thinking_count),
-        tool_use_count: Some(tool_use_count),
+        // v0.9.28 (M11.1): tool_use_count 跟 aggregator tool_usage 对齐,不再用 head-only 50 行的局部值
+        tool_use_count: Some(total_tool_calls(&extras.tool_usage)),
         top_tools: if top_tools.is_empty() {
             None
         } else {
@@ -581,7 +582,7 @@ pub(crate) fn build_openclaw_session_meta(
     let mut name: Option<String> = None;
     let mut first_user_text: Option<String> = None;
     // v0.9.27 (M10): thinking_count 局部累加删除 — aggregator 一次性算全文件
-    let mut tool_use_count: u32 = 0;
+    let mut _tool_use_count: u32 = 0;
     let mut tool_name_count: HashMap<String, u32> = HashMap::new();
 
     for v in &head {
@@ -616,7 +617,7 @@ pub(crate) fn build_openclaw_session_meta(
                                 // v0.9.27 (M10): thinking block 计数由 aggregator 算 (扫全文件,更准)
                                 // — 之前 head 50 行累加的局部变量已删
                                 if bt == "tool_use" {
-                                    tool_use_count += 1;
+                                    _tool_use_count += 1;
                                     if let Some(n) = item.get("name").and_then(|x| x.as_str()) {
                                         *tool_name_count.entry(n.to_string()).or_insert(0) += 1;
                                     }
@@ -678,7 +679,8 @@ pub(crate) fn build_openclaw_session_meta(
         first_prompt: first_user_text,
         last_message_at: last_ts,
         thinking_count: Some(extras.thinking_count),
-        tool_use_count: Some(tool_use_count),
+        // v0.9.28 (M11.1): tool_use_count 跟 aggregator tool_usage 对齐
+        tool_use_count: Some(total_tool_calls(&extras.tool_usage)),
         top_tools: if top_tools.is_empty() {
             None
         } else {
@@ -892,7 +894,7 @@ pub(crate) fn build_kimi_session_meta(
     // quick path 50 行: title / first_prompt / primary_model / thinking/tool_use
     let head = jsonl::parse_first_n(jsonl_path, 50).unwrap_or_default();
     let mut primary_model: Option<String> = None;
-    let mut tool_use_count: u32 = 0;
+    let mut _tool_use_count: u32 = 0;
     let mut tool_name_count: std::collections::HashMap<String, u32> =
         std::collections::HashMap::new();
     let mut first_prompt: Option<String> = None;
@@ -935,7 +937,7 @@ pub(crate) fn build_kimi_session_meta(
             "context.append_loop_event" => {
                 if let Some(ev) = obj.get("event") {
                     if ev.get("type").and_then(|x| x.as_str()) == Some("tool.call") {
-                        tool_use_count += 1;
+                        _tool_use_count += 1;
                         if let Some(name) = ev.get("name").and_then(|x| x.as_str()) {
                             *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
                         }
@@ -1011,7 +1013,8 @@ pub(crate) fn build_kimi_session_meta(
         last_message_at: last_ts.clone(),
         // v0.9.27 (M10): thinking_count 由 aggregator 算 (kimi: content.part.part.type=="think" 累加)
         thinking_count: Some(extras.thinking_count),
-        tool_use_count: Some(tool_use_count),
+        // v0.9.28 (M11.1): tool_use_count 跟 aggregator tool_usage 对齐
+        tool_use_count: Some(total_tool_calls(&extras.tool_usage)),
         top_tools: if top_tools.is_empty() {
             None
         } else {
@@ -1169,7 +1172,7 @@ pub(crate) fn build_dsh_session_meta(
     // quick path 50 行: title / first_prompt / primary_model / tool_use_count
     let head = jsonl::parse_first_n_auto(jsonl_path, 50).unwrap_or_default();
     let mut primary_model: Option<String> = None;
-    let mut tool_use_count: u32 = 0;
+    let mut _tool_use_count: u32 = 0;
     let mut tool_name_count: HashMap<String, u32> = HashMap::new();
     let mut first_prompt: Option<String> = None;
 
@@ -1198,7 +1201,7 @@ pub(crate) fn build_dsh_session_meta(
                 {
                     for part in content {
                         if part.get("type").and_then(|x| x.as_str()) == Some("tool-call") {
-                            tool_use_count += 1;
+                            _tool_use_count += 1;
                             if let Some(name) = part.get("name").and_then(|x| x.as_str()) {
                                 *tool_name_count.entry(name.to_string()).or_insert(0) += 1;
                             }
@@ -1269,7 +1272,8 @@ pub(crate) fn build_dsh_session_meta(
         first_prompt: first_prompt.clone(),
         last_message_at: last_ts.clone(),
         thinking_count: Some(extras.thinking_count),
-        tool_use_count: Some(tool_use_count),
+        // v0.9.28 (M11.1): tool_use_count 跟 aggregator tool_usage 对齐(dsh 头 50 行几乎都是 lifecycle event)
+        tool_use_count: Some(total_tool_calls(&extras.tool_usage)),
         top_tools: if top_tools.is_empty() {
             None
         } else {
@@ -1444,6 +1448,13 @@ fn truncate(s: &str, max: usize) -> String {
         let truncated: String = s.chars().take(max).collect();
         format!("{}…", truncated)
     }
+}
+
+/// v0.9.28 (M11.1): 把 aggregator 的 `tool_usage` Vec<(name, count)> 求和,得出
+/// 全文件 tool_use_count(取代 head-only 50 行的局部累加 — dsh 3MB+ session 头 50 行
+/// 几乎都是 lifecycle event,local 累加严重低估)。
+fn total_tool_calls(usage: &[(String, u32)]) -> u32 {
+    usage.iter().map(|(_, c)| *c).sum()
 }
 
 /// 从 projectKey 推 workspace 路径(与前端保持一致)
