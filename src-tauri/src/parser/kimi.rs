@@ -1863,7 +1863,6 @@ fn raw_todo_event_value(r: &TodoRecord) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::jsonl;
     use serde_json::json;
 
     #[test]
@@ -2036,53 +2035,6 @@ mod tests {
                 .unwrap(),
             "h"
         );
-    }
-
-    #[test]
-    fn normalize_session_v0913_bpm_large_tools_snapshot_has_24_tools() {
-        // v0.9.13: bpm-large 真实样本 6040 行验证 — 1 条 llm.tools_snapshot, 24 个 tool
-        let path = std::path::Path::new("<redacted-fixture>-v0913.jsonl");
-        if !path.exists() {
-            // fixture missing — 在其他 cwd 跑 cargo test 时 skip
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let bytes = std::fs::read(path).expect("read fixture");
-        let mut records = Vec::new();
-        for line in bytes.split(|b| *b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
-        }
-        let out = normalize_session(records);
-        let snapshot_msgs: Vec<_> = out
-            .iter()
-            .filter(|m| m.raw_type == "llm.tools_snapshot")
-            .collect();
-        assert_eq!(
-            snapshot_msgs.len(),
-            1,
-            "expected exactly 1 llm.tools_snapshot meta block"
-        );
-        let block = &snapshot_msgs[0].blocks[0];
-        assert_eq!(
-            block.data.get("tool_count").unwrap().as_u64().unwrap(),
-            24,
-            "bpm-large has 24 tools"
-        );
-        let names = block.data.get("tool_names").unwrap().as_array().unwrap();
-        let names_str: Vec<&str> = names.iter().map(|v| v.as_str().unwrap()).collect();
-        // 关键 tool 都在 (代表 session 能调 subagent / task / cron)
-        for expected in ["Agent", "Bash", "Read", "Edit", "TodoList", "CronCreate"] {
-            assert!(
-                names_str.contains(&expected),
-                "expected tool {expected} in {names_str:?}"
-            );
-        }
-        // hash 透传
-        let h = block.data.get("snapshot_hash").unwrap().as_str().unwrap();
-        assert_eq!(h.len(), 64, "sha256 hex = 64 chars, got {h:?}");
     }
 
     #[test]
@@ -2395,74 +2347,6 @@ mod tests {
 
     /// v0.9.12: bpm-large fixture 22 个 apply_compaction 全部走新 builder,
     /// summary 字段必须非空 (真实 dcwin11 中文交接笔记)
-    #[test]
-    fn normalize_session_v0912_bpm_large_apply_compaction_has_summary() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("<redacted-fixture>.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let mut records: Vec<serde_json::Value> = Vec::new();
-        jsonl::for_each_line(&path, |_idx, _byte, v| {
-            records.push(v.clone());
-        })
-        .expect("for_each_line bpm-large");
-        let out = normalize_session(records);
-
-        let apply_compactions: Vec<&NormalizedMessage> = out
-            .iter()
-            .filter(|n| n.raw_type == "context.apply_compaction")
-            .collect();
-        assert_eq!(
-            apply_compactions.len(),
-            22,
-            "bpm-large 期望 22 个 apply_compaction, got {}",
-            apply_compactions.len()
-        );
-
-        // 每个 apply_compaction 必须有 summary 顶层字段 (非空)
-        let with_summary: Vec<&&NormalizedMessage> = apply_compactions
-            .iter()
-            .filter(|m| {
-                m.blocks[0]
-                    .data
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false)
-            })
-            .collect();
-        assert!(
-            with_summary.len() >= 20,
-            "至少 20/22 个 apply_compaction 应有非空 summary (dcwin11 真实 schema), got {}",
-            with_summary.len()
-        );
-
-        // 压缩比应在合理范围 (bpm-large 实测 ~58K → 2.5K = 23x)
-        let ratios: Vec<f64> = apply_compactions
-            .iter()
-            .filter_map(|m| {
-                m.blocks[0]
-                    .data
-                    .get("compression_ratio")
-                    .and_then(|v| v.as_f64())
-            })
-            .collect();
-        let avg: f64 = ratios.iter().sum::<f64>() / ratios.len() as f64;
-        println!(
-            "bpm-large 22 apply_compaction: avg compression_ratio = {:.1}x, {} / 22 有 ratio",
-            avg,
-            ratios.len()
-        );
-        assert!(
-            (10.0..=50.0).contains(&avg),
-            "bpm-large 平均压缩比应在 10-50x, got {:.2}",
-            avg
-        );
-    }
 
     /// v0.9.9: regression — dcwin11 bpm-large fixture (5834 lines) 所有 step.begin
     /// /content.part/tool.call/tool.result 都包在 `context.append_loop_event`
@@ -2476,104 +2360,6 @@ mod tests {
     /// - 大量 text + thinking block (1094 个 content.part → ~552 text + ~623 think)
     /// - user prompt ≈ 75 (19 turn.prompt + 57 context.append_message.role=user;
     ///   偶尔有 1 个 context.append_message 在 step 中被合并所以 76 而非 76)
-    #[test]
-    fn normalize_session_v099_bpm_large_unwraps_loop_envelopes() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("<redacted-fixture>.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        // 一次性 read 5834 行 wire → 跑 normalize_session
-        let mut records: Vec<serde_json::Value> = Vec::new();
-        jsonl::for_each_line(&path, |_idx, _byte, v| {
-            records.push(v.clone());
-        })
-        .expect("for_each_line bpm-large");
-        let out = normalize_session(records);
-
-        // user / assistant / meta 计数
-        let user_count = out.iter().filter(|n| n.role == "user").count();
-        let assistant_count = out.iter().filter(|n| n.role == "assistant").count();
-        let meta_count = out.iter().filter(|n| n.role == "meta").count();
-
-        println!(
-            "bpm-large normalize_session: user={} assistant={} meta={}",
-            user_count, assistant_count, meta_count
-        );
-
-        // 19 turn.prompt + 57 context.append_message{role:user} + 1 turn.cancel flush = ~76 user
-        // (实测 75,差 1 是某 append_message 在 step 中合并)
-        assert!(
-            (70..=85).contains(&user_count),
-            "user prompt count 应 ≈ 75 (19 turn.prompt + 57 append_message), got {}",
-            user_count
-        );
-        // 624 step.begin - 22 没有 step.end 配对 (EOF 时 flush) + 1 末 step flush = 602
-        assert!(
-            (590..=620).contains(&assistant_count),
-            "assistant message count 应 ≈ 602 (dcwin11 bpm 实测), got {}",
-            assistant_count
-        );
-        // v0.9.16: meta 数量 ~125 (1 metadata + 24 config + 4 perm.set + 1 tools.set +
-        //                         20 approval + 22+22 compaction + 22 apply
-        //                         + 4 plan_mode + 1 turn.cancel + 1 todos.chart 聚合)
-        // (旧版 ~176 是 55 个 raw tools.update_store meta blocks + 1 missing。
-        //  v0.9.16 末尾聚合为 1 个 todos.chart meta, delta = -55 + 1 = -54 → ≈ 122)
-        assert!(
-            (115..=140).contains(&meta_count),
-            "meta block count 应 ≈ 125 (v0.9.16 聚合 tools.update_store), got {}",
-            meta_count
-        );
-
-        // 累积 block kind — 必须出现 tool_use + tool_result + text + thinking
-        let mut text_count = 0usize;
-        let mut thinking_count = 0usize;
-        let mut tool_use_count = 0usize;
-        let mut tool_result_count = 0usize;
-        for n in &out {
-            if n.role != "assistant" {
-                continue;
-            }
-            for b in &n.blocks {
-                match b.kind.as_str() {
-                    "text" => text_count += 1,
-                    "thinking" => thinking_count += 1,
-                    "tool_use" => tool_use_count += 1,
-                    "tool_result" => tool_result_count += 1,
-                    _ => {}
-                }
-            }
-        }
-        println!(
-            "blocks: text={} thinking={} tool_use={} tool_result={}",
-            text_count, thinking_count, tool_use_count, tool_result_count
-        );
-
-        // v0.9.8 前: text=thinking=tool_use=tool_result=0 (envelope 没 unwrap)
-        assert!(
-            text_count > 100,
-            "text block 应 > 100 (dcwin11 bpm ~552), got {}",
-            text_count
-        );
-        assert!(
-            thinking_count > 100,
-            "thinking block 应 > 100 (dcwin11 bpm ~623), got {}",
-            thinking_count
-        );
-        assert!(
-            tool_use_count > 100,
-            "tool_use block 应 > 100 (dcwin11 bpm ~1073), got {}",
-            tool_use_count
-        );
-        assert!(
-            tool_result_count > 100,
-            "tool_result block 应 > 100 (dcwin11 bpm ~1073), got {}",
-            tool_result_count
-        );
-    }
 
     /// v0.9.9: 小规模测试 envelope unwrap 行为 — 直接构造 envelope 结构
     /// 不依赖 fixture。
@@ -2871,68 +2657,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn normalize_session_v0914_bpm_large_usage_chart_has_645_events_aggregated() {
-        // v0.9.14: bpm-large 真实样本 6040 行验证 — 645 个 usage.record 聚合
-        // 成 1 个 usage.chart meta,顶层 stats + 60 buckets + 22 session_scope
-        let path = std::path::Path::new("<redacted-fixture>-v0914.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let bytes = std::fs::read(path).expect("read fixture");
-        let mut records = Vec::new();
-        for line in bytes.split(|b| *b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
-        }
-        let out = normalize_session(records);
-        let chart_msgs: Vec<_> = out
-            .iter()
-            .filter(|m| m.raw_type == "usage.record" && m.role == "meta")
-            .collect();
-        assert_eq!(
-            chart_msgs.len(),
-            1,
-            "expected exactly 1 usage.chart meta block (645 events aggregated)"
-        );
-        let block = &chart_msgs[0].blocks[0];
-        let data = &block.data;
-        // 623 turn + 22 session = 645 events
-        assert_eq!(data.get("turn_count").unwrap().as_u64().unwrap(), 623);
-        assert_eq!(
-            data.get("session_scope_count").unwrap().as_u64().unwrap(),
-            22
-        );
-        // 60 buckets (cap)
-        let buckets = data.get("buckets").unwrap().as_array().unwrap();
-        assert_eq!(buckets.len(), 60, "645 events → 60 buckets");
-        // total_tokens = 35_462_012 (验证 dcwin11 真实数据)
-        assert_eq!(
-            data.get("total_tokens").unwrap().as_u64().unwrap(),
-            35_462_012,
-            "bpm-large total tokens"
-        );
-        // cache hit ratio ~0.912
-        let ratio = data.get("cache_hit_ratio").unwrap().as_f64().unwrap();
-        assert!(
-            (ratio - 0.912).abs() < 0.005,
-            "cache hit ratio ~0.912, got {ratio}"
-        );
-        // 22 session_scope_events
-        let sse = data
-            .get("session_scope_events")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(sse.len(), 22);
-        // payload.raw_count = 645
-        let payload = data.get("payload").unwrap().as_object().unwrap();
-        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 645);
-    }
-
     // ──────────────────────────────────────────────────────────────────────
     // v0.9.15: llm.request → request.chart 聚合
     // ──────────────────────────────────────────────────────────────────────
@@ -3219,94 +2943,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn normalize_session_v0915_bpm_large_request_chart_has_648_events_aggregated() {
-        // v0.9.15: bpm-large 真实样本验证 — 648 个 llm.request 聚合成 1 个
-        // request.chart meta,顶层 stats + 60 buckets + drift detection + 23
-        // 独立 system_prompt_hash
-        let path = std::path::Path::new("<redacted-fixture>-v0914.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let bytes = std::fs::read(path).expect("read fixture");
-        let mut records = Vec::new();
-        for line in bytes.split(|b| *b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
-        }
-        let out = normalize_session(records);
-        let chart_msgs: Vec<_> = out
-            .iter()
-            .filter(|m| m.raw_type == "llm.request" && m.role == "meta")
-            .collect();
-        assert_eq!(
-            chart_msgs.len(),
-            1,
-            "expected exactly 1 request.chart meta block (648 events aggregated)"
-        );
-        let data = &chart_msgs[0].blocks[0].data;
-        // 648 events total
-        assert_eq!(data.get("request_count").unwrap().as_u64().unwrap(), 648);
-        // 625 loop + 23 compaction
-        assert_eq!(data.get("kind_loop").unwrap().as_u64().unwrap(), 625);
-        assert_eq!(data.get("kind_compaction").unwrap().as_u64().unwrap(), 23);
-        // maxTokens 范围 50451 → 131072
-        assert_eq!(
-            data.get("max_tokens_min").unwrap().as_u64().unwrap(),
-            50_451
-        );
-        assert_eq!(
-            data.get("max_tokens_max").unwrap().as_u64().unwrap(),
-            131_072
-        );
-        // 60 buckets (cap)
-        let buckets = data.get("buckets").unwrap().as_array().unwrap();
-        assert_eq!(buckets.len(), 60, "648 events → 60 buckets (cap)");
-        // tools_hash 全程稳定 (跟 v0.9.13 snapshot 一致) → 0 drift
-        assert_eq!(
-            data.get("tools_hash_drift_count")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            0,
-            "bpm-large tools_hash 应当全程一致"
-        );
-        // 23 独立 system_prompt_hash (config drift 信号)
-        assert_eq!(
-            data.get("system_prompt_hash_distinct")
-                .unwrap()
-                .as_u64()
-                .unwrap(),
-            23,
-            "bpm-large 23 个独立 system_prompt_hash"
-        );
-        // system_prompt_drift_events 长度 = 23 (每个 hash 第一次出现)
-        let drift_events = data
-            .get("system_prompt_drift_events")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(drift_events.len(), 23);
-        // model / provider
-        assert_eq!(
-            data.get("model").unwrap().as_str().unwrap(),
-            "deepseek-v4-flash"
-        );
-        assert_eq!(data.get("provider").unwrap().as_str().unwrap(), "openai");
-        // message_count range 1 → 128
-        assert_eq!(data.get("message_count_min").unwrap().as_u64().unwrap(), 1);
-        assert_eq!(
-            data.get("message_count_max").unwrap().as_u64().unwrap(),
-            128
-        );
-        // payload.raw_count = 648
-        let payload = data.get("payload").unwrap().as_object().unwrap();
-        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 648);
-    }
-
     // ──────────────────────────────────────────────────────────────────────
     // v0.9.16: tools.update_store → todos.chart 聚合
     // ──────────────────────────────────────────────────────────────────────
@@ -3551,72 +3187,5 @@ mod tests {
         // raw_count = 5
         let payload = data.get("payload").unwrap().as_object().unwrap();
         assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 5);
-    }
-
-    #[test]
-    fn normalize_session_v0916_bpm_large_todo_chart_has_57_events_aggregated() {
-        // v0.9.16: bpm-large 真实样本 — 57 个 tools.update_store event 聚合成
-        // 1 个 todos.chart meta (91 unique tasks + 47 churn events)
-        let path = std::path::Path::new("<redacted-fixture>-v0916.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let bytes = std::fs::read(path).expect("read fixture");
-        let mut records = Vec::new();
-        for line in bytes.split(|b| *b == b'\n') {
-            if line.is_empty() {
-                continue;
-            }
-            records.push(serde_json::from_slice::<serde_json::Value>(line).expect("parse jsonl"));
-        }
-        let out = normalize_session(records);
-        let chart_msgs: Vec<_> = out
-            .iter()
-            .filter(|m| m.raw_type == "tools.update_store" && m.role == "meta")
-            .collect();
-        assert_eq!(
-            chart_msgs.len(),
-            1,
-            "expected exactly 1 todos.chart meta block (57 events aggregated)"
-        );
-        let data = &chart_msgs[0].blocks[0].data;
-        // 57 events total
-        assert_eq!(data.get("update_count").unwrap().as_u64().unwrap(), 57);
-        // 91 unique tasks (跨 57 条 event 出现的独立 title 数)
-        assert_eq!(
-            data.get("unique_task_count").unwrap().as_u64().unwrap(),
-            91,
-            "bpm-large 91 个独立 todo title"
-        );
-        // 末次 snapshot: 23 done / 1 in_progress / 4 pending
-        assert_eq!(data.get("current_done").unwrap().as_u64().unwrap(), 23);
-        assert_eq!(
-            data.get("current_in_progress").unwrap().as_u64().unwrap(),
-            1
-        );
-        assert_eq!(data.get("current_pending").unwrap().as_u64().unwrap(), 4);
-        // 累计: 166 done / 40 in_progress / 92 pending
-        assert_eq!(data.get("total_done").unwrap().as_u64().unwrap(), 166);
-        assert_eq!(data.get("total_in_progress").unwrap().as_u64().unwrap(), 40);
-        assert_eq!(data.get("total_pending").unwrap().as_u64().unwrap(), 92);
-        // 47 churn events (add + remove)
-        assert_eq!(
-            data.get("churn_count").unwrap().as_u64().unwrap(),
-            47,
-            "bpm-large 47 churn events (add + remove)"
-        );
-        // 60 buckets (cap)
-        let buckets = data.get("buckets").unwrap().as_array().unwrap();
-        assert_eq!(buckets.len(), 60, "57 events → 60 buckets (cap)");
-        // completed_tasks 长度 = 28 (每个 unique 完成 title 一次 done)
-        let completed = data.get("completed_tasks").unwrap().as_array().unwrap();
-        assert_eq!(completed.len(), 28);
-        // churn_events 长度 = 47
-        let churn_events = data.get("churn_events").unwrap().as_array().unwrap();
-        assert_eq!(churn_events.len(), 47);
-        // payload.raw_count = 57
-        let payload = data.get("payload").unwrap().as_object().unwrap();
-        assert_eq!(payload.get("raw_count").unwrap().as_u64().unwrap(), 57);
     }
 }

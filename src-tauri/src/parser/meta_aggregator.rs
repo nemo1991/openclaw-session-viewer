@@ -1767,94 +1767,12 @@ mod tests {
 
     /// 真实样本: dcwin11 das-portal session (1096 lines, 5 errors Bash×4 + Grep×1)
     /// 验证 5 errors、thinking_count=125、step_end=124、turn_prompts=12、model=deepseek-v4-flash
-    #[test]
-    fn aggregate_kimi_v097_dcwin11_das_portal_real_sample() {
-        // 使用 commit 时一并 copy 的真实样本 (<redacted-fixture>-main.jsonl)
-        // 真实数据下 v0.9.5 会 0 errors (finishReason 没 "error"), v0.9.7 修正后 5 errors。
-        let path = std::path::Path::new("../<redacted-fixture>-main.jsonl");
-        if !path.exists() {
-            // 跳过(避免 CI 没 fixture 时 fail)
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let extras = aggregate_kimi(path).expect("aggregate_kimi");
-        assert_eq!(
-            extras.error_count, 5,
-            "5 个 tool.result.isError=true (Bash×4 + Grep×1)"
-        );
-        assert_eq!(
-            extras.tool_error,
-            vec![("Bash".to_string(), 4), ("Grep".to_string(), 1)],
-            "per-tool 错误 breakdown 按 count desc 排"
-        );
-        assert!(
-            extras.thinking_count >= 100,
-            "thinking_count 应该 >= 100 (实测 125), got {}",
-            extras.thinking_count
-        );
-        assert_eq!(
-            extras.available_models,
-            vec!["deepseek-v4-flash".to_string()],
-            "available_models 字典序 = [deepseek-v4-flash]"
-        );
-        // duration > 0: 真实 session 跨越 ≥ 数小时
-        assert!(
-            extras.duration_seconds.unwrap_or(0) > 0,
-            "duration_seconds > 0 (顶层 time 修复后), got {:?}",
-            extras.duration_seconds
-        );
-    }
 
     /// 真实样本: dcwin11 platform 5-agent session main wire (859 lines, 6 errors)
     /// 验证多 agent 场景 + 0 thinking_count (model=minimax-m3 不产 think part)
-    #[test]
-    fn aggregate_kimi_v097_dcwin11_platform_main_real_sample() {
-        let path = std::path::Path::new("../<redacted-fixture>-main.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let extras = aggregate_kimi(path).expect("aggregate_kimi");
-        assert_eq!(
-            extras.error_count, 6,
-            "6 个 tool.result.isError=true (Read×1 + Grep×2 + Edit×3)"
-        );
-        // count desc: Edit(3) > Grep(2) > Read(1)
-        assert_eq!(
-            extras.tool_error,
-            vec![
-                ("Edit".to_string(), 3),
-                ("Grep".to_string(), 2),
-                ("Read".to_string(), 1),
-            ]
-        );
-        assert_eq!(extras.thinking_count, 0, "minimax-m3 不产 think part");
-        assert_eq!(extras.available_models, vec!["minimax-m3".to_string()]);
-    }
 
     /// 真实样本: dcwin11 bpm 大 session (3431 lines, 21 errors, 364 thinking)
     /// 性能 + 大数据量 sanity check,确保循环不 OOM/panic
-    #[test]
-    fn aggregate_kimi_v097_dcwin11_bpm_large_real_sample() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("<redacted-fixture>.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        // 已有 wire-with-usage.jsonl (v0.9.3 fixture),254KB,验证大文件能跑通 + 思考数 ≥ 几十
-        let extras = aggregate_kimi(&path).expect("aggregate_kimi");
-        // 没有 isError 的 fixture 走 v0.9.5 path,error_count=0 (因为 isError 新分支不命中)
-        // thinking_count 应该 > 0 (kimi fixture 含 think part)
-        assert!(
-            extras.thinking_count > 0,
-            "wire-with-usage 应有 thinking_count > 0, got {}",
-            extras.thinking_count
-        );
-        assert!(extras.duration_seconds.unwrap_or(0) > 0);
-    }
 
     // ===== v0.9.8: Kimi 聚合字段 (TodoWrite + token + MetaBanner) =====
 
@@ -1863,68 +1781,6 @@ mod tests {
     /// - kimi_token_usage: 623 个 usage.record{usageScope:"turn"} 累加 ≈
     ///   inputOther:2.3M / output:716k / inputCacheRead:30.9M / inputCacheCreation:0
     /// - meta_banner: {protocol:"1.4", config_change_count:>0, approval_count:20, compaction_count:22}
-    #[test]
-    fn aggregate_kimi_v098_dcwin11_bpm_aggregates_three_fields() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("<redacted-fixture>.jsonl");
-        if !path.exists() {
-            eprintln!("skip: {} not found", path.display());
-            return;
-        }
-        let extras = aggregate_kimi(&path).expect("aggregate_kimi 大文件");
-
-        // todo_summary: bpm 真实有 55 个 todo update
-        let todo = extras
-            .todo_summary
-            .as_ref()
-            .expect("todo_summary 应有 (55 次 update 后必有)");
-        assert!(
-            todo.total >= 4,
-            "末次 todo total >= 4 (fixture 实际值), got {}",
-            todo.total
-        );
-        assert!(todo.done <= todo.total);
-        println!(
-            "todo total={} done={} current={:?}",
-            todo.total, todo.done, todo.current
-        );
-
-        // kimi_token_usage: 验证大概量级,不锁死 exact number (dcwin11 真实数据已 grep 过)
-        let tok = extras
-            .kimi_token_usage
-            .as_ref()
-            .expect("kimi_token_usage 应有");
-        assert!(tok.input > 1_000_000, "input > 1M, got {}", tok.input);
-        assert!(tok.output > 100_000, "output > 100k, got {}", tok.output);
-        assert!(
-            tok.cache_read > 10_000_000,
-            "cache_read > 10M (kimi deepseek-v4-flash cache hit 高), got {}",
-            tok.cache_read
-        );
-
-        // meta_banner: 4 字段都得有
-        let banner = extras.meta_banner.as_ref().expect("meta_banner 应有");
-        assert_eq!(banner.protocol_version.as_deref(), Some("1.4"));
-        assert!(banner.config_change_count > 0);
-        assert!(banner.approval_count > 0);
-        assert!(banner.compaction_count > 0);
-        assert!(
-            banner.last_compaction_duration_ms.unwrap_or(0) > 0,
-            "至少一次 compaction 完成对 → duration_ms > 0"
-        );
-        println!(
-            "banner: profile={:?} model={:?} tools={:?} config_changes={} approvals={} compactions={} last_dur={:?}",
-            banner.profile_name,
-            banner.model_alias,
-            banner.active_tool_count,
-            banner.config_change_count,
-            banner.approval_count,
-            banner.compaction_count,
-            banner.last_compaction_duration_ms
-        );
-    }
 
     /// 单元 fixture 测试: 单条 tools.update_store{key:"todo"} → todo_summary 提取
     #[test]

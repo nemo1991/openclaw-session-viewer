@@ -56,3 +56,11 @@ Thumbs.db
 *.swo
 *~
 *.bak
+
+# Real session fixtures — privacy (v0.9.29)
+# Real user sessions must NEVER be committed. Tests use inline synthetic data.
+# `fixtures/sample-claude.jsonl` is a small synthetic example (TODO CRUD,
+# sessionId=fixture-session-uuid-1234) and is allowed.
+fixtures/kimi/
+fixtures/dsh/
+src-tauri/fixtures/
