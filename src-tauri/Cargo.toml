@@ -1,6 +1,6 @@
 [package]
 name = "openclaw-session-viewer"
-version = "0.9.29"
+version = "0.9.30"
 description = "跨平台桌面应用 - 浏览本地 Claude Code / OpenClaw / Kimi Code / DeepSeek Harness 会话 (zstd 透明解压 + 聚合 KPI + subagent tracking)"
 authors = ["OpenClaw Viewer Contributors"]
 edition = "2021"
