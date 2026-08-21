@@ -843,10 +843,7 @@ mod tests {
         let n = normalize_dsh_record(&rec, 4).expect("tool/result emits");
         assert_eq!(n.role, "tool");
         assert_eq!(n.blocks[0].kind, "tool_result");
-        assert_eq!(
-            n.blocks[0].data.get("is_error").unwrap().as_bool().unwrap(),
-            false
-        );
+        assert!(!n.blocks[0].data.get("is_error").unwrap().as_bool().unwrap());
         assert_eq!(
             n.blocks[0].data.get("content").unwrap().as_str().unwrap(),
             "file.txt"
@@ -876,10 +873,7 @@ mod tests {
         });
         let n = normalize_dsh_record(&rec, 0).expect("emits");
         assert_eq!(n.role, "tool");
-        assert_eq!(
-            n.blocks[0].data.get("is_error").unwrap().as_bool().unwrap(),
-            true
-        );
+        assert!(n.blocks[0].data.get("is_error").unwrap().as_bool().unwrap());
     }
 
     #[test]

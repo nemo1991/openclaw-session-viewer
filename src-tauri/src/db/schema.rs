@@ -1195,6 +1195,7 @@ mod round_trip_tests {
         // 走 serde_json 序列化为 "null",跟现有 top_tools_json 同 pattern —
         // joined_row_mapper 反序列化失败时 .ok() 返回 None,所以 None 字段 round-trip 回 None)。
         // parent_uuids_text 走 Option<String> binding,None → SQL NULL。
+        #[allow(clippy::type_complexity)]
         let (top, usage, models, terr, parent): (
             Option<String>,
             Option<String>,

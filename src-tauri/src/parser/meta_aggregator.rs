@@ -1765,24 +1765,9 @@ mod tests {
         assert_eq!(extras.first_response_latency_ms, Some(500));
     }
 
-    /// 真实样本: dcwin11 das-portal session (1096 lines, 5 errors Bash×4 + Grep×1)
-    /// 验证 5 errors、thinking_count=125、step_end=124、turn_prompts=12、model=deepseek-v4-flash
-
-    /// 真实样本: dcwin11 platform 5-agent session main wire (859 lines, 6 errors)
-    /// 验证多 agent 场景 + 0 thinking_count (model=minimax-m3 不产 think part)
-
-    /// 真实样本: dcwin11 bpm 大 session (3431 lines, 21 errors, 364 thinking)
-    /// 性能 + 大数据量 sanity check,确保循环不 OOM/panic
-
     // ===== v0.9.8: Kimi 聚合字段 (TodoWrite + token + MetaBanner) =====
 
-    /// dcwin11 bpm session 真实 fixture:5834 行 wire.jsonl,验证 3 个聚合:
-    /// - todo_summary: 55 次 tools.update_store{key:"todo"} 末次状态
-    /// - kimi_token_usage: 623 个 usage.record{usageScope:"turn"} 累加 ≈
-    ///   inputOther:2.3M / output:716k / inputCacheRead:30.9M / inputCacheCreation:0
-    /// - meta_banner: {protocol:"1.4", config_change_count:>0, approval_count:20, compaction_count:22}
-
-    /// 单元 fixture 测试: 单条 tools.update_store{key:"todo"} → todo_summary 提取
+    ///   单元 fixture 测试: 单条 tools.update_store{key:"todo"} → todo_summary 提取
     #[test]
     fn aggregate_kimi_v098_aggregates_todo_from_in_memory() {
         let tmp = std::env::temp_dir().join(format!("ocsv_kimi_todo_{}.jsonl", std::process::id()));

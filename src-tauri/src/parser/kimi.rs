@@ -2345,24 +2345,8 @@ mod tests {
         );
     }
 
-    /// v0.9.12: bpm-large fixture 22 个 apply_compaction 全部走新 builder,
-    /// summary 字段必须非空 (真实 dcwin11 中文交接笔记)
-
-    /// v0.9.9: regression — dcwin11 bpm-large fixture (5834 lines) 所有 step.begin
-    /// /content.part/tool.call/tool.result 都包在 `context.append_loop_event`
-    /// envelope 里。normalize_session 必须 unwrap,否则所有 assistant message +
-    /// tool_use 全部丢失 (返回 ~173 个 meta blocks 但 0 个 assistant message)。
-    ///
-    /// 期望:
-    /// - assistant message 数 ≈ 602 (624 nested step.begin - 22 未 flush +
-    ///   1 末 step flush。23 个 step.begin 之后没 step.end,会在 EOF flush)
-    /// - 大量 tool_use + tool_result block (1073 个 tool.call,1073 个 tool.result)
-    /// - 大量 text + thinking block (1094 个 content.part → ~552 text + ~623 think)
-    /// - user prompt ≈ 75 (19 turn.prompt + 57 context.append_message.role=user;
-    ///   偶尔有 1 个 context.append_message 在 step 中被合并所以 76 而非 76)
-
     /// v0.9.9: 小规模测试 envelope unwrap 行为 — 直接构造 envelope 结构
-    /// 不依赖 fixture。
+    ///   不依赖 fixture。
     #[test]
     fn normalize_session_v099_unwraps_loop_envelope_in_memory() {
         let records = vec![
@@ -2997,130 +2981,130 @@ mod tests {
         // 验: 60 buckets, unique task count, churn events (add / remove)
         // 验: completed_tasks 按 done 时间排序
         let base_time: u64 = 1785915308477;
-        let mut records = Vec::new();
-
         // event 0: 3 个任务 (1 done, 1 in_progress, 1 pending)
-        records.push(TodoRecord {
-            items: vec![
-                TodoItem {
-                    title: "alpha".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "beta".into(),
-                    status: "in_progress".into(),
-                },
-                TodoItem {
-                    title: "gamma".into(),
-                    status: "pending".into(),
-                },
-            ],
-            item_count: 3,
-            done_count: 1,
-            in_progress_count: 1,
-            pending_count: 1,
-            time: base_time,
-        });
         // event 1: 4 个任务 (alpha done, beta done, gamma in_progress, delta new)
-        records.push(TodoRecord {
-            items: vec![
-                TodoItem {
-                    title: "alpha".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "beta".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "gamma".into(),
-                    status: "in_progress".into(),
-                },
-                TodoItem {
-                    title: "delta".into(),
-                    status: "pending".into(),
-                },
-            ],
-            item_count: 4,
-            done_count: 2,
-            in_progress_count: 1,
-            pending_count: 1,
-            time: base_time + 1000,
-        });
         // event 2: 3 个任务 (alpha done, beta done, gamma done) — delta removed
-        records.push(TodoRecord {
-            items: vec![
-                TodoItem {
-                    title: "alpha".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "beta".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "gamma".into(),
-                    status: "done".into(),
-                },
-            ],
-            item_count: 3,
-            done_count: 3,
-            in_progress_count: 0,
-            pending_count: 0,
-            time: base_time + 2000,
-        });
         // event 3: 4 个 — 新加 epsilon
-        records.push(TodoRecord {
-            items: vec![
-                TodoItem {
-                    title: "alpha".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "beta".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "gamma".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "epsilon".into(),
-                    status: "pending".into(),
-                },
-            ],
-            item_count: 4,
-            done_count: 3,
-            in_progress_count: 0,
-            pending_count: 1,
-            time: base_time + 3000,
-        });
         // event 4: 4 个 — final
-        records.push(TodoRecord {
-            items: vec![
-                TodoItem {
-                    title: "alpha".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "beta".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "gamma".into(),
-                    status: "done".into(),
-                },
-                TodoItem {
-                    title: "epsilon".into(),
-                    status: "in_progress".into(),
-                },
-            ],
-            item_count: 4,
-            done_count: 3,
-            in_progress_count: 1,
-            pending_count: 0,
-            time: base_time + 4000,
-        });
+        let records = vec![
+            TodoRecord {
+                items: vec![
+                    TodoItem {
+                        title: "alpha".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "beta".into(),
+                        status: "in_progress".into(),
+                    },
+                    TodoItem {
+                        title: "gamma".into(),
+                        status: "pending".into(),
+                    },
+                ],
+                item_count: 3,
+                done_count: 1,
+                in_progress_count: 1,
+                pending_count: 1,
+                time: base_time,
+            },
+            TodoRecord {
+                items: vec![
+                    TodoItem {
+                        title: "alpha".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "beta".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "gamma".into(),
+                        status: "in_progress".into(),
+                    },
+                    TodoItem {
+                        title: "delta".into(),
+                        status: "pending".into(),
+                    },
+                ],
+                item_count: 4,
+                done_count: 2,
+                in_progress_count: 1,
+                pending_count: 1,
+                time: base_time + 1000,
+            },
+            TodoRecord {
+                items: vec![
+                    TodoItem {
+                        title: "alpha".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "beta".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "gamma".into(),
+                        status: "done".into(),
+                    },
+                ],
+                item_count: 3,
+                done_count: 3,
+                in_progress_count: 0,
+                pending_count: 0,
+                time: base_time + 2000,
+            },
+            TodoRecord {
+                items: vec![
+                    TodoItem {
+                        title: "alpha".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "beta".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "gamma".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "epsilon".into(),
+                        status: "pending".into(),
+                    },
+                ],
+                item_count: 4,
+                done_count: 3,
+                in_progress_count: 0,
+                pending_count: 1,
+                time: base_time + 3000,
+            },
+            TodoRecord {
+                items: vec![
+                    TodoItem {
+                        title: "alpha".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "beta".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "gamma".into(),
+                        status: "done".into(),
+                    },
+                    TodoItem {
+                        title: "epsilon".into(),
+                        status: "in_progress".into(),
+                    },
+                ],
+                item_count: 4,
+                done_count: 3,
+                in_progress_count: 1,
+                pending_count: 0,
+                time: base_time + 4000,
+            },
+        ];
 
         let chart = build_todo_chart_meta(&records, 0).expect("chart emits");
         let data = &chart.blocks[0].data;

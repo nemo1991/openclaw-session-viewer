@@ -465,7 +465,7 @@ mod tests {
         // 完整 session
         let s_ok = tmp.join("--Users-foo--").join("session-aaaaaaaa-1111-2222");
         fs::create_dir_all(&s_ok).unwrap();
-        fs::write(&s_ok.join("session.jsonl.zstd"), b"\x28\xb5\x2f\xfd").unwrap();
+        fs::write(s_ok.join("session.jsonl.zstd"), b"\x28\xb5\x2f\xfd").unwrap();
 
         // zombie: 目录在但没 zst file
         let s_zombie = tmp.join("--Users-foo--").join("session-bbbbbbbb-3333-4444");
