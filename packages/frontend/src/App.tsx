@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useSettingsStore } from "./state/settingsStore";
 import { useSessionsStore } from "./state/sessionsStore";
 import { applyTheme } from "./theme/ThemeProvider";
+import i18n from "./i18n";
 import SessionsRoute from "./routes/SessionsRoute";
 import SessionDetailRoute from "./routes/SessionDetailRoute";
 import AnalyzeRoute from "./routes/AnalyzeRoute";
@@ -22,6 +23,13 @@ export default function App() {
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  // 按已保存的设置切换界面语言 (en-US / zh-CN)
+  useEffect(() => {
+    if (settings.uiLanguage) {
+      void i18n.changeLanguage(settings.uiLanguage);
+    }
+  }, [settings.uiLanguage]);
 
   useEffect(() => {
     applyTheme(settings.theme);
