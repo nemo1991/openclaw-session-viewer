@@ -129,7 +129,14 @@ export type AnalyzeChunk =
   | { kind: "done"; totalInputTokens?: number; totalOutputTokens?: number }
   | { kind: "error"; message: string };
 
-/** Tauri 命令完整列表 */
+/**
+ * 注意:以下并非 Tauri 命令的完整列表,也非权威契约。
+ * 真实注册了 46 个命令(src-tauri/src/lib.rs 的 generate_handler!),本接口仅覆盖
+ * 会话列表 / 转录 / 子代理 / 工具溢出 / 实时 / 搜索 / 导出 / 分析 / 设置 / 文件系统,
+ * 缺少 overrides / tool_stats / graph / trajectory / subagent summary 等分组;且流式调用
+ * 实际通过前端事件(transcript-batch、search-hit、analyze-event 等)而非 AsyncIterable。
+ * 以 Rust 端的 generate_handler! 注册表为权威来源。
+ */
 export interface IpcApi {
   // ---- 会话列表 ----
   list_sessions(): Promise<SessionMeta[]>;

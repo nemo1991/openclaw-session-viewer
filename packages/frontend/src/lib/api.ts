@@ -1,6 +1,8 @@
 /**
  * Tauri 命令调用包装器
- * 所有 invoke 调用集中在这一层
+ * 注意:并非所有 invoke 都集中在此层。`overridesApi.ts` 另有约 25 个 invoke,
+ * 且 transcriptStore / searchStore / analyzeStore / DatabasePanel 也直接调用 invoke。
+ * 本文件是会话 / 转录 / 搜索 / 导出 / 分析 / 设置 / 文件系统这组命令的封装。
  */
 
 import { invoke } from "@tauri-apps/api/core";
