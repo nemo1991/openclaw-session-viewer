@@ -101,14 +101,14 @@ pnpm tauri build    # 生产构建
 
 ## 架构
 
-**Tauri 2 + Rust 后端** (流式 JSONL 解析 + SQLite 聚合) + **React 19 + Zustand 前端** (虚拟列表 + TanStack Router)。
+**Tauri 2 + Rust 后端** (流式 JSONL 解析 + SQLite 聚合) + **React 19 + Zustand 前端** (虚拟列表 + react-router-dom `HashRouter`；`@tanstack/react-virtual` 仅用于虚拟化)。
 
 关键设计:
 
 - **3 个 workspace 包** — `packages/shared` (跨进程类型) · `packages/frontend` (UI) · `src-tauri` (Rust)
 - **扩展名派发 reader** — `.jsonl` vs `.jsonl.zstd` 走不同解析器,单一 dispatch 入口
 - **BlockRegistry 模式** — `BlockHandler` trait + 可注册 registry,新增 block type 无需改 match,未知 block 走 `UnknownBlockCard` 兜底
-- **Pass 1 单次 sync** (v0.9.27+) — `build_*_session_meta` 直接 47 列 INSERT,删了旧的两阶段 enrich loop
+- **Pass 1 单次 sync** (v0.9.27+) — `build_*_session_meta` 直接 49 列 INSERT,删了旧的两阶段 enrich loop
 - **Moka mtime 缓存** — 重复打开会话零延迟;`sync_one_file` 三元组 (size+mtime+line_count) 缓存跳过未变化文件;**stale banner 检测** (v0.9.28 M11.5) 让 M11 之前 sync 的 dsh/kimi session 自动重跑 aggregator
 - **路径白名单** — 所有 FS 操作必须落在已知 source root (`~/.claude/` / `~/.openclaw/` / `~/.kimi-code/` / `~/.dsh/`) 下
 
@@ -133,7 +133,6 @@ pnpm tauri build    # 生产构建
 │   ├── src/db/           # SQLite schema + migrations + sync
 │   └── docs/adr/         # 架构决策记录
 ├── docs/                 # 项目文档
-├── fixtures/             # 测试数据 (claude / openclaw / kimi / dsh)
 └── .github/workflows/    # CI/CD (3 平台并行, docs-only 跳过)
 ```
 
@@ -151,7 +150,7 @@ pnpm typecheck
 cd src-tauri && cargo clippy --lib -- -D warnings && cargo fmt --check
 ```
 
-当前测试覆盖:390 Rust + ~50 shared + 689 frontend = **1129+ tests**。
+当前测试覆盖:379 Rust (`cargo test --lib`) + 54 shared (`vitest`) + 659 frontend (`vitest`) + 约 24 E2E (`playwright`)。
 
 ### 添加新会话源
 
@@ -174,8 +173,6 @@ cd src-tauri && cargo clippy --lib -- -D warnings && cargo fmt --check
 | ------------ | -------------- |
 | `Cmd/Ctrl+K` | 全局跨会话搜索 |
 | `Cmd/Ctrl+F` | 当前会话内搜索 |
-| `Cmd/Ctrl+E` | 导出当前会话   |
-| `Cmd/Ctrl+,` | 设置           |
 
 ---
 
@@ -203,8 +200,10 @@ sudo xattr -rd com.apple.quarantine /Applications/OpenClaw\ Session\ Viewer.app
 
 5 行 release timeline:
 
+- **v0.9.30** — 隐私治理:删除真实会话 fixture、用户路径脱敏、`fixtures/` 整目录忽略
+- **v0.9.29** — M11.1~M11.5 dsh 修复、`first_prompt` 持久化、隐私脱敏
 - **v0.9.28** — DeepSeek Harness 第 4 种 source (zstd 透明解压) + M11.3 banner 聚合 + M11.4 noise filter + M11.5 sandbox/approval routing 修复
-- **v0.9.27** — M10 Pass 2→Pass 1 单 pass 切流 (47 列 INSERT)
+- **v0.9.27** — M10 Pass 2→Pass 1 单 pass 切流 (49 列 INSERT)
 - **v0.9.26** — M9 Pass 1↔Pass 2 parallel-run validation
 - **v0.9.25** — snake/camel 第二阶段撤兼容
 - **v0.9.24** — `SessionHeader` + `SessionNotesPanel` + `useSessionActions` 抽离
@@ -219,7 +218,7 @@ v0.9.29+ backlog:dsh `parent_uuid` (等 dsh schema 加字段) · dsh subagent wa
 
 **架构** — [ARCHITECTURE](docs/ARCHITECTURE.md) · [PARSER_ARCHITECTURE](docs/PARSER_ARCHITECTURE.md) · [OPENCLAW_SESSION_FORMAT](docs/OPENCLAW_SESSION_FORMAT.md)
 
-**ADR** — [0001 Claude batch normalize](src-tauri/docs/adr/0001-claude-batch-normalize-v0917.md) · [0002 dsh source M11](src-tauri/docs/adr/0002-dsh-source-m11.md)
+**ADR** — src-tauri: [0001 Claude batch normalize](src-tauri/docs/adr/0001-claude-batch-normalize-v0917.md) · [0002 dsh source M11](src-tauri/docs/adr/0002-dsh-source-m11.md)；frontend: [0001 meta-kind accent colors](packages/frontend/docs/adr/0001-meta-kind-accent-colors.md) · [0002 meta-layer taxonomy](packages/frontend/docs/adr/0002-meta-layer-taxonomy.md)；shared: [0001 snake/camel bicompat](packages/shared/docs/adr/0001-snake-camel-bicompat.md) · [0002 three-source union](packages/shared/docs/adr/0002-three-source-union.md)
 
 **工程** — [RELEASING](docs/RELEASING.md) · [CROSS_PLATFORM_BUILD](docs/CROSS_PLATFORM_BUILD.md) · [SECURITY](docs/SECURITY.md) · [E2E_TESTING](docs/E2E_TESTING.md) · [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
 
