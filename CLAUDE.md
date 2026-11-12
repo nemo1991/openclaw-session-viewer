@@ -1,7 +1,8 @@
 # openclaw-session-viewer
 
 Cross-platform desktop app (Tauri 2 + React 19 + Zustand) that lets users browse
-local AI session JSONL files from OpenClaw, Claude Code, and Kimi. JSONL
+local AI session JSONL files from Claude Code, OpenClaw, Kimi Code, and
+DeepSeek Harness. JSONL
 streams are parsed in Rust, batch-collapsed into normalized messages, and
 streamed to the React frontend for transcript rendering with virtualized lists
 and a per-meta-kind chart series.
@@ -39,9 +40,9 @@ and a per-meta-kind chart series.
 
 ### Issue tracker
 
-GitHub Issues via `gh` CLI (repo `nemo1991/openclaw-session-viewer`). Remote
-alias is `openclaw-session-lookup`, not `origin` — push via
-`git push openclaw-session-lookup <branch>`. See `docs/agents/issue-tracker.md`.
+GitHub Issues via `gh` CLI (repo `nemo1991/openclaw-session-viewer`). Push to the
+default remote `origin` via `git push origin <branch>`. See
+`docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
