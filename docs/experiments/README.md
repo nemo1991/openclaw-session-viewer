@@ -1,6 +1,6 @@
 # Graph Explorer 实验记录
 
-> **位置**: `experiment/embed-db/` (原型) + `packages/frontend/src/views/graph/` (合并后)
+> **位置**: 原型 `experiment/embed-db/` 已在 v0.9.30 后由 M3 收口删除;功能已合并到 `packages/frontend/src/views/graph/` (挂 `/graph?view=...`)
 > **分支**: `experimental/embed-db` (基于 `feature/subagent-parent-link`)
 > **目标**: 跨 session 关联大模型执行思路
 
@@ -42,16 +42,16 @@ M3 TODO(切 Tauri 源 + 删 experiment/)见 [CHANGELOG.md](../../CHANGELOG.md) `
 | 环境             | 端口 | 入口              | 用途                    |
 | ---------------- | ---- | ----------------- | ----------------------- |
 | 主项目           | 1420 | `/graph?view=...` | 生产路径,M1+M2 已 ship  |
-| 实验 web (M1 前) | 4173 | tabs 切 view      | 历史原型,M3 后 `git rm` |
+| 实验 web (M1 前) | 4173 | tabs 切 view      | 历史原型,已于 M3 `git rm` 删除 |
 
-跑实验 web: `cd experiment/embed-db/web && pnpm install && pnpm dev`(数据生成: `cargo run --manifest-path experiment/embed-db/Cargo.toml -- ingest --out experiment/embed-db/web/public/sessions.ndjson`,然后拷到 `packages/frontend/public/sessions.ndjson`)。
+~~跑实验 web: `cd experiment/embed-db/web && pnpm install && pnpm dev`~~ 原型已删除;功能合并进主项目 `packages/frontend/src/views/graph/`,其数据来自 `list_graph` 命令读 `observer.db`。
 
 ---
 
 ## 同步策略
 
 - 在 `experimental/embed-db` 分支迭代,跟 `feature/subagent-parent-link` 保持 rebasable
-- M3 完成后,用户决定是否合并到 `main`
+- M3 已收口:原型 `git rm`,功能已在主项目 ship
 
 ---
 
