@@ -15,7 +15,7 @@
 │  │              Rust Backend (src-tauri/src/)             │   │
 │  │  ┌────────────┐  ┌────────────┐  ┌────────────┐        │   │
 │  │  │  Commands  │  │   Parser   │  │    LLM     │        │   │
-│  │  │  (16 个)   │  │ + blocks/  │  │  Client    │        │   │
+│  │  │  (46 个)   │  │ + blocks/  │  │  Client    │        │   │
 │  │  │  + reveal  │  │  v0.6 sub- │  │            │        │   │
 │  │  │  sandbox   │  │  agentId   │  │            │        │   │
 │  │  └────────────┘  └────────────┘  └────────────┘        │   │
@@ -29,11 +29,13 @@
 └───────────────────────────────────────────────────────────────┘
                               │
                               ▼
-        ┌─────────────────────────────────────┐
-        │      Local Filesystem               │
-        │  ~/.claude/projects/.../*.jsonl     │
-        │  ~/.openclaw/agents/.../sessions/   │
-        └─────────────────────────────────────┘
+        ┌─────────────────────────────────────────┐
+        │              Local Filesystem             │
+        │  ~/.claude/projects/<key>/*.jsonl         │
+        │  ~/.openclaw/agents/<id>/sessions/        │
+        │  ~/.kimi-code/.../wire.jsonl              │
+        │  ~/.dsh/.../session-<uuid>.jsonl.zstd     │
+        └─────────────────────────────────────────┘
 ```
 
 ## 数据流
@@ -43,7 +45,7 @@
 ```
 App 启动
 
-Rust setup()  AppPaths::new() 解析 ~/.claude 和 ~/.openclaw
+Rust setup()  AppPaths::new() 解析 4 个 home（~/.claude / ~/.openclaw / ~/.kimi-code / ~/.dsh，外加自定义 roots）
 
 Frontend mount  App  loadSettings() (Tauri invoke get_settings)
 
@@ -197,7 +199,7 @@ Rust reveal_in_finder:
 
 - **职责**: 接收 invoke,返回 serde 序列化的 JSON
 - **错误**: `AppResult<T>` 序列化为 `{ kind, message }` 给前端
-- **路径安全**: 每次接受路径参数都做 `assert_within_lexical`
+- **路径安全**: 每次接受路径参数都过 `assert_within_any_root` 白名单校验
 
 ### `src-tauri/src/llm/` — 外部 API 客户端
 
@@ -276,20 +278,17 @@ Rust reveal_in_finder:
 
 ### 路径白名单
 
-所有 Tauri 命令接受路径参数时必须通过 `assert_within_lexical`:
+所有 Tauri 命令接受路径参数时都过统一的路径白名单校验。生产代码统一调用
+`assert_within_any_root`（`src-tauri/src/fs/paths.rs`），它会 canonicalize 后与
+4 个 home（外加自定义 roots）逐一比对，防 `..` 逃逸与 macOS symlink 绕过：
 
 ```rust
-let p = Path::new(&input_path);
-if p.starts_with(&state.paths.claude.projects_dir) {
-    assert_within_lexical(&state.paths.claude.projects_dir, p)?;
-} else if let Some(oc) = &state.paths.openclaw {
-    if p.starts_with(&oc.agents_dir) {
-        assert_within_lexical(&oc.agents_dir, p)?;
-    } else {
-        return Err(PathSecurity(...));
-    }
-}
+// src-tauri/src/fs/paths.rs
+assert_within_any_root(&state.paths, Path::new(&input_path))?;
 ```
+
+`assert_within_lexical` 已退化为仅测试使用的兼容函数（标记
+`#[allow(dead_code)]`）。
 
 ### 攻击面
 
