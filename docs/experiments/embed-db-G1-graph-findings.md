@@ -1,5 +1,7 @@
 # S1 / G1 findings: Graph view 跑通
 
+> **原型已删除 (M3, commit `ce7d013`)**:`experiment/embed-db/` 原型目录已 `git rm`,功能合并进主项目 `packages/frontend/src/views/graph/`(挂 `/graph?view=...`)。本文件中的 `experiment/embed-db/...` 路径与 `cargo run --manifest-path experiment/embed-db/...` 等命令均为历史记录,不可再运行。
+
 **日期**: 2026-07-01
 **Sprint**: S1 (下周)
 **方向**: G1 Graph — 关联遍历 + 力导向图

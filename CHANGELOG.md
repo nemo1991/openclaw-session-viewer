@@ -14,8 +14,8 @@
   `NormalizedMessageFE` / `NormalizedBlockFE`(弱类型),未采用 `@ocsv/shared` 的
   `NormalizedMessage` / `NormalizedBlock`。改进方向:让渲染链路统一到 shared 类型。
 - **i18n**: 框架层已支持 `en-US` / `zh-CN` 切换(设置页选择即生效,启动按已保存语言加载);
-  但大量组件级文案仍硬编码中文,`en-US` 下这些文案不会翻译。组件文案迁移到 `t()` 的
-  工作见分支 `cleanup/i18n-component-copy`,需同步更新断言中文的测试。
+  组件级文案迁移到 `t()` 已完成(已合并 main,`en-US` 下组件文案现已翻译),断言中文的
+  测试已同步更新。`zh-CN` / `en-US` 资源位于 `packages/frontend/src/i18n/`。
 
 ## [0.9.30] - 2026-08-21
 

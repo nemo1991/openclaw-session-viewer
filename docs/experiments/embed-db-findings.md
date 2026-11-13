@@ -1,6 +1,6 @@
 # Graph Explorer 推进总结(M2 收口态,2026-07-04)
 
-> 历史内容(S0-S3 推进数据 + 决策依据)保留在本文件后半段。当前权威状态看 [README.md](./README.md) + [CHANGELOG.md](../../CHANGELOG.md) [Unreleased] 段 + [plan 文件](../../../.claude/plans/openclaw-session-session-session-transient-kernighan.md)。
+> 历史内容(S0-S3 推进数据 + 决策依据)保留在本文件后半段。当前权威状态看 [README.md](./README.md)。**原型 `experiment/embed-db/` 已在 M3 (commit `ce7d013`) 删除**,功能合并进主项目 `packages/frontend/src/views/graph/`,故本文件内的 `experiment/embed-db/...` 路径与 `cargo run --manifest-path experiment/embed-db/...` 等命令均为历史记录,不可再运行。
 
 ---
 
@@ -96,4 +96,4 @@ ingest crate ~660 行 Rust(零外部);experiment web ~1700 行 TS(`react-force-g
 
 ## 一句话结论
 
-**G1 + G2 + G3 已 ship 到主项目**(`/graph?view=...`),双源对照 (1420/4173)。**M3 切 Tauri invoke + 删 experiment/** 是最后一步,等用户决定时机。
+**G1 + G2 + G3 已 ship 到主项目**(`/graph?view=...`),双源对照 (1420/4173)。**M3 切 Tauri invoke + 删 experiment/ 已完成**(commit `ce7d013`):原型 `git rm`,功能在主项目 ship。

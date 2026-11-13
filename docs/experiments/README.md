@@ -25,7 +25,7 @@
 - [S2 G2](embed-db-G2-olap-findings.md) — 6 chart 选型 + recharts vs visx
 - [S3 G3](embed-db-G3-rag-findings.md) — hash embedding vs 真 embedding 边界
 
-M3 TODO(切 Tauri 源 + 删 experiment/)见 [CHANGELOG.md](../../CHANGELOG.md) `[Unreleased].### 待办 (M3)` + 实施详情见 plan 文件 `$HOME/.claude/plans/openclaw-session-session-session-transient-kernighan.md`。
+~~M3 TODO(切 Tauri 源 + 删 experiment/)~~ 已完成:原型 `git rm`(commit `ce7d013`),功能已 ship 主项目;原 `[Unreleased]` 的"待办 (M3)"小节已随之移除。
 
 ---
 
@@ -39,9 +39,9 @@ M3 TODO(切 Tauri 源 + 删 experiment/)见 [CHANGELOG.md](../../CHANGELOG.md) `
 
 ## 双源对照
 
-| 环境             | 端口 | 入口              | 用途                    |
-| ---------------- | ---- | ----------------- | ----------------------- |
-| 主项目           | 1420 | `/graph?view=...` | 生产路径,M1+M2 已 ship  |
+| 环境             | 端口 | 入口              | 用途                           |
+| ---------------- | ---- | ----------------- | ------------------------------ |
+| 主项目           | 1420 | `/graph?view=...` | 生产路径,M1+M2 已 ship         |
 | 实验 web (M1 前) | 4173 | tabs 切 view      | 历史原型,已于 M3 `git rm` 删除 |
 
 ~~跑实验 web: `cd experiment/embed-db/web && pnpm install && pnpm dev`~~ 原型已删除;功能合并进主项目 `packages/frontend/src/views/graph/`,其数据来自 `list_graph` 命令读 `observer.db`。

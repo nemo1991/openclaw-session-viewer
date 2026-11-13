@@ -1,5 +1,7 @@
 # S0 findings: ingest CLI 跑通 stdout sink
 
+> **原型已删除 (M3, commit `ce7d013`)**:`experiment/embed-db/` 原型目录已 `git rm`,功能合并进主项目 `packages/frontend/src/views/graph/`(挂 `/graph?view=...`)。本文件中的 `experiment/embed-db/...` 路径与 `cargo run --manifest-path experiment/embed-db/...` 等命令均为历史记录,不可再运行。
+
 **日期**: 2026-07-01
 **Sprint**: S0 (本周) — branch + ingest skeleton + doc 概要
 **分支**: `experimental/embed-db`

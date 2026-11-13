@@ -1,5 +1,7 @@
 # S3 / G3 findings: RAG lite (hash-embedding + cosine) 跑通
 
+> **原型已删除 (M3, commit `ce7d013`)**:`experiment/embed-db/` 原型目录已 `git rm`,功能合并进主项目 `packages/frontend/src/views/graph/`(挂 `/graph?view=...`)。本文件中的 `experiment/embed-db/...` 路径与 `cargo run --manifest-path experiment/embed-db/...` 等命令均为历史记录,不可再运行。
+
 **日期**: 2026-07-01
 **Sprint**: S3 (下周)
 **方向**: G3 RAG (M1 简化档:语义召回,无 LLM)
@@ -61,12 +63,12 @@
 
 ## Node.js 跑出的结果
 
-| Query              | #1 命中 (cosine)                                 | #2                            | #3                              | 查询耗时 |
-| ------------------ | ------------------------------------------------ | ----------------------------- | ------------------------------- | -------- |
+| Query              | #1 命中 (cosine)                                 | #2                            | #3                                  | 查询耗时 |
+| ------------------ | ------------------------------------------------ | ----------------------------- | ----------------------------------- | -------- |
 | `失败 retry`       | 909bc0b4 carrier (0.479)                         | a2349f0e OpenClaw (0.445)     | 87d29ce8 <redacted-project> (0.395) | 1ms      |
-| `explore 探索`     | bdb2a44a carrier-BPM (0.509)                     | a2349f0e OpenClaw dev (0.457) | 87d29ce8 (0.419)                | 0ms      |
-| `openclaw session` | **a2349f0e OpenClaw Session Viewer dev (0.752)** | bdb2a44a (0.381)              | 909bc0b4 (0.343)                | 0ms      |
-| `sql api`          | bdb2a44a (0.262)                                 | a2349f0e v0.6.0 (0.227)       | a2349f0e (0.219)                | 0ms      |
+| `explore 探索`     | bdb2a44a carrier-BPM (0.509)                     | a2349f0e OpenClaw dev (0.457) | 87d29ce8 (0.419)                    | 0ms      |
+| `openclaw session` | **a2349f0e OpenClaw Session Viewer dev (0.752)** | bdb2a44a (0.381)              | 909bc0b4 (0.343)                    | 0ms      |
+| `sql api`          | bdb2a44a (0.262)                                 | a2349f0e v0.6.0 (0.227)       | a2349f0e (0.219)                    | 0ms      |
 
 **关键观察**:
 
