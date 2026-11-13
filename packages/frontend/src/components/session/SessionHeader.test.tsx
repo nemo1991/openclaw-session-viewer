@@ -64,6 +64,25 @@ vi.mock("react-i18next", () => ({
       "search.inSession": "search.inSession",
       "detail.back": "返回",
       "detail.subagentPanel.backToParent": "返回父会话",
+      // i18n 迁移后新增的 sessions.* / detail.export* key (与 zh-CN 资源保持一致)
+      "sessions.pin": "置顶",
+      "sessions.unpin": "取消置顶",
+      "sessions.hide": "隐藏",
+      "sessions.unhide": "取消隐藏",
+      "sessions.archive": "归档",
+      "sessions.unarchive": "取消归档",
+      "sessions.rename": "重命名",
+      "sessions.renameHint": "双击重命名",
+      "sessions.notes": "笔记",
+      "sessions.linkToSession": "链接到其他 session",
+      "sessions.archivedBanner": "已归档",
+      "sessions.isPinned": "已置顶",
+      "sessions.isHidden": "已隐藏",
+      "sessions.errorCountTitle": "assistant stop_reason==error 或 is_error==true",
+      "sessions.statsUserAssistantTitle": "user / assistant 顶层消息计数 (排除 sidechain)",
+      "sessions.reloadTitle": "重新解析 jsonl + 触发后端 sync ({{mod}}+R)",
+      "detail.exportMd": "Markdown",
+      "detail.exportHtml": "HTML",
     };
     return {
       t: (k: string, params?: Record<string, unknown>) => {

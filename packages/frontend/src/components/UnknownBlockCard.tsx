@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { NormalizedBlockFE } from "../lib/api";
 import "./UnknownBlockCard.css";
 
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export function UnknownBlockCard({ block }: Props) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const kind = block.kind ?? "?";
   const label = (block.label as string) ?? kind;
@@ -54,14 +56,20 @@ export function UnknownBlockCard({ block }: Props) {
       <summary className="unknown-summary">
         <span className="unknown-kind-badge">? {kind}</span>
         <span className="unknown-label">{label}</span>
-        <span className="unknown-field-count">{fields.length} 字段</span>
+        <span className="unknown-field-count">
+          {t("blocks.unknownFieldCount", { count: fields.length })}
+        </span>
         <span className="unknown-chevron">{open ? "▾" : "▸"}</span>
       </summary>
       <div className="unknown-body">
         {hints.length > 0 && (
           <div className="unknown-hints">
             {hints.map((h, i) => (
-              <span key={i} className="hint-pill" title={`置信度: ${h.confidence}%`}>
+              <span
+                key={i}
+                className="hint-pill"
+                title={t("blocks.hintConfidence", { confidence: h.confidence })}
+              >
                 {h.type} · {h.confidence}%
               </span>
             ))}
@@ -70,8 +78,8 @@ export function UnknownBlockCard({ block }: Props) {
         <table className="unknown-fields">
           <thead>
             <tr>
-              <th>字段</th>
-              <th>值</th>
+              <th>{t("blocks.fieldCol")}</th>
+              <th>{t("blocks.valueCol")}</th>
             </tr>
           </thead>
           <tbody>
@@ -86,17 +94,17 @@ export function UnknownBlockCard({ block }: Props) {
           </tbody>
         </table>
         <div className="unknown-actions">
-          <button className="unknown-btn" onClick={handleCopy} title="复制 JSON 到剪贴板">
-            📋 复制
+          <button className="unknown-btn" onClick={handleCopy} title={t("blocks.copyJsonTitle")}>
+            {t("blocks.copy")}
           </button>
           <a
             className="unknown-btn"
             href={reportUrl}
             target="_blank"
             rel="noopener noreferrer"
-            title="在 GitHub 上报告这个未知 block type"
+            title={t("blocks.reportTitle")}
           >
-            🐛 报告
+            {t("blocks.report")}
           </a>
         </div>
       </div>
@@ -106,6 +114,7 @@ export function UnknownBlockCard({ block }: Props) {
 
 /** 渲染一个字段的值（字符串截断,对象折叠） */
 function FieldValue({ value }: { value: unknown }) {
+  const { t } = useTranslation();
   if (value === null) return <code className="field-null">null</code>;
   if (value === undefined) return <code className="field-null">undefined</code>;
   if (typeof value === "string") {
@@ -113,7 +122,7 @@ function FieldValue({ value }: { value: unknown }) {
     if (value.length <= MAX) return <span>{value}</span>;
     return (
       <details className="field-truncated">
-        <summary>字符串 ({value.length} 字符)</summary>
+        <summary>{t("blocks.stringChars", { count: value.length })}</summary>
         <pre className="field-pre">{value}</pre>
       </details>
     );
@@ -128,8 +137,10 @@ function FieldValue({ value }: { value: unknown }) {
     <details className="field-truncated">
       <summary>
         {Array.isArray(value)
-          ? `数组 (${value.length} 项)`
-          : `对象 (${Object.keys(value as Record<string, unknown>).length} 键)`}
+          ? t("blocks.arrayItems", { count: value.length })
+          : t("blocks.objectKeys", {
+              count: Object.keys(value as Record<string, unknown>).length,
+            })}
       </summary>
       <pre className="field-pre">{json}</pre>
     </details>

@@ -29,6 +29,7 @@
  * tools_snapshot → usage → request → todos → ai-title)。
  */
 
+import { useTranslation } from "react-i18next";
 import type { NormalizedBlockFE, TranscriptEntryOut } from "../../lib/api";
 import { ChartBlock } from "./ChartBlock";
 
@@ -48,12 +49,13 @@ function chartEntryToBlock(entry: TranscriptEntryOut): NormalizedBlockFE | null 
 }
 
 export function ChartsRegion({ charts }: ChartsRegionProps) {
+  const { t } = useTranslation();
   // 0 chart → 不渲染 (老 wire / openclaw / 没 chart 数据的 session)
   if (charts.length === 0) return null;
 
   return (
     <div className="charts-region" data-testid="charts-region">
-      <h3 className="charts-region-title">图表</h3>
+      <h3 className="charts-region-title">{t("charts.title")}</h3>
       <div className="charts-region-grid">
         {charts.map((entry, i) => {
           const block = chartEntryToBlock(entry);

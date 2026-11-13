@@ -46,8 +46,9 @@ const TOOL_ICONS: Record<string, typeof Wrench> = {
 export function ToolUseCard({ id, name, input, parentJsonlPath, parentSessionId }: Props) {
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
+  const { t } = useTranslation();
   const Icon = TOOL_ICONS[name] ?? Wrench;
-  const summary = summarize(name, input);
+  const summary = summarize(name, input, t);
   const replaceAll = name === "Edit" && input?.replace_all === true;
 
   return (
@@ -57,7 +58,7 @@ export function ToolUseCard({ id, name, input, parentJsonlPath, parentSessionId 
         <Icon size={12} />
         <span className="tool-name">{name}</span>
         {summary && <span className="tool-summary">{summary}</span>}
-        {replaceAll && <span className="tool-badge tool-badge-warn">替换全部</span>}
+        {replaceAll && <span className="tool-badge tool-badge-warn">{t("blocks.replaceAll")}</span>}
         <span className="tool-id">{id?.slice(0, 8) ?? ""}</span>
       </button>
       {open && (
@@ -104,7 +105,11 @@ function renderBody(
   }
 }
 
-function summarize(name: string, input: Record<string, unknown>): string {
+function summarize(
+  name: string,
+  input: Record<string, unknown>,
+  t: ReturnType<typeof useTranslation>["t"]
+): string {
   if (!input) return "";
   switch (name) {
     case "Read":
@@ -124,7 +129,7 @@ function summarize(name: string, input: Record<string, unknown>): string {
     case "Task":
       // v0.4.2: 区分 TaskCreate/TaskUpdate
       if (input.taskId) {
-        return `[更新] ${String(input.status ?? "…")}`;
+        return t("blocks.updateSummary", { status: String(input.status ?? "…") });
       }
       return String(input.description ?? input.prompt ?? "").slice(0, 80);
     default:
@@ -145,6 +150,7 @@ function EditToolBody({
   input: Record<string, unknown>;
   parentJsonlPath?: string;
 }) {
+  const { t } = useTranslation();
   const oldStr = String(input.old_string ?? "");
   const newStr = String(input.new_string ?? "");
 
@@ -160,8 +166,9 @@ function EditToolBody({
     return (
       <div className="tool-body-edit">
         <div className="tool-body-warning">
-          Diff 输入过大({e instanceof DiffTooLargeError ? e.lineCount : "?"} 行),已 fallback 到 JSON
-          dump
+          {t("blocks.diffTooLarge", {
+            lines: e instanceof DiffTooLargeError ? e.lineCount : "?",
+          })}
         </div>
         <pre className="tool-body-json">{JSON.stringify(input, null, 2)}</pre>
       </div>
@@ -177,7 +184,9 @@ function EditToolBody({
       <div className="tool-diff-stats">
         <span className="tool-diff-stat-add">+{stats.added}</span>
         <span className="tool-diff-stat-del">-{stats.removed}</span>
-        <span className="tool-diff-stat-eq">{stats.unchanged} 未变</span>
+        <span className="tool-diff-stat-eq">
+          {stats.unchanged} {t("blocks.diffUnchanged")}
+        </span>
       </div>
       <div className="tool-diff-table">
         {diff.map((line, i) => (
@@ -195,15 +204,22 @@ function EditToolBody({
 
 /** v0.4.2: Bash — command 等宽块 + description caption + 后台 badge */
 function BashToolBody({ input }: { input: Record<string, unknown> }) {
+  const { t } = useTranslation();
   const command = String(input.command ?? "");
   const description = input.description ? String(input.description) : null;
   const background = input.run_in_background === true;
 
   return (
     <div className="tool-body-bash">
-      {description && <div className="tool-bash-description">说明: {description}</div>}
-      {background && <span className="tool-badge tool-badge-info">后台运行</span>}
-      <pre className="tool-bash-command">{command || "(空命令)"}</pre>
+      {description && (
+        <div className="tool-bash-description">
+          {t("blocks.bashDescription")}: {description}
+        </div>
+      )}
+      {background && (
+        <span className="tool-badge tool-badge-info">{t("blocks.bashBackground")}</span>
+      )}
+      <pre className="tool-bash-command">{command || t("blocks.bashEmptyCommand")}</pre>
     </div>
   );
 }
@@ -216,6 +232,7 @@ function ReadToolBody({
   input: Record<string, unknown>;
   parentJsonlPath?: string;
 }) {
+  const { t } = useTranslation();
   const filePath = String(input.file_path ?? input.notebook_path ?? input.path ?? "");
   const offset = typeof input.offset === "number" ? input.offset : null;
   const limit = typeof input.limit === "number" ? input.limit : null;
@@ -227,9 +244,9 @@ function ReadToolBody({
   if (offset != null && limit != null) {
     rangeBadge = `lines ${offset}–${offset + limit}`;
   } else if (offset != null) {
-    rangeBadge = `从 line ${offset} 起`;
+    rangeBadge = t("blocks.readFromLine", { offset });
   } else if (limit != null) {
-    rangeBadge = `前 ${limit} 行`;
+    rangeBadge = t("blocks.readFirstLines", { limit });
   }
 
   // v0.6.0: 文件路径可点击 reveal
@@ -247,7 +264,7 @@ function ReadToolBody({
         onClick={handlePathClick}
         title={filePath ? `${filePath} (点击 reveal in Finder)` : ""}
       >
-        {filePath || "(无文件路径)"}
+        {filePath || t("blocks.readNoPath")}
       </div>
       {rangeBadge && <span className="tool-badge tool-read-range">{rangeBadge}</span>}
     </div>
@@ -350,11 +367,13 @@ function TaskToolBody({
     return (
       <div className="tool-body-task">
         <div className="tool-task-row">
-          <span className="tool-task-label">任务 ID</span>
-          <code className="tool-task-id">{taskId.slice(0, 12) || "(无)"}</code>
+          <span className="tool-task-label">{t("blocks.taskId")}</span>
+          <code className="tool-task-id">{taskId.slice(0, 12) || t("blocks.taskIdNone")}</code>
         </div>
         {status && (
-          <div className={`tool-task-status tool-task-status-${status}`}>{statusLabel(status)}</div>
+          <div className={`tool-task-status tool-task-status-${status}`}>
+            {statusLabel(status, t)}
+          </div>
         )}
         {content && <pre className="tool-task-content">{content}</pre>}
       </div>
@@ -386,14 +405,14 @@ function TaskToolBody({
   );
 }
 
-function statusLabel(s: string): string {
+function statusLabel(s: string, t: ReturnType<typeof useTranslation>["t"]): string {
   switch (s) {
     case "pending":
-      return "待办";
+      return t("blocks.statusPending");
     case "in_progress":
-      return "进行中";
+      return t("blocks.statusInProgress");
     case "completed":
-      return "已完成";
+      return t("blocks.statusCompleted");
     default:
       return s;
   }
