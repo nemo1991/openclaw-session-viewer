@@ -1,8 +1,8 @@
 # src-tauri
 
-Rust 后端(Tauri 2 + 暴露给 React webview 的 commands)。负责三种 wire-format
-JSONL 流的解析、session metadata 组装、transcript 流式,以及计划中的嵌入式
-DB 层。
+Rust 后端(Tauri 2 + 暴露给 React webview 的 commands)。负责四种 wire-format
+JSONL 流的解析、session metadata 组装、transcript 流式,以及已落地的嵌入式
+SQLite 层(`observer.db`)。
 
 ## Language
 
@@ -11,13 +11,13 @@ DB 层。
 _Avoid_: Chat, conversation, transcript file
 
 **Wire format**(线格式):
-每个 source 用的 JSONL schema。当前三种:Claude Code(`claude`)、Kimi Code
-(`kimi`)、OpenClaw trajectory(`openclaw`)。
+每个 source 用的 JSONL schema。当前四种:Claude Code(`claude`)、OpenClaw(`openclaw`)、Kimi Code
+(`kimi`)、DeepSeek Harness(`dsh`,`session.jsonl.zstd`)。
 _Avoid_: Format, dialect, schema(含义过载)
 
 **Source**(来源):
-从 session 路径推断出的 wire-format 判别字符串(`"claude" | "kimi" |
-"openclaw"`)。决定跑哪个 parser、走 streaming 还是 batch 路由。
+从 session 路径推断出的 wire-format 判别字符串(`"claude" | "openclaw" |
+"kimi" | "dsh"`)。决定跑哪个 parser、走 streaming 还是 batch 路由。
 _Avoid_: Parser name, format name, kind
 
 **NormalizedMessage**(归一化消息):
@@ -46,8 +46,8 @@ v0.8.4 起 `db/sync.rs` 用的 2 阶段架构:Pass 1 (`sync_one_file`) quick pat
 **Single-pass sync**(单 pass 同步) [v0.9.27+]:
 `db/sync.rs` 现在 1 阶段架构 — `sync_one_file` 调对应 `build_*_session_meta`,
 后者调 `parser::meta_aggregator::{aggregate_claude_openclaw, aggregate_kimi}`
-扫 ≤5000 行,一次性填全部 47 字段到 SessionMeta struct,再 `upsert_session_meta`
-走单个 INSERT 写全 47 列。`enrich_session_meta` 函数 + enrichment loop +
+扫 ≤5000 行,一次性填全部字段到 SessionMeta struct,再 `upsert_session_meta`
+走单个 INSERT 写全 49 列。`enrich_session_meta` 函数 + enrichment loop +
 `meta_extras.rs` 文件全部删除。sync 总耗时 floor = v0.9.26 perf baseline
 减去 enrichment 那段时间(典型 session ~ms 级,慢文件 >500ms warn)。
 _Avoid_: Sync pipeline, enrichment pipeline (含义过载)
