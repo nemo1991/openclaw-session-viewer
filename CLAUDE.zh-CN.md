@@ -1,6 +1,6 @@
 # openclaw-session-viewer(中文)
 
-跨平台桌面应用(Tauri 2 + React 19 + Zustand),让用户浏览本地的 OpenClaw、Claude Code、Kimi AI 会话 JSONL 文件。JSONL 流在 Rust 端解析,batch collapse 成 normalized messages,然后流式传给 React 前端做 transcript 渲染(virtualized list + 按 meta kind 的 chart 系列)。
+跨平台桌面应用(Tauri 2 + React 19 + Zustand),让用户浏览本地的 Claude Code、OpenClaw、Kimi Code、DeepSeek Harness 会话 JSONL 文件。JSONL 流在 Rust 端解析,batch collapse 成 normalized messages,然后流式传给 React 前端做 transcript 渲染(virtualized list + 按 meta kind 的 chart 系列)。
 
 - GitHub:`nemo1991/openclaw-session-viewer`
 - pnpm workspace:`packages/frontend`、`packages/shared`、`src-tauri`
@@ -32,7 +32,7 @@
 
 ### Issue 跟踪器
 
-GitHub Issues 通过 `gh` CLI(仓库 `nemo1991/openclaw-session-viewer`)。远程别名是 `openclaw-session-lookup`,不是 `origin` — 通过 `git push openclaw-session-lookup <branch>` 推送。见 `docs/agents/issue-tracker.md`。
+GitHub Issues 通过 `gh` CLI(仓库 `nemo1991/openclaw-session-viewer`)。推送到默认远程 `origin`:`git push origin <branch>`。见 `docs/agents/issue-tracker.md`。
 
 ### Triage 标签
 
