@@ -12,15 +12,18 @@ context(s) relevant to the topic at hand.
   command wire types (`NormalizedMessage`, `NormalizedBlock`, etc.). See
   `packages/shared/CONTEXT.md`.
 - **`src-tauri`** — Rust backend (Tauri 2 + axum-less commands). Parsers for
-  three wire formats (`claude`, `kimi`, `openclaw`), session metadata builder,
-  transcript streaming, DB layer (planned), commands exposed to the webview.
+  four wire formats (`claude`, `openclaw`, `kimi`, `dsh`), session metadata
+  builder, transcript streaming, embedded SQLite layer, commands exposed to the
+  webview.
   See `src-tauri/CONTEXT.md`.
 
 ## System-wide decisions
 
-`docs/adr/` holds decisions that span more than one context (release process,
-monorepo layout, CI, etc.). Per-context ADRs live under `src/<context>/docs/adr/`
-(e.g. `src-tauri/docs/adr/` for parser-layer decisions).
+Architecture decisions are recorded as ADRs under each context's `docs/adr/`
+directory: `src-tauri/docs/adr/` (parser / backend),
+`packages/frontend/docs/adr/` (meta-layer / UI), `packages/shared/docs/adr/`
+(types / source-union). Cross-cutting topics (release, monorepo, CI) live in
+`docs/` rather than a central ADR index.
 
 ## M10 single-pass cutover status (v0.9.27)
 
