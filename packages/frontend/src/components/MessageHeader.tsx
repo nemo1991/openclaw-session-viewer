@@ -71,13 +71,13 @@ export const MessageHeader = memo(MessageHeaderInner);
 function getRoleLabel(role: string, t: (k: string) => string): string {
   switch (role) {
     case "user":
-      return t("blocks.text") === "文本" ? "用户" : t("blocks.text");
+      return t("blocks.user");
     case "assistant":
-      return "助手";
+      return t("blocks.assistant");
     case "tool":
-      return "工具";
+      return t("blocks.tool");
     case "system":
-      return "系统";
+      return t("blocks.system");
     default:
       return role;
   }

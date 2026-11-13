@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import {
   ArrowLeft,
   Save,
@@ -188,10 +189,14 @@ export default function SettingsRoute() {
             <label>{t("settings.language")}</label>
             <select
               value={settings.uiLanguage}
-              onChange={(e) => update({ uiLanguage: e.target.value as any })}
+              onChange={(e) => {
+                const lang = e.target.value as "zh-CN" | "en-US";
+                update({ uiLanguage: lang });
+                void i18n.changeLanguage(lang);
+              }}
             >
-              <option value="zh-CN">中文</option>
-              <option value="en-US">English</option>
+              <option value="zh-CN">{t("settings.langZhCN")}</option>
+              <option value="en-US">{t("settings.langEnUS")}</option>
             </select>
           </div>
           {/* v0.4.2: 时区设置 */}
