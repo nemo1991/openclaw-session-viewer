@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { useSessionsStore } from "../state/sessionsStore";
 import { apiGetSyncStatus, apiGetDbPath, apiRebuildDb } from "../lib/overridesApi";
@@ -81,19 +82,26 @@ function formatTimestamp(ms: number | null): string {
 }
 
 /** pill 文字 + 前缀图标 — live 状态优先, 回落用 status */
-function buildPillText(status: SyncStatus | null, live: LivePhase): { icon: string; text: string } {
+function buildPillText(
+  status: SyncStatus | null,
+  live: LivePhase,
+  t: ReturnType<typeof useTranslation>["t"]
+): { icon: string; text: string } {
   switch (live.kind) {
     case "scanning":
-      return { icon: "⟳", text: "扫描中…" };
+      return { icon: "⟳", text: t("sync.scanning") };
     case "syncing": {
       const total = live.total;
       const done = live.done;
       const tail = live.currentFile ? ` · ${live.currentFile.split("/").slice(-2).join("/")}` : "";
-      return { icon: "⟳", text: `同步 ${done}/${total}${tail}` };
+      return { icon: "⟳", text: t("sync.syncing", { done, total, tail }) };
     }
     case "done": {
       const failedNote = live.failed > 0 ? ` · ${live.failed} failed` : "";
-      return { icon: "✓", text: `同步完成 ${live.done}/${live.total}${failedNote}` };
+      return {
+        icon: "✓",
+        text: t("sync.done", { done: live.done, total: live.total, failedNote }),
+      };
     }
     // v0.8.13 item E: failed > 0 时 phase 是 partial_error,渲染 ⚠ + "完成 X/Y · N 失败"
     // 避免把部分失败误判为同步成功 (之前 done case 仍 fallback 显示 failed,但用户第一眼
@@ -101,11 +109,11 @@ function buildPillText(status: SyncStatus | null, live: LivePhase): { icon: stri
     case "partial_error": {
       return {
         icon: "⚠",
-        text: `同步完成 ${live.done}/${live.total} · ${live.failed} 失败`,
+        text: t("sync.partialError", { done: live.done, total: live.total, failed: live.failed }),
       };
     }
     case "error":
-      return { icon: "✗", text: `同步失败: ${truncate(live.message, 40)}` };
+      return { icon: "✗", text: t("sync.error", { msg: truncate(live.message, 40) }) };
     case "idle":
       break;
   }
@@ -133,6 +141,7 @@ export function HomeStatusBar() {
   const [expanded, setExpanded] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
+  const { t } = useTranslation();
   // v0.9.28 (M11.2): mount 时乐观显示 "扫描中…",避免 250ms race 期间 pill 停留在 idle/stale。
   // 后端 sync_loop 在 tokio::spawn 启动时就跑第一轮,首个 "sync-progress: scanning"
   // 事件在 frontend listener 注册前发出来会被丢;App.tsx refresh() 触发第二轮才进 listener。
@@ -143,7 +152,7 @@ export function HomeStatusBar() {
   const refresh = useSessionsStore((s) => s.refresh);
   const load = useSessionsStore((s) => s.load);
   const freshness = computeFreshness(status, live);
-  const pillContent = buildPillText(status, live);
+  const pillContent = buildPillText(status, live, t);
 
   // 完成态 2s 自动回落 — 用 ref 持有 timer id, 避免每帧重建
   const doneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -286,7 +295,7 @@ export function HomeStatusBar() {
         className="home-status-pill"
         onClick={() => setExpanded((v) => !v)}
         data-testid="home-status-pill"
-        title={expanded ? "收起" : "展开 sync 状态"}
+        title={expanded ? t("sync.collapsePanel") : t("sync.expandPanel")}
       >
         <span className={`home-status-dot home-status-dot-${freshness}`} aria-hidden />
         <span className="home-status-pill-icon" aria-hidden>
@@ -312,11 +321,15 @@ export function HomeStatusBar() {
               handleManualRefresh();
             }
           }}
-          title="手动刷新"
+          title={t("sync.manualRefresh")}
         >
           ↻
         </span>
-        <span className="home-status-pill-btn" aria-hidden title={expanded ? "收起" : "展开"}>
+        <span
+          className="home-status-pill-btn"
+          aria-hidden
+          title={expanded ? t("sync.collapsePanel") : t("sync.expandPanel")}
+        >
           {expanded ? "▲" : "▼"}
         </span>
       </button>
@@ -376,7 +389,7 @@ export function HomeStatusBar() {
               disabled={rebuilding}
               data-testid="home-status-rebuild"
             >
-              {rebuilding ? "重建中…" : "重建数据库"}
+              {rebuilding ? t("sync.rebuilding") : t("sync.rebuild")}
             </button>
             {rebuildError && (
               <span className="home-status-error" role="alert">

@@ -354,14 +354,14 @@ export default function SessionsRoute() {
               </>
             )}
 
-            <h4 style={{ marginTop: 16 }}>显示</h4>
+            <h4 style={{ marginTop: 16 }}>{t("sessions.show")}</h4>
             <label>
               <input
                 type="checkbox"
                 checked={showHidden}
                 onChange={(e) => setShowHidden(e.target.checked)}
               />
-              显示隐藏项
+              {t("sessions.showHidden")}
             </label>
             <label>
               <input
@@ -369,13 +369,13 @@ export default function SessionsRoute() {
                 checked={showArchived}
                 onChange={(e) => setShowArchived(e.target.checked)}
               />
-              显示归档
+              {t("sessions.showArchived")}
             </label>
 
             <input
               type="text"
               className="search-box"
-              placeholder="搜索标题/路径/agent…"
+              placeholder={t("sessions.searchPlaceholder")}
               value={filter.query}
               onChange={(e) => setFilter({ query: e.target.value })}
             />
@@ -396,21 +396,21 @@ export default function SessionsRoute() {
           )}
 
           <div className="sessions-count">
-            共 {visible.length} 个
+            {t("sessions.totalCount", { count: visible.length })}
             {(overrides.snap.hidden &&
               Object.keys(overrides.snap.hidden).length > 0 &&
               !showHidden) ||
             (overrides.snap.archived &&
               Object.keys(overrides.snap.archived).length > 0 &&
               !showArchived)
-              ? " (已过滤)"
+              ? t("sessions.filteredNote")
               : ""}
           </div>
 
           {pinned.length > 0 && (
             <section className="pinned-section" data-testid="pinned-section">
               <h3 className="pinned-section-title">
-                <Pin size={12} /> 置顶 ({pinned.length})
+                <Pin size={12} /> {t("sessions.pinned", { count: pinned.length })}
               </h3>
               {pinned.map((s) => (
                 <SessionCard
@@ -477,6 +477,7 @@ function SessionCard({
   commitRename,
   cancelRename,
 }: SessionCardProps) {
+  const { t } = useTranslation();
   const displayTitle = overrides.snap.renames[s.sessionId] ?? s.title ?? s.sessionId.slice(0, 8);
   const isEditing = editingSid === s.sessionId;
   const isPinned = overrides.snap.pinned[s.sessionId];
@@ -497,7 +498,7 @@ function SessionCard({
     >
       {isArchived && (
         <div className="archived-banner">
-          <Archive size={12} /> 已归档
+          <Archive size={12} /> {t("sessions.archivedBanner")}
         </div>
       )}
       <div className="session-card-title">
@@ -521,27 +522,30 @@ function SessionCard({
               e.stopPropagation();
               startRename(s);
             }}
-            title="双击重命名"
+            title={t("sessions.renameHint")}
           >
             {displayTitle}
           </span>
         )}
         {s.livePid && (
-          <span className="live-badge" title="运行中">
-            ● {t_live()}
+          <span className="live-badge" title={t("sessions.liveBadge")}>
+            ● {t("sessions.liveBadge")}
           </span>
         )}
         {s.subagentDir && s.subagentCount && s.subagentCount > 0 && (
-          <span className="subagent-badge" title={`包含 ${s.subagentCount} 个子代理`}>
+          <span
+            className="subagent-badge"
+            title={t("sessions.subagentBadgeTitle", { count: s.subagentCount })}
+          >
             ⎇ {s.subagentCount}
           </span>
         )}
         <span className={`source-badge source-${s.source}`}>
-          {s.source === "claude" ? "Claude" : s.source === "openclaw" ? "OpenClaw" : s.source === "dsh" ? "DeepSeek Harness" : "Kimi"}
+          {t(`sessions.source.${s.source}`)}
         </span>
         <span className="override-badges">
           {isPinned && <span className="badge-pinned">📌</span>}
-          {isHidden && <span className="badge-hidden">隐藏</span>}
+          {isHidden && <span className="badge-hidden">{t("sessions.hiddenBadge")}</span>}
         </span>
       </div>
       <div className="session-card-meta">
@@ -551,7 +555,7 @@ function SessionCard({
         <span>·</span>
         <span>{formatBytes(s.sizeBytes)}</span>
         <span>·</span>
-        <span>{s.messageCount} 条</span>
+        <span>{t("sessions.messageCount", { count: s.messageCount })}</span>
         {s.primaryModel && (
           <>
             <span>·</span>
@@ -592,18 +596,18 @@ function SessionCard({
         (s.metaBanner && s.metaBanner.compactionCount > 0)) && (
         <div className="session-stats">
           {s.thinkingCount && s.thinkingCount > 0 && (
-            <span className="stat-chip stat-thinking" title="思考块">
+            <span className="stat-chip stat-thinking" title={t("sessions.statThinking")}>
               🧠 {s.thinkingCount}
             </span>
           )}
           {s.toolUseCount && s.toolUseCount > 0 && (
-            <span className="stat-chip stat-tools" title="工具调用">
+            <span className="stat-chip stat-tools" title={t("sessions.statTools")}>
               🔧 {s.toolUseCount}
             </span>
           )}
           {/* v0.9.7: 派生指标 chip — 闭合 v0.9.5 enrich 数据的 UI 表面 */}
           {s.durationSeconds != null && s.durationSeconds > 0 && (
-            <span className="stat-chip stat-duration" title="会话跨度 (last - first ts)">
+            <span className="stat-chip stat-duration" title={t("sessions.statDuration")}>
               ⏱ {formatDuration(s.durationSeconds)}
             </span>
           )}
@@ -612,8 +616,10 @@ function SessionCard({
               className="stat-chip stat-error"
               title={
                 s.toolError && s.toolError.length > 0
-                  ? `失败: ${s.toolError.map(([n, c]) => `${n}×${c}`).join(", ")}`
-                  : "失败消息数"
+                  ? t("sessions.statErrorDetail", {
+                      list: s.toolError.map(([n, c]) => `${n}×${c}`).join(", "),
+                    })
+                  : t("sessions.statError")
               }
             >
               ⚠ {s.errorCount}
@@ -624,8 +630,11 @@ function SessionCard({
               className="stat-chip stat-repeat"
               title={
                 s.repeatRunMaxTool && s.repeatRunMaxCount
-                  ? `连续 ${s.repeatRunMaxTool} × ${s.repeatRunMaxCount}`
-                  : "连续同工具调用"
+                  ? t("sessions.statRepeatDetail", {
+                      tool: s.repeatRunMaxTool,
+                      count: s.repeatRunMaxCount,
+                    })
+                  : t("sessions.statRepeat")
               }
             >
               🔁 {s.repeatRunCount}
@@ -636,8 +645,10 @@ function SessionCard({
               className="stat-chip stat-idle"
               title={
                 s.idleGapMaxMs
-                  ? `相邻 entry gap ≥ 5min, 最长 ${(s.idleGapMaxMs / 60000).toFixed(1)}min`
-                  : "相邻 entry 间隔 ≥ 5min"
+                  ? t("sessions.statIdleDetail", {
+                      min: (s.idleGapMaxMs / 60000).toFixed(1),
+                    })
+                  : t("sessions.statIdle")
               }
             >
               💤 {s.idleGapCount}
@@ -649,8 +660,15 @@ function SessionCard({
               className="stat-chip stat-todo"
               title={
                 s.todoSummary.current
-                  ? `进行中: ${s.todoSummary.current} — ${s.todoSummary.done}/${s.todoSummary.total} 完成`
-                  : `${s.todoSummary.done}/${s.todoSummary.total} 完成`
+                  ? t("sessions.statTodoDetail", {
+                      current: s.todoSummary.current,
+                      done: s.todoSummary.done,
+                      total: s.todoSummary.total,
+                    })
+                  : t("sessions.statTodo", {
+                      done: s.todoSummary.done,
+                      total: s.todoSummary.total,
+                    })
               }
             >
               📋 {s.todoSummary.done}/{s.todoSummary.total}
@@ -663,11 +681,11 @@ function SessionCard({
               s.kimiTokenUsage.cacheRead > 0) && (
               <span
                 className="stat-chip stat-tokens"
-                title={
-                  `input ${formatNumber(s.kimiTokenUsage.input)}, ` +
-                  `output ${formatNumber(s.kimiTokenUsage.output)}, ` +
-                  `cache hit ${formatNumber(s.kimiTokenUsage.cacheRead)}`
-                }
+                title={t("sessions.statTokens", {
+                  input: formatNumber(s.kimiTokenUsage.input),
+                  output: formatNumber(s.kimiTokenUsage.output),
+                  cache: formatNumber(s.kimiTokenUsage.cacheRead),
+                })}
               >
                 🪙 {formatNumber(s.kimiTokenUsage.input + s.kimiTokenUsage.cacheRead)}
               </span>
@@ -678,8 +696,11 @@ function SessionCard({
               className="stat-chip stat-compaction"
               title={
                 s.metaBanner.lastCompactionDurationMs
-                  ? `${s.metaBanner.compactionCount} 次压缩, 末次 ${(s.metaBanner.lastCompactionDurationMs / 1000).toFixed(1)}s`
-                  : `${s.metaBanner.compactionCount} 次压缩`
+                  ? t("sessions.statCompactionDetail", {
+                      count: s.metaBanner.compactionCount,
+                      sec: (s.metaBanner.lastCompactionDurationMs / 1000).toFixed(1),
+                    })
+                  : t("sessions.statCompaction", { count: s.metaBanner.compactionCount })
               }
             >
               🗜 {s.metaBanner.compactionCount}
@@ -696,32 +717,28 @@ function SessionCard({
         <button
           onClick={() => overrides.togglePinned(s.sessionId, !isPinned)}
           className={isPinned ? "is-active" : ""}
-          title={isPinned ? "取消置顶" : "置顶"}
+          title={isPinned ? t("sessions.unpin") : t("sessions.pin")}
         >
           <Pin size={11} />
         </button>
         <button
           onClick={() => overrides.toggleHide(s.sessionId, !isHidden)}
           className={isHidden ? "is-active" : ""}
-          title={isHidden ? "取消隐藏" : "隐藏"}
+          title={isHidden ? t("sessions.unhide") : t("sessions.hide")}
         >
           <EyeOff size={11} />
         </button>
         <button
           onClick={() => overrides.setArchived(s.sessionId, !isArchived)}
           className={isArchived ? "is-active" : ""}
-          title={isArchived ? "取消归档" : "归档"}
+          title={isArchived ? t("sessions.unarchive") : t("sessions.archive")}
         >
           <Archive size={11} />
         </button>
-        <button onClick={() => startRename(s)} title="重命名">
+        <button onClick={() => startRename(s)} title={t("sessions.rename")}>
           ✎
         </button>
       </div>
     </article>
   );
-}
-
-function t_live(): string {
-  return "运行中";
 }

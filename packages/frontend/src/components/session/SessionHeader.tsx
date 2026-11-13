@@ -192,22 +192,22 @@ function HeaderInfo({
             maxLength={80}
           />
         ) : (
-          <span onDoubleClick={startTitleEdit} title="双击重命名">
+          <span onDoubleClick={startTitleEdit} title={t("sessions.renameHint")}>
             {currentTitle}
           </span>
         )}
         {meta.archived && (
-          <span className="badge-archived" title="已归档">
-            🗄️ 已归档
+          <span className="badge-archived" title={t("sessions.archivedBanner")}>
+            🗄️ {t("sessions.archivedBanner")}
           </span>
         )}
         {meta.pinned && (
-          <span className="badge-pinned" title="已置顶">
+          <span className="badge-pinned" title={t("sessions.isPinned")}>
             📌
           </span>
         )}
         {meta.hidden && (
-          <span className="badge-hidden" title="已隐藏">
+          <span className="badge-hidden" title={t("sessions.isHidden")}>
             🙈
           </span>
         )}
@@ -292,7 +292,7 @@ function HeaderInfo({
           meta.assistantMessageCount !== undefined && (
             <>
               <span>·</span>
-              <span title="user / assistant 顶层消息计数 (排除 sidechain)">
+              <span title={t("sessions.statsUserAssistantTitle")}>
                 {meta.userMessageCount}u / {meta.assistantMessageCount}a
               </span>
             </>
@@ -300,7 +300,7 @@ function HeaderInfo({
         {meta.errorCount !== undefined && meta.errorCount !== null && meta.errorCount > 0 && (
           <>
             <span>·</span>
-            <span className="stat-error" title="assistant stop_reason==error 或 is_error==true">
+            <span className="stat-error" title={t("sessions.errorCountTitle")}>
               ❌ {meta.errorCount} errors
             </span>
           </>
@@ -383,7 +383,7 @@ function ActionsRow({
         disabled={reloading}
         className={reloading ? "reloading" : ""}
         data-testid="reload-btn"
-        title={`重新解析 jsonl + 触发后端 sync (${reloadModifier}+R)`}
+        title={t("sessions.reloadTitle", { mod: reloadModifier })}
       >
         <RefreshCw size={14} className={reloading ? "spin" : ""} />
       </button>
@@ -393,31 +393,31 @@ function ActionsRow({
       <button
         onClick={() => overrides.togglePinned(meta.sessionId, !meta.pinned)}
         className={meta.pinned ? "primary" : ""}
-        title={meta.pinned ? "取消置顶" : "置顶"}
+        title={meta.pinned ? t("sessions.unpin") : t("sessions.pin")}
       >
         <Pin size={14} />
       </button>
       <button
         onClick={() => overrides.toggleHide(meta.sessionId, !meta.hidden)}
         className={meta.hidden ? "primary" : ""}
-        title={meta.hidden ? "取消隐藏" : "隐藏"}
+        title={meta.hidden ? t("sessions.unhide") : t("sessions.hide")}
       >
         <EyeOff size={14} />
       </button>
       <button
         onClick={() => overrides.setArchived(meta.sessionId, !meta.archived)}
         className={meta.archived ? "primary" : ""}
-        title={meta.archived ? "取消归档" : "归档"}
+        title={meta.archived ? t("sessions.unarchive") : t("sessions.archive")}
       >
         <Archive size={14} />
       </button>
-      <button onClick={onStartTitleEdit} title="重命名">
+      <button onClick={onStartTitleEdit} title={t("sessions.rename")}>
         <Edit2 size={14} />
       </button>
-      <button onClick={onNotesToggle} title="笔记">
+      <button onClick={onNotesToggle} title={t("sessions.notes")}>
         <StickyNote size={14} />
       </button>
-      <button onClick={onLinkAdd} title="链接到其他 session">
+      <button onClick={onLinkAdd} title={t("sessions.linkToSession")}>
         <Link2 size={14} />
       </button>
       {meta.hasTrajectory && (

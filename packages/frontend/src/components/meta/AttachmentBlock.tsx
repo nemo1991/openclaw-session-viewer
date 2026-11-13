@@ -32,6 +32,7 @@
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useFileReveal } from "../../hooks/useFileReveal";
 import { useSettingsStore } from "../../state/settingsStore";
 import type { NormalizedBlockFE } from "../../lib/api";
@@ -49,6 +50,7 @@ const FILE_SNAPSHOT_VISIBLE_DEFAULT = 5;
 export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlockProps) {
   // v0.9.21 (M6): 用 lib/meta.ts.getMetaField 替代内联 get helper —
   // snake + camel + 顶层 + payload 双查逻辑集中。
+  const { t } = useTranslation();
   const get = (key: string): unknown => getMetaField(block, key);
 
   switch (label) {
@@ -58,21 +60,23 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
       const removed = (get("removedTypes") as string[]) ?? [];
       const isInitial = Boolean(get("isInitial"));
       const totalLabel = isInitial
-        ? `初始化 ${added.length} 个 agent`
+        ? t("attachment.agentInitial", { count: added.length })
         : added.length > 0 && removed.length > 0
           ? `+${added.length} / -${removed.length}`
           : added.length > 0
             ? `+${added.length} agent`
             : removed.length > 0
               ? `-${removed.length} agent`
-              : "无变化";
+              : t("attachment.agentNoChange");
       return (
         <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🤖 agent</span>
           <span className="meta-primary-text">{totalLabel}</span>
           {added.length > 0 && (
             <div className="meta-section">
-              <strong className="meta-section-title">新增 ({added.length}):</strong>
+              <strong className="meta-section-title">
+                {t("attachment.agentAddedLabel", { count: added.length })}
+              </strong>
               <div className="meta-list">
                 {added.map((a) => (
                   <span key={a} className="meta-tag meta-tag-add" title={a}>
@@ -84,7 +88,9 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
           )}
           {removed.length > 0 && (
             <div className="meta-section">
-              <strong className="meta-section-title">移除 ({removed.length}):</strong>
+              <strong className="meta-section-title">
+                {t("attachment.agentRemovedLabel", { count: removed.length })}
+              </strong>
               <div className="meta-list">
                 {removed.map((a) => (
                   <span key={a} className="meta-tag meta-tag-remove" title={a}>
@@ -103,7 +109,7 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
       return (
         <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🛠 skill</span>
-          <span className="meta-primary-text">{count} 个 skill</span>
+          <span className="meta-primary-text">{t("attachment.skillCount", { count })}</span>
           <div className="meta-list meta-list-scrollable" data-count={count}>
             {names.map((s: string) => (
               <span key={s} className="meta-tag" title={`skill: ${s}`}>
@@ -122,11 +128,17 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
       return (
         <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📋 plan_mode</span>
-          <span className="meta-primary-text">{hasPlan ? "活动计划已存在" : "无活动计划"}</span>
+          <span className="meta-primary-text">
+            {hasPlan ? t("attachment.planExists") : t("attachment.planNone")}
+          </span>
           {reminder && (
             <span
               className={`meta-reminder-pill meta-reminder-${isFull ? "full" : reminder || "none"}`}
-              title={isFull ? "完整计划提醒 (full)" : `提醒类型: ${reminder}`}
+              title={
+                isFull
+                  ? t("attachment.planFullReminder")
+                  : t("attachment.planReminderType", { type: reminder })
+              }
             >
               reminder: {reminder}
             </span>
@@ -173,7 +185,7 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
       return (
         <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">🏷 agent_name</span>
-          <span className="meta-primary-text">{name || "(未命名)"}</span>
+          <span className="meta-primary-text">{name || t("attachment.agentUnnamed")}</span>
         </div>
       );
     }
@@ -187,7 +199,7 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
         <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">📝 task_reminder</span>
           <span className="meta-primary-text">
-            {pending} 待办 · {inProgress} 进行 · {completed} 完成 · 共 {itemCount} 个
+            {t("attachment.taskSummary", { pending, inProgress, completed, total: itemCount })}
           </span>
           {/* v0.6.x 关联字段研究 (用户报: 研究一下 task_reminder 的关联关系):
               - id (跨 reminder 串联同一 task 的进度轨迹, e.g. "4" 在多个 reminder 中
@@ -199,19 +211,19 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
               当前实现: 在每个 task 行下折叠显示 description + activeForm + blocks/blockedBy
               跨 reminder 索引(同 task id 进度轨迹聚合) 待 v0.7+ 引入 redb 时统一做 */}
           <div className="meta-task-list">
-            {content.map((t, i) => {
-              const status = String(t.status ?? "pending");
-              const subj = String(t.subject ?? `Task ${i + 1}`);
-              const id = String(t.id ?? "");
-              const desc = String(t.description ?? "");
-              const activeForm = String(t.activeForm ?? "");
-              const blocks = (t.blocks as string[]) ?? [];
-              const blockedBy = (t.blockedBy as string[]) ?? [];
+            {content.map((item, i) => {
+              const status = String(item.status ?? "pending");
+              const subj = String(item.subject ?? `Task ${i + 1}`);
+              const id = String(item.id ?? "");
+              const desc = String(item.description ?? "");
+              const activeForm = String(item.activeForm ?? "");
+              const blocks = (item.blocks as string[]) ?? [];
+              const blockedBy = (item.blockedBy as string[]) ?? [];
               return (
                 <div key={id || i} className={`meta-task-row meta-task-${status}`}>
                   <div className="meta-task-row-head">
                     {id && (
-                      <span className="meta-task-id" title={`Task ID (跨 reminder 跟踪): ${id}`}>
+                      <span className="meta-task-id" title={t("attachment.taskIdTitle", { id })}>
                         #{id}
                       </span>
                     )}
@@ -222,7 +234,9 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
                     <div className="meta-task-meta">
                       {activeForm && (
                         <div className="meta-task-activeform">
-                          <span className="meta-task-activeform-label">正在做:</span>
+                          <span className="meta-task-activeform-label">
+                            {t("attachment.taskActiveFormLabel")}
+                          </span>
                           {activeForm}
                         </div>
                       )}
@@ -234,8 +248,13 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
                       {(blocks.length > 0 || blockedBy.length > 0) && (
                         <div className="meta-task-graph">
                           {blockedBy.length > 0 && (
-                            <span className="meta-task-graph-row" title="被这些 task 阻塞">
-                              <span className="meta-task-graph-label">等待:</span>
+                            <span
+                              className="meta-task-graph-row"
+                              title={t("attachment.taskBlockedByTitle")}
+                            >
+                              <span className="meta-task-graph-label">
+                                {t("attachment.taskBlockedByLabel")}
+                              </span>
                               {blockedBy.map((b) => (
                                 <span key={b} className="meta-task-ref">
                                   #{b}
@@ -244,8 +263,13 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
                             </span>
                           )}
                           {blocks.length > 0 && (
-                            <span className="meta-task-graph-row" title="阻塞这些 task">
-                              <span className="meta-task-graph-label">阻塞:</span>
+                            <span
+                              className="meta-task-graph-row"
+                              title={t("attachment.taskBlocksTitle")}
+                            >
+                              <span className="meta-task-graph-label">
+                                {t("attachment.taskBlocksLabel")}
+                              </span>
                               {blocks.map((b) => (
                                 <span key={b} className="meta-task-ref">
                                   #{b}
@@ -270,7 +294,9 @@ export function AttachmentBlock({ block, label, parentJsonlPath }: AttachmentBlo
       return (
         <div className="block-meta-info meta-block-flat attachment-block-meta">
           <span className="meta-kind-badge">⚙ invoked_skills</span>
-          <span className="meta-primary-text">{skills.length} 个 skill</span>
+          <span className="meta-primary-text">
+            {t("attachment.invokedSkillCount", { count: skills.length })}
+          </span>
           <div className="meta-list">
             {skills.map((s, i) => (
               <span key={i} className="meta-tag" title={s.path ?? ""}>
@@ -396,6 +422,7 @@ function FileSnapshotBlock({
   messageId: string;
   parentJsonlPath?: string;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const fileCount = paths.length;
   const mid = messageId;
@@ -406,7 +433,9 @@ function FileSnapshotBlock({
     <div className="block-meta-info meta-block-flat attachment-block-meta">
       <span className="meta-kind-badge">📁 file_snapshot</span>
       <span className="meta-primary-text">
-        {fileCount > 0 ? `${fileCount} 个跟踪文件` : "空 snapshot (无文件)"}
+        {fileCount > 0
+          ? t("attachment.fileSnapshotCount", { count: fileCount })
+          : t("attachment.fileSnapshotEmpty")}
       </span>
       {mid && <span className="meta-sub">msg: {mid.slice(0, 8)}…</span>}
       {fileCount > 0 && (
@@ -424,9 +453,15 @@ function FileSnapshotBlock({
               className="meta-show-more"
               data-testid="file-snapshot-toggle"
               onClick={() => setExpanded((v) => !v)}
-              title={expanded ? "收起文件列表" : `展开剩余 ${overflow} 个文件`}
+              title={
+                expanded
+                  ? t("attachment.fileSnapshotCollapseTitle")
+                  : t("attachment.fileSnapshotExpandTitle", { count: overflow })
+              }
             >
-              {expanded ? "收起" : `展开剩余 ${overflow} 个文件`}
+              {expanded
+                ? t("attachment.fileSnapshotCollapse")
+                : t("attachment.fileSnapshotExpand", { count: overflow })}
             </button>
           )}
         </>
@@ -450,6 +485,7 @@ function FilePathClickable({ path, parentJsonlPath }: { path: string; parentJson
   const { revealAndNotify } = useFileReveal(
     parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
   );
+  const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const allowRelaxed = useSettingsStore((s) => s.settings.pathSecurity?.allowRelaxed ?? false);
 
@@ -465,7 +501,7 @@ function FilePathClickable({ path, parentJsonlPath }: { path: string; parentJson
         className="meta-path-clickable"
         data-testid="meta-file-path"
         onClick={onClick}
-        title={`在 Finder/Explorer 打开: ${path}`}
+        title={t("attachment.fileOpenTitle", { path })}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
@@ -494,6 +530,7 @@ function PlanFilePath({ path, parentJsonlPath }: { path: string; parentJsonlPath
   const { revealAndNotify } = useFileReveal(
     parentJsonlPath ? { sessionJsonlPath: parentJsonlPath } : undefined
   );
+  const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const allowRelaxed = useSettingsStore((s) => s.settings.pathSecurity?.allowRelaxed ?? false);
 
@@ -514,7 +551,7 @@ function PlanFilePath({ path, parentJsonlPath }: { path: string; parentJsonlPath
           className="meta-reveal-btn"
           data-testid="plan-mode-reveal"
           onClick={onReveal}
-          title={`在 Finder/Explorer 打开: ${path}`}
+          title={t("attachment.fileOpenTitle", { path })}
         >
           reveal
         </button>
@@ -555,6 +592,7 @@ function RevealErrorActions({
   parentJsonlPath?: string;
   onRetried: () => void;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const navigate = useNavigate();
   const updateSettings = useSettingsStore((s) => s.update);
@@ -566,10 +604,10 @@ function RevealErrorActions({
   // 把 PathSecurity 错转成人类语言
   const humanError = (() => {
     if (error.startsWith("PathSecurity: 需提供 workspace_root")) {
-      return "请在「设置 → 数据源」中配置默认导出目录, 或开启「允许 reveal 越界」";
+      return t("attachment.pathSecurityNeedsConfig");
     }
     if (error.includes("不在 workspace") || error.includes("不在任一已知 root 下")) {
-      return "路径不在允许范围内, 开启「允许 reveal 越界」或选择更宽的 root";
+      return t("attachment.pathOutOfRange");
     }
     return error.replace(/^PathSecurity:\s*/, "");
   })();
@@ -588,10 +626,7 @@ function RevealErrorActions({
 
   const unlockAndRetry = async () => {
     // ⚠️ 安全确认 (用户已确认)
-    const ok = window.confirm(
-      "开启「允许 reveal 越界」会让任意已知 root 下的文件可被 reveal。\n\n" +
-        "受 assert_within_any_root 兜底, 不会触碰 ~/.ssh 等敏感路径。\n\n确认开启?"
-    );
+    const ok = window.confirm(t("attachment.revealConfirm"));
     if (!ok) return;
     // v0.6.x fix: 同时把 defaultExportDir 也设上 (保证之后 lock-down 也能 reveal 计划文件)
     // 从 path 推断 ~/.claude: '/Users/foo/.claude/plans/x.md' → '/Users/foo/.claude'
@@ -628,18 +663,18 @@ function RevealErrorActions({
           className="meta-reveal-error-btn"
           data-testid="meta-reveal-error-copy"
           onClick={copyPath}
-          title="复制路径到剪贴板"
+          title={t("attachment.copyPathTitle")}
         >
-          {copied ? "✓ 已复制" : "复制路径"}
+          {copied ? t("attachment.copied") : t("attachment.copyPath")}
         </button>
         <button
           type="button"
           className="meta-reveal-error-btn meta-reveal-error-btn-primary"
           data-testid="meta-reveal-error-settings"
           onClick={goSettings}
-          title="跳到设置页"
+          title={t("attachment.goSettingsTitle")}
         >
-          去设置
+          {t("attachment.goSettings")}
         </button>
         {!allowRelaxed && (
           <button
@@ -647,9 +682,9 @@ function RevealErrorActions({
             className="meta-reveal-error-btn meta-reveal-error-btn-warning"
             data-testid="meta-reveal-error-unlock"
             onClick={unlockAndRetry}
-            title="一键开启 (弹确认) 后重试 reveal"
+            title={t("attachment.unlockRelaxedTitle")}
           >
-            一键开启允许越界
+            {t("attachment.unlockRelaxed")}
           </button>
         )}
       </span>

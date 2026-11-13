@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, X, ChevronDown, ChevronRight, FileText } from "lucide-react";
 import { useFileReveal } from "../hooks/useFileReveal";
 import "./ToolResultCard.css";
@@ -38,6 +39,7 @@ const SHIKI_LANGS_BY_EXT: Record<string, string> = {
 const PREVIEW_CHARS = 500;
 
 export function ToolResultCard({ toolUseId, content, isError, filePath, parentJsonlPath }: Props) {
+  const { t } = useTranslation();
   // v0.4.2: 默认展开
   const [open, setOpen] = useState(true);
   // v0.6.0: 文本截断的展开/折叠状态(独立于 card 自身的 open)
@@ -104,7 +106,7 @@ export function ToolResultCard({ toolUseId, content, isError, filePath, parentJs
       <button className="tool-result-header" onClick={() => setOpen(!open)}>
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         {isError ? <X size={12} /> : <Check size={12} />}
-        <span>{isError ? "工具结果 (失败)" : "工具结果"}</span>
+        <span>{isError ? t("blocks.toolResultError") : t("blocks.toolResult")}</span>
         {filePath && (
           <span
             className="tool-result-file file-path-clickable"

@@ -224,7 +224,9 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
                 {idleBefore !== undefined && (
                   <div className="transcript-idle-gap" data-testid="transcript-idle-gap">
                     <span className="transcript-idle-line" />
-                    <span className="transcript-idle-label">间隔 {formatIdleGap(idleBefore)}</span>
+                    <span className="transcript-idle-label">
+                      {t("detail.idleGap", { gap: formatIdleGap(idleBefore) })}
+                    </span>
                     <span className="transcript-idle-line" />
                   </div>
                 )}
@@ -232,10 +234,10 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
                   <div
                     className="transcript-repeat-run"
                     data-testid="transcript-repeat-run"
-                    title={`${repeatRun.tool} 连续 ${repeatRun.count} 次`}
+                    title={t("detail.repeatRun", { tool: repeatRun.tool, count: repeatRun.count })}
                   >
                     <span className="transcript-repeat-label">
-                      {repeatRun.tool} 连续 {repeatRun.count} 次
+                      {t("detail.repeatRun", { tool: repeatRun.tool, count: repeatRun.count })}
                     </span>
                   </div>
                 )}
@@ -252,13 +254,13 @@ export function TranscriptView({ meta }: { meta?: SessionMeta }) {
 
       <footer className="transcript-footer" data-testid="transcript-footer">
         {loading
-          ? `流式加载中… ${loadedCount}/${totalCount}`
+          ? t("detail.streamingLoading", { loaded: loadedCount, total: totalCount })
           : filterActive
             ? t("detail.filter.showingFiltered", {
                 shown: sortedEntries.length,
                 total: entries.length,
-              }) + ` · ${sortAsc ? "正序" : "倒序"}`
-            : `已加载 ${entries.length} 条 · ${sortAsc ? "正序" : "倒序"}`}
+              }) + ` · ${sortAsc ? t("detail.sortAscLabel") : t("detail.sortDescLabel")}`
+            : `${t("detail.loadedMessages", { count: entries.length })} · ${sortAsc ? t("detail.sortAscLabel") : t("detail.sortDescLabel")}`}
       </footer>
     </div>
   );

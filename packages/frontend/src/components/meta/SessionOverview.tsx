@@ -27,6 +27,7 @@
  */
 
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { SessionMeta } from "@ocsv/shared";
 
 export interface SessionOverviewProps {
@@ -65,6 +66,7 @@ export function SessionOverview({ meta }: SessionOverviewProps) {
  * 设计: 不抢戏 — 1 行, 小字号, 色块编码. 空数据不渲染。
  */
 function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
+  const { t } = useTranslation();
   const textMsg = meta.textMessageCount ?? 0;
   const toolUsage = meta.toolUsage ?? [];
   const phaseHint = meta.phaseHint;
@@ -91,10 +93,10 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
   return (
     <div className="session-summary-strip" data-testid="session-summary-strip">
       <span className={`ss-phase ss-phase-${phaseHint}`} title={phaseDetail}>
-        {phaseHint === "explore" && "探索"}
-        {phaseHint === "implement" && "实施"}
-        {phaseHint === "mixed" && "混合"}
-        {phaseHint === "short" && "短会话"}
+        {phaseHint === "explore" && t("overview.phaseExplore")}
+        {phaseHint === "implement" && t("overview.phaseImplement")}
+        {phaseHint === "mixed" && t("overview.phaseMixed")}
+        {phaseHint === "short" && t("overview.phaseShort")}
         {phaseDetail && <span className="ss-phase-detail"> · {phaseDetail}</span>}
       </span>
       <span className="ss-sep" />
@@ -115,9 +117,10 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
       {otherCount > 0 && (
         <span
           className="ss-tool ss-tool-other"
-          title={otherTools.map(([t, c]) => `${t} × ${c}`).join("; ")}
+          title={otherTools.map(([tool, c]) => `${tool} × ${c}`).join("; ")}
         >
-          +{otherTools.length} 其他 <span className="ss-tool-count">{otherCount}</span>
+          {t("overview.otherToolsPrefix", { n: otherTools.length })}{" "}
+          <span className="ss-tool-count">{otherCount}</span>
         </span>
       )}
       {subagentCount > 0 && (
@@ -136,7 +139,7 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
         <>
           <span className="ss-sep" />
           <span className="ss-error" title="包含 stopReason=error 的 assistant message">
-            错误 × {errorCount}
+            {t("overview.errorCount", { count: errorCount })}
           </span>
         </>
       )}
@@ -147,11 +150,14 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
             className="ss-repeat"
             title={
               meta.repeatRunMaxTool && meta.repeatRunMaxCount
-                ? `${meta.repeatRunMaxTool} × ${meta.repeatRunMaxCount} (最大段)`
-                : `${repeatRunCount} 段连续重复`
+                ? t("overview.repeatRunMaxTitle", {
+                    tool: meta.repeatRunMaxTool,
+                    count: meta.repeatRunMaxCount,
+                  })
+                : t("overview.repeatRunBasicTitle", { count: repeatRunCount })
             }
           >
-            连续重复 {repeatRunCount} 段
+            {t("overview.repeatRun", { count: repeatRunCount })}
             {meta.repeatRunMaxTool && meta.repeatRunMaxCount && (
               <>
                 {" · "}
@@ -166,8 +172,14 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
       {idleGapCount > 0 && meta.idleGapMaxMs && (
         <>
           <span className="ss-sep" />
-          <span className="ss-idle" title={`最长间隔 ${formatIdleGapFromMs(meta.idleGapMaxMs)}`}>
-            {idleGapCount} 长间隔 · 最长 {formatIdleGapFromMs(meta.idleGapMaxMs)}
+          <span
+            className="ss-idle"
+            title={t("overview.idleGapTitle", {
+              gap: formatIdleGapFromMs(meta.idleGapMaxMs, t),
+            })}
+          >
+            {idleGapCount}{" "}
+            {t("overview.idleGapUnit", { gap: formatIdleGapFromMs(meta.idleGapMaxMs, t) })}
           </span>
         </>
       )}
@@ -176,15 +188,20 @@ function SessionSummaryStrip({ meta }: { meta: SessionMeta }) {
 }
 
 /** ms → "5 分钟" / "2 小时" / "3 天" — SST 自带, 不依赖 sessionInsights 模块 */
-function formatIdleGapFromMs(ms: number): string {
+function formatIdleGapFromMs(ms: number, t: ReturnType<typeof useTranslation>["t"]): string {
   const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec} 秒`;
+  if (sec < 60) return t("overview.unitSec", { n: sec });
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} 分钟`;
+  if (min < 60) return t("overview.unitMin", { n: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return min % 60 > 0 ? `${hr} 小时 ${min % 60} 分` : `${hr} 小时`;
+  if (hr < 24)
+    return min % 60 > 0
+      ? t("overview.unitHourMin", { n: hr, m: min % 60 })
+      : t("overview.unitHour", { n: hr });
   const day = Math.floor(hr / 24);
-  return hr % 24 > 0 ? `${day} 天 ${hr % 24} 小时` : `${day} 天`;
+  return hr % 24 > 0
+    ? t("overview.unitDayHour", { n: day, h: hr % 24 })
+    : t("overview.unitDay", { n: day });
 }
 
 /**
@@ -202,6 +219,7 @@ function formatIdleGapFromMs(ms: number): string {
  * - 无 metaBanner 不渲染 (claude/openclaw session 没有)
  */
 function MetaBannerFold({ banner }: { banner: NonNullable<SessionMeta["metaBanner"]> }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const totalChanges = banner.configChangeCount + banner.approvalCount + banner.compactionCount;
 
@@ -213,7 +231,7 @@ function MetaBannerFold({ banner }: { banner: NonNullable<SessionMeta["metaBanne
       <button
         className="meta-banner-toggle"
         onClick={() => setExpanded((v) => !v)}
-        title={expanded ? "折叠" : "展开完整 metadata snapshot"}
+        title={expanded ? t("overview.collapse") : t("overview.expandMeta")}
         data-testid="meta-banner-toggle"
       >
         <span className={`chev ${expanded ? "open" : ""}`}>▶</span>
