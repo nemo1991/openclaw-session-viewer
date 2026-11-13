@@ -1,26 +1,27 @@
 # packages/shared
 
-跨 package 的 TypeScript 类型 + Zod schema + 转换函数。被前端
-(`@ocsv/frontend`) 直接 import,Rust 端通过 `ts-rs` 把同一些类型导出成
-Rust struct(或手写对齐)。定义 wire 层跟 normalized 层两边的契约。
+跨 package 的 TypeScript 类型 + 转换函数。被前端
+(`@ocsv/frontend`) 直接 import,Rust 端用 `serde` 手写对齐(无 ts-rs /
+代码生成,改 wire 契约需两边同步)。定义 wire 层跟 normalized 层两边的契约。
 
 ## Language
 
 **Wire contract**:
 Rust 跟 TS 两边共享的类型契约总称。TS 端手写在
-`packages/shared/src/<source>-types.ts` 里,Rust 端用 `serde` + `ts-rs`
-(或手工)对应。改 wire contract 等于同时动两边。
+`packages/shared/src/<source>-types.ts` 里,Rust 端用 `serde` 手写对齐
+(无 ts-rs / 代码生成)。改 wire contract 等于同时动两边。
 _Avoid_: Shared schema, cross-boundary type
 
 **SessionSource**:
-`"claude" | "openclaw" | "kimi"` 三个 source 的字符串 union。在 Rust
+`"claude" | "openclaw" | "kimi" | "dsh"` 四个 source 的字符串 union。在 Rust
 跟 TS 两边同步,`source_from_path()` 返回这个值,Tauri command 拿它
 派发到正确的 parser + 走 stream/batch 路由。
 _Avoid_: Wire source, format tag
 
 **Wire record**:
 原始 JSONL 一行,顶层 wire envelope + discriminated union 子类型。每
-个 source 一份:`ClaudeRecord` / `OpenClawEntry` / `KimiRecord`。
+个 source 一份:`ClaudeRecord` / `OpenClawEntry` / `KimiRecord`
+(dsh 走 envelope 形 wire,由 `normalizeDshRecord` 处理)。
 _Avoid_: Raw record, source record
 
 **Wire envelope**:
