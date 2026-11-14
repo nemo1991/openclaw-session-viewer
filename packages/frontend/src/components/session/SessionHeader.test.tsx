@@ -263,7 +263,7 @@ describe("SessionHeader", () => {
     render(
       <MemoryRouter>
         <SessionHeader
-          meta={{ ...baseMeta, primaryModel: "claude-opus-4-5", agentName: "forcetone" }}
+          meta={{ ...baseMeta, primaryModel: "claude-opus-4-5", agentName: "agent-placeholder" }}
           navigate={vi.fn()}
           onNotesToggle={vi.fn()}
         />
@@ -272,7 +272,7 @@ describe("SessionHeader", () => {
     expect(screen.getByText("/tmp/proj")).toBeInTheDocument();
     expect(screen.getByText("claude-opus-4-5")).toBeInTheDocument();
     expect(screen.getByTestId("agent-name-pill")).toBeInTheDocument();
-    expect(screen.getByText(/forcetone/)).toBeInTheDocument();
+    expect(screen.getByText(/agent-placeholder/)).toBeInTheDocument();
   });
 
   it("stats row: messages + bytes + totalTokens + duration + errorCount + toolError", () => {

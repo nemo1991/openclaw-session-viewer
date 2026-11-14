@@ -83,16 +83,16 @@ pub struct SessionMeta {
     pub total_tokens: Option<TokenUsage>,
     pub primary_model: Option<String>,
     // --- v0.2.4 多 agent 支持 ---
-    /// OpenClaw agentId(如 "main" / "liushuyou");Claude 始终为 None
+    /// OpenClaw agentId(占位示例: "main" / "agent-placeholder");Claude 始终为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
-    /// 来自 sessions.json 的友好标签,如 "forcetone (@forcetone) id:6030344417"
+    /// 来自 sessions.json 的友好标签(占位示例: "agent-placeholder (@agent-placeholder) id:0000000000")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_label: Option<String>,
-    /// 渠道,如 "<redacted>" / "feishu" / "main"
+    /// 渠道(占位示例: "<channel-a>" / "main")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_channel: Option<String>,
-    /// 渠道 target,如 "<redacted>:6030344417"
+    /// 渠道 target(占位示例: "<channel-a>:0000000000")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_target: Option<String>,
     // --- v0.4.0 列表增强 ---

@@ -1604,7 +1604,7 @@ mod tests {
             },
             "agent:<redacted>:direct:42": {
                 "sessionId": "def-456",
-                "origin": { "label": "forcetone (@forcetone) id:42" },
+                "origin": { "label": "agent-placeholder (@agent-placeholder) id:42" },
                 "lastChannel": "<redacted>",
                 "lastTo": "<redacted>:42"
             }
@@ -1615,7 +1615,7 @@ mod tests {
         assert_eq!(idx.get("abc-123").unwrap().last_channel, "main");
         assert_eq!(
             idx.get("def-456").unwrap().origin.label,
-            "forcetone (@forcetone) id:42"
+            "agent-placeholder (@agent-placeholder) id:42"
         );
     }
 
@@ -1646,14 +1646,14 @@ mod tests {
             SessionsIndexEntry {
                 session_id: "abc".into(),
                 origin: SessionsIndexOrigin {
-                    label: "forcetone".into(),
+                    label: "agent-placeholder".into(),
                 },
                 last_channel: "<redacted>".into(),
                 last_to: "<redacted>:42".into(),
             },
         );
         let (label, channel, target) = agent_info_from_index(&idx);
-        assert_eq!(label.as_deref(), Some("forcetone"));
+        assert_eq!(label.as_deref(), Some("agent-placeholder"));
         assert_eq!(channel.as_deref(), Some("<redacted>"));
         assert_eq!(target.as_deref(), Some("<redacted>:42"));
     }

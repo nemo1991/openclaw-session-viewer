@@ -1,6 +1,6 @@
 {
   "name": "openclaw-session-viewer",
-  "version": "0.9.30",
+  "version": "0.10.0",
   "private": true,
   "description": "跨平台桌面应用 - 浏览本地 Claude Code / OpenClaw / Kimi Code / DeepSeek Harness 会话 (zstd 透明解压 + 聚合 KPI + subagent tracking)",
   "type": "module",
@@ -19,6 +19,7 @@
     "codegen:types": "cargo test --manifest-path src-tauri/Cargo.toml --lib parser::codegen::tests::export_normalize_types",
     "codegen:contract": "cargo test --manifest-path src-tauri/Cargo.toml --lib parser::contract::tests::export_normalize_contract_snapshot",
     "codegen": "pnpm codegen:types && pnpm codegen:contract",
+    "assert:no-fe-types": "node scripts/assert-no-fe-types.mjs",
     "build:icon": "node scripts/build-icon.mjs",
     "build:icons": "pnpm build:icon && pnpm tauri icon src-tauri/icons/icon.png",
     "prepare": "husky"

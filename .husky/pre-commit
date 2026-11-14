@@ -34,3 +34,12 @@ if command -v cargo >/dev/null 2>&1; then
 else
   echo "⚠️  cargo 未找到,跳过 Rust 格式检查 (CI 会捕获)"
 fi
+
+# 3) v0.10 (FR-T3) grep 门禁:断言 packages/ 下 TS/TSX 无 FE 弱类型回归。
+#    与 CI 的 "Assert no FE weak types" 步骤共用同一个脚本,避免两套口径。
+pnpm assert:no-fe-types || {
+  echo ""
+  echo "❌ 检测到 FE 弱类型残留,请改用 @ocsv/shared 的强类型后再提交。"
+  echo ""
+  exit 1
+}

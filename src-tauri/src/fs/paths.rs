@@ -684,36 +684,36 @@ mod tests {
         assert!(assert_within_any_root(&paths, bad).is_err());
     }
 
-    /// v0.2.6 回归测试:Windows 上 base 是短路径 (`C:\Users\keepn\.openclaw\agents`),
-    /// target 是子路径 (`C:\Users\keepn\.openclaw\agents\liushuyou\sessions\abc.jsonl`),
+    /// v0.2.6 回归测试:Windows 上 base 是短路径 (`C:\Users\example-user\.openclaw\agents`),
+    /// target 是子路径 (`C:\Users\example-user\.openclaw\agents\agent-placeholder\sessions\abc.jsonl`),
     /// 之前用 string starts_with 失败(因为 canonicalize base 后带 \\?\ UNC 前缀)。
     #[test]
     fn test_path_starts_with_windows_style_subpath() {
-        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        let base = std::path::Path::new("C:\\Users\\example-user\\.openclaw\\agents");
         let target = std::path::Path::new(
-            "C:\\Users\\keepn\\.openclaw\\agents\\liushuyou\\sessions\\94424018-a80d-49c3-bf9b-4116c1435b6d.jsonl",
+            "C:\\Users\\example-user\\.openclaw\\agents\\agent-placeholder\\sessions\\94424018-a80d-49c3-bf9b-4116c1435b6d.jsonl",
         );
         assert!(path_starts_with(target, base));
     }
 
     #[test]
     fn test_path_starts_with_windows_style_exact_match() {
-        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        let base = std::path::Path::new("C:\\Users\\example-user\\.openclaw\\agents");
         assert!(path_starts_with(base, base));
     }
 
     #[test]
     fn test_path_starts_with_windows_style_rejects_sibling() {
-        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
+        let base = std::path::Path::new("C:\\Users\\example-user\\.openclaw\\agents");
         // Sibling not child
-        let target = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents-backup");
+        let target = std::path::Path::new("C:\\Users\\example-user\\.openclaw\\agents-backup");
         assert!(!path_starts_with(target, base));
     }
 
     #[test]
     fn test_path_starts_with_windows_style_rejects_other_drive() {
-        let base = std::path::Path::new("C:\\Users\\keepn\\.openclaw\\agents");
-        let target = std::path::Path::new("D:\\Users\\keepn\\.openclaw\\agents\\foo.jsonl");
+        let base = std::path::Path::new("C:\\Users\\example-user\\.openclaw\\agents");
+        let target = std::path::Path::new("D:\\Users\\example-user\\.openclaw\\agents\\foo.jsonl");
         assert!(!path_starts_with(target, base));
     }
 

@@ -198,8 +198,9 @@ sudo xattr -rd com.apple.quarantine /Applications/OpenClaw\ Session\ Viewer.app
 
 ## 路线图
 
-5 行 release timeline:
+近期 release timeline:
 
+- **v0.10.0** — 洞察真实化：真实重试率、subagent→parent 折叠、跨 source 对比；ts-rs 类型生成 + 归一化契约测试 + CI 门禁
 - **v0.9.30** — 隐私治理:删除真实会话 fixture、用户路径脱敏、`fixtures/` 整目录忽略
 - **v0.9.29** — M11.1~M11.5 dsh 修复、`first_prompt` 持久化、隐私脱敏
 - **v0.9.28** — DeepSeek Harness 第 4 种 source (zstd 透明解压) + M11.3 banner 聚合 + M11.4 noise filter + M11.5 sandbox/approval routing 修复

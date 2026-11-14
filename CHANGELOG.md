@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+_暂无未发布变更；v0.10 已归档为 [0.10.0]。_
+
+## [0.10.0] - 2026-11-14
+
 ### v0.10 洞察真实化（技术债治理 + G2 OLAP 真实化）
 
 按 `docs/PRD_v0.10_Insight_Realization.md` 落地双 Epic（FR-T1~T4 / FR-I1~I3）。
@@ -40,7 +44,18 @@
     四个独立桶(此前 Kimi/dsh 被静默算进 Claude);新增
     `crossSourceByModel` 同模型跨 source 对齐表 + `retryRateBySource` /
     `sessionsBySource`,分组 key 含 source,不串源。
-- 口径文档: PRD RTM 已更新为"已实现",并列出上述实现决策与降级项。
+- 口径文档: PRD v1.2 按 QA 验收核验报告修订 RTM 与验收措辞(FR-T1 降为「部分实现」),
+  并列出实现决策与降级项;章节顺序 15.3 → 15.4 → 15.5 已修正。
+- 验收收口 (PRD v1.2): 补 `packages/shared/src/schema-assert.ts` 编译期结构断言
+  (生成类型从零消费变为真实被引用,Rust 改字段而 shared 未同步时 typecheck 失败)、
+  `scripts/assert-no-fe-types.mjs` + `pnpm assert:no-fe-types` 在 CI 与 pre-commit
+  断言无 FE 弱类型回归;修订 FR-T2 / FR-T3 / FR-T4 / FR-I2 验收措辞与代码事实一致;
+  清理 `normalize.ts` / `model/mod.rs` 注释及测试 fixture 中的疑似真实标识,
+  更新 `docs/PARSER_ARCHITECTURE.md` 陈旧 `NormalizedBlockFE` 示例。
+  G-1 埋点 / G-2 重试率评测集 / G-3 P95 采集三项配套缺口按放行建议结转
+  `docs/ROADMAP_v0.11_Plan.md` A1/A2/A3,不在 v0.10 实现。
+  收口复跑核实: `cargo test --lib` 391 / shared vitest 57 / frontend vitest 702 /
+  `CI=1` Playwright E2E 20/20(22.2s,单 worker),核验报告 §四「未复跑」项已补齐。
 - 回归: `cargo test --lib` 391 / shared vitest 57 / frontend vitest 702 /
   `cargo fmt -- --check` + `clippy -D warnings` 全绿;CI 参数下 Playwright E2E 20/20。
   (本地 `fullyParallel` 多 worker 下 `content-filter.spec.ts` 仍偶发 click 超时,
@@ -48,11 +63,14 @@
 
 ### 已知技术债 / 改进方向
 
-- **双份手写归一化**: ~~无代码生成保证两侧一致~~ → v0.10 已由 ts-rs 类型生成 +
-  4 source 契约测试门禁覆盖。剩余风险是开放 `data` 字典里的自定义 kind 取值,
-  新增 kind 时仍需补契约样本(见上"范围决策")。
-- **渲染层弱类型**: ~~`api.ts` 自定 `NormalizedMessageFE` / `NormalizedBlockFE`~~
-  → v0.10 已删除,渲染链路统一到 `@ocsv/shared` 强类型(grep 断言无 FE 残留)。
+- **双份手写归一化（根因仍在）**: Rust `parser/*.rs` 与 `packages/shared/src/normalize.ts`
+  仍是两份独立实现,v0.10 **未**做到「单一事实源 / 无手工重复定义」。已增加
+  `schema-assert.ts` 编译期结构断言 + ts-rs 类型生成 + 4 source 契约快照 +
+  CI `git diff` 门禁,把**静默漂移变成可检出漂移**;新增/修改字段仍须同步两侧,
+  新增自定义 kind 仍需补契约样本。FR-T1 按 QA 核验报告标为「部分实现」。
+- **渲染层弱类型（已治理）**: `api.ts` 自定的 `NormalizedMessageFE` /
+  `NormalizedBlockFE` 已删除,渲染链路统一到 `@ocsv/shared` 强类型;
+  `pnpm assert:no-fe-types` 在 CI 与 pre-commit hook 断言无回归。
 - **i18n**: 框架层已支持 `en-US` / `zh-CN` 切换(设置页选择即生效,启动按已保存语言加载);
   组件级文案迁移到 `t()` 已完成(已合并 main,`en-US` 下组件文案现已翻译),断言中文的
   测试已同步更新。`zh-CN` / `en-US` 资源位于 `packages/frontend/src/i18n/`。

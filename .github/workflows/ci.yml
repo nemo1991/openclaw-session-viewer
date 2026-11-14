@@ -58,12 +58,18 @@ jobs:
       # v0.10 (FR-T2): cargo test 会刷新 packages/shared/src/generated 下的
       # ts-rs 类型与 Rust 归一化契约快照。产物必须与仓库里提交的版本一致,
       # 否则说明有人改了 Rust 结构体却没重新生成 —— 直接阻断合并。
-      # 放在 Typecheck 之前:让类型检查吃到刚生成的类型,暴露前端未适配点。
+      # 放在 Typecheck 之前:让结构断言吃到刚生成的类型。
       - name: Verify generated schema / contract snapshot (FR-T2)
         run: git diff --exit-code -- packages/shared/src/generated/
 
-      - name: Typecheck
+      # v0.10 (FR-T1 / A4): shared/src/schema-assert.ts 真实 import 生成类型,
+      # Rust 新增/重命名字段而 shared 手写类型未同步 → typecheck 失败。
+      - name: Typecheck (incl. Rust↔TS schema assertions)
         run: pnpm typecheck
+
+      # v0.10 (FR-T3 / A4): 断言渲染层没有回退到 FE 弱类型
+      - name: Assert no FE weak types (FR-T3)
+        run: pnpm assert:no-fe-types
 
       - name: Test (TS)
         working-directory: packages/shared

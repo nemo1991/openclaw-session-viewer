@@ -186,7 +186,7 @@ sudo apt install libwebkit2gtk-4.1-dev
 
 ### 11.5. Windows [object Object] 错误(v0.2.6 修复)
 
-**现象**: Windows 用户打开 liushuyou/91d1796e 详情页,`[object Object]` 字面量出现。
+**现象**: Windows 用户打开 `agent-placeholder/<session-id>` 详情页,`[object Object]` 字面量出现。
 
 **根因**: 多个相互作用 — Tauri `serde(flatten)` 在 WebView2 上序列化行为与 WKWebView 不一致,导致
 `block.text` 偶尔从 string 变成 object 形态。前端 `String(block.text)` 直接输出 `[object Object]`。

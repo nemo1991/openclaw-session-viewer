@@ -352,7 +352,7 @@ pub(crate) fn normalize_content(content: &Value) -> Vec<NormalizedBlock> {
             }
         }
         other => {
-            // v0.2.6 调查:Windows 上 liushuyou/91d1796e 报 [object Object],
+            // v0.2.6 调查:Windows 上 agent-placeholder/<session-id> 报 [object Object],
             // 可能是 content 是单个对象(不是数组)且类型不在已知列表里。
             log::warn!(
                 "normalize_content: 未知 content 形态 {:?} - {:#?}",

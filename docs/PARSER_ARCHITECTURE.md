@@ -461,14 +461,26 @@ cd packages/frontend && pnpm exec tsc --noEmit  # TS 类型干净
 { "kind": "tool_use", "data": { "id": "x", "name": "Bash", "input": {} } }
 ```
 
-**前端类型** (`packages/shared/src/normalize.ts`):
+**前端类型** (`packages/shared/src/normalize.ts`,v0.10 起渲染层统一消费):
 
 ```ts
-export interface NormalizedBlockFE {
+// v0.10 (FR-T3): api.ts 的 NormalizedMessageFE / NormalizedBlockFE 已删除,
+// TranscriptEntryOut.normalized 直接引用 @ocsv/shared 的 NormalizedMessage。
+export interface NormalizedBlock {
   kind: string;
-  [key: string]: unknown; // data 字段全部 flatten 到顶层
+  // 已知 kind 的字段名锚点,键名以 Rust builder 线格式为准
+  text?: unknown;
+  thinking?: unknown;
+  tool_use_id?: unknown;
+  is_error?: unknown;
+  data?: unknown;
+  [k: string]: unknown; // 自定义 kind 的附加字段透传
 }
 ```
+
+> Rust 侧 `NormalizedBlock.data` 是开放的 `serde_json::Map`,ts-rs 无法生成闭合
+> union;生成的 `RustNormalized*` 类型由 `packages/shared/src/schema-assert.ts`
+> 做编译期结构断言,字段取值由 `contract.test.ts` + Rust 契约快照门禁保证。
 
 **风险点**:
 

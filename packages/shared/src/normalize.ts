@@ -35,13 +35,13 @@ export interface SessionMeta {
   /** 主要使用的模型 */
   primaryModel?: string;
   // --- v0.2.4 多 agent 支持 ---
-  /** OpenClaw agentId(如 "main" / "liushuyou");Claude 始终为 undefined */
+  /** OpenClaw agentId(占位示例: "main" / "agent-placeholder");Claude 始终为 undefined */
   agentId?: string;
-  /** 来自 sessions.json 的友好标签,如 "forcetone (@forcetone) id:6030344417" */
+  /** 来自 sessions.json 的友好标签(占位示例: "agent-placeholder (@agent-placeholder) id:0000000000") */
   agentLabel?: string;
-  /** 渠道: "<redacted>" / "feishu" / "main" */
+  /** 渠道(占位示例: "<channel-a>" / "main") */
   agentChannel?: string;
-  /** 渠道 target,如 "<redacted>:6030344417" */
+  /** 渠道 target(占位示例: "<channel-a>:0000000000") */
   agentTarget?: string;
   // --- v0.4.0 列表增强 ---
   /** 首条 user 文本, ≤ 80 字符(独立于 title,title 可来自 custom-title/ai-title) */
