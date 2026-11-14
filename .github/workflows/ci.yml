@@ -90,28 +90,14 @@ jobs:
       - name: Build for E2E
         run: pnpm build
 
-      # v0.7.0 已知问题:vite preview 模式下 SessionDetailRoute 因 Tauri runtime 缺失
-      # early-return "notFound",ContentFilterPanel 不渲染 → 14/22 case fail。
-      # 本地 pnpm test:e2e 单独跑,CI 此步 continue-on-error 不阻塞主流程。
-      # TODO:加 Tauri invoke mock 或改 SessionDetailRoute 让 filter panel 在 meta=undefined 也渲染。
+      # Playwright E2E(纯前端 vite preview,Tauri invoke 全 mock,见 playwright.config.ts)。
+      # 历史:v0.7.0 时部分 spec 在 vite preview 下失败(14/22),CI 用 continue-on-error 放行;
+      # 此后各 spec 改用 ?path= 构造最小 meta 绕过 SessionDetailRoute 的 notFound 分支,
+      # 且 global-setup(./e2e/global-setup.ts)已跨平台化(preview 由它托管/复用/teardown 清理),
+      # 当前 E2E 稳定 20/20。故移除放行策略,让失败真正阻塞流水线。
       - name: E2E (Playwright)
         working-directory: packages/frontend
-        continue-on-error: true
-        run: |
-          # 后台启动 vite preview(已在 build 后产物可服务)
-          pnpm exec vite preview --port 4173 --strictPort &
-          PREVIEW_PID=$!
-          # 等服务可用
-          for i in {1..30}; do
-            if curl -sf http://localhost:4173 > /dev/null; then break; fi
-            sleep 1
-          done
-          # config 在项目根,这里显式指 — 否则 Playwright 走默认 testMatch 把 vitest
-          # .test.tsx 当 spec 跑 → CSS SyntaxError。
-          pnpm exec playwright test --config ../../playwright.config.ts
-          TEST_EXIT=$?
-          kill $PREVIEW_PID 2>/dev/null || true
-          exit $TEST_EXIT
+        run: pnpm exec playwright test --config ../../playwright.config.ts
 
       - name: Upload Playwright report
         if: always()

@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from "react-router-dom";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useSettingsStore } from "./state/settingsStore";
 import { useSessionsStore } from "./state/sessionsStore";
@@ -10,8 +10,11 @@ import SessionDetailRoute from "./routes/SessionDetailRoute";
 import AnalyzeRoute from "./routes/AnalyzeRoute";
 import SettingsRoute from "./routes/SettingsRoute";
 import TrajectoryRoute from "./routes/TrajectoryRoute";
-import GraphExplorerRoute from "./routes/GraphExplorerRoute";
 import { ToolsRoute } from "./routes/ToolsRoute"; // v0.8.5 B: 全局 tool 聚合页
+
+// H1: /graph 路由(含 react-force-graph-2d ~600KB + recharts)按需加载,
+// 避免重型依赖拖进首屏主包。GraphExplorerRoute 为 default export,可直接 lazy。
+const GraphExplorerRoute = lazy(() => import("./routes/GraphExplorerRoute"));
 import { RevealErrorToast } from "./components/RevealErrorToast";
 import { useOverridesBridge } from "./state/overridesStore";
 
@@ -58,7 +61,30 @@ export default function App() {
     <>
       <Routes>
         <Route path="/" element={<SessionsRoute />} />
-        <Route path="/graph/*" element={<GraphExplorerRoute />} />
+        <Route
+          path="/graph/*"
+          element={
+            <Suspense
+              fallback={
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    height: "100%",
+                    minHeight: 240,
+                    color: "var(--text-secondary, #888)",
+                    fontSize: 14,
+                  }}
+                >
+                  加载中…
+                </div>
+              }
+            >
+              <GraphExplorerRoute />
+            </Suspense>
+          }
+        />
         <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
         <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
         <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />

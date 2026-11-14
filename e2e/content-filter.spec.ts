@@ -51,11 +51,11 @@ test.describe("ContentFilterPanel", () => {
     await page.waitForTimeout(150);
 
     const userBtn = page.locator('[data-testid="filter-role-user"]').first();
-    expect(await userBtn.getAttribute("data-active")).toBe("true");
+    await expect(userBtn).toHaveAttribute("data-active", "true");
     // 切到 assistant 后 user 失活
     await page.locator('[data-testid="filter-role-assistant"]').first().click();
     await page.waitForTimeout(150);
-    expect(await userBtn.getAttribute("data-active")).toBe("false");
+    await expect(userBtn).toHaveAttribute("data-active", "false");
   });
 
   test("has 多选:点 thinking 后 chip 高亮 + clear 按钮出现", async ({ page }) => {
@@ -66,7 +66,7 @@ test.describe("ContentFilterPanel", () => {
     await thinkingChip.click();
     await page.waitForTimeout(150);
 
-    expect(await thinkingChip.getAttribute("data-active")).toBe("true");
+    await expect(thinkingChip).toHaveAttribute("data-active", "true");
     await expect(page.locator('[data-testid="content-filter-clear"]').first()).toHaveCount(1);
   });
 
@@ -84,7 +84,7 @@ test.describe("ContentFilterPanel", () => {
     await page.waitForTimeout(150);
 
     const errorChip = page.locator('[data-testid="content-filter-has-error"]').first();
-    expect(await errorChip.getAttribute("data-active")).toBe("false");
+    await expect(errorChip).toHaveAttribute("data-active", "false");
     await expect(page.locator('[data-testid="content-filter-clear"]')).toHaveCount(0);
   });
 
@@ -93,9 +93,9 @@ test.describe("ContentFilterPanel", () => {
     await page.waitForTimeout(400);
 
     const userBtn = page.locator('[data-testid="filter-role-user"]').first();
-    expect(await userBtn.getAttribute("data-active")).toBe("true");
+    await expect(userBtn).toHaveAttribute("data-active", "true");
     const allBtn = page.locator('[data-testid="filter-role-all"]').first();
-    expect(await allBtn.getAttribute("data-active")).toBe("false");
+    await expect(allBtn).toHaveAttribute("data-active", "false");
   });
 
   test("URL ?has=thinking,error → 2 个 chip 同时高亮", async ({ page }) => {
@@ -106,9 +106,9 @@ test.describe("ContentFilterPanel", () => {
     const error = page.locator('[data-testid="content-filter-has-error"]').first();
     const toolUse = page.locator('[data-testid="content-filter-has-tool_use"]').first();
 
-    expect(await thinking.getAttribute("data-active")).toBe("true");
-    expect(await error.getAttribute("data-active")).toBe("true");
-    expect(await toolUse.getAttribute("data-active")).toBe("false");
+    await expect(thinking).toHaveAttribute("data-active", "true");
+    await expect(error).toHaveAttribute("data-active", "true");
+    await expect(toolUse).toHaveAttribute("data-active", "false");
   });
 
   test("URL ?tool=Bash,Read → tool chip 高亮(无 tool chip 数据时,不渲染 tool 行 — 已知限制)", async ({
@@ -134,11 +134,11 @@ test.describe("ContentFilterPanel", () => {
 
     // role
     const assistant = page.locator('[data-testid="filter-role-assistant"]').first();
-    expect(await assistant.getAttribute("data-active")).toBe("true");
+    await expect(assistant).toHaveAttribute("data-active", "true");
 
     // has
     const thinking = page.locator('[data-testid="content-filter-has-thinking"]').first();
-    expect(await thinking.getAttribute("data-active")).toBe("true");
+    await expect(thinking).toHaveAttribute("data-active", "true");
 
     // clear(content 维度有 active → 出现)
     await expect(page.locator('[data-testid="content-filter-clear"]').first()).toHaveCount(1);
@@ -165,6 +165,6 @@ test.describe("ContentFilterPanel", () => {
     // store 清空,但 URL 仍是初始值(useSessionUrlSync 只单向 URL → store)
     // 验证 chip 不再 active
     const thinking = page.locator('[data-testid="content-filter-has-thinking"]').first();
-    expect(await thinking.getAttribute("data-active")).toBe("false");
+    await expect(thinking).toHaveAttribute("data-active", "false");
   });
 });
