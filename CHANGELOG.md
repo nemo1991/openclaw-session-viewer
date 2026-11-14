@@ -4,7 +4,49 @@
 
 ## [Unreleased]
 
-_暂无未发布变更；v0.10 已归档为 [0.10.0]。_
+### v0.10 验收收口（v0.11 规划 A 组 A0–A5 全部完成）
+
+按 `docs/QA_v0.10_Acceptance_Verification.md` 与 `docs/ROADMAP_v0.11_Plan.md`，
+把 v0.10 遗留的三个配套缺口全部补齐（此前按「有条件放行」建议结转）：
+
+- **A0 / A4 / A5** 已于 `8e8929b` 完成：封版 `0.10.0` + tag `v0.10.0`、
+  CHANGELOG 归档、FR-T1 编译期结构断言、CI grep 门禁、PRD 偏差清单 8 项修订、
+  合规注释与陈旧示例清理（详见 [0.10.0] 段与 QA 报告第八章复核记录）。
+- **A1 埋点口径重定义 + 本地事件日志（G-1）**：按 D-2「本地优先、零上传」把
+  PRD 第十章的「埋点上报」重定义为**本地事件日志**。新增 `event_log` 表
+  （`db/schema.rs` 新库 + `db/migrations.rs::NEW_TABLES` 老库幂等补表）、
+  `db/event_log.rs`、三个 Tauri command（`append_local_event` /
+  `list_local_events` / `local_event_p95`）。前端 `lib/eventsApi.ts` +
+  `AnalyticsView.tsx` 落地 `analytics_view_open` / `source_dimension_select` /
+  `retry_rate_displayed` 三事件（含 source 维度可点选过滤），记录事件名 / 时间戳 /
+  source / 会话数 / 是否真实口径；**禁止任何网络请求**。
+  `scripts/assert-local-events.mjs` + `pnpm assert:local-events` 在 CI 与
+  pre-commit 扫描埋点链路，已做注入验证（注入 `fetch(...)` 即 exit 1）。
+- **A2 真实重试率评测集（G-2）**：新增 26 个脱敏人工标注样本
+  （`src-tauri/src/parser/__fixtures__/retry-eval-set.json`），覆盖 4 source 与
+  单次失败无重试 / 分母 0 / 相邻不同名工具 / 重复 id / 连续重试链 /
+  step 级 error / envelope 去重等边界；`parser/retry_eval.rs` **走真实聚合入口**
+  比对 `retry_count` / `tool_call_count`，输出逐样本可复现报告，断言准确率 ≥95%
+  与 26/26 基线锁。实测 **100.00%（26/26）**，`pnpm eval:retry` 可复现，
+  报告见 `docs/experiments/retry-rate-eval-report.md`。
+- **A3 分析页 P95 采集与门槛（G-3）**：`analytics_ready` 事件用
+  `performance.now()` 记录「打开 Analytics → 首屏可交互」耗时写入本地 event_log；
+  Rust `check_p95_budget` 与前端 `views/graph/perf.ts` 使用一致的 nearest-rank
+  P95 定义；`<500ms` 是 PRD 自标的**估算预算**，仅开发 / CI 模式断言，
+  生产不硬失败。`pnpm assert:p95` 跑 9 个单测（含慢样本注入验证）。
+- CI 新增三步门禁 `pnpm assert:local-events` / `pnpm eval:retry` /
+  `pnpm assert:p95`；`.husky/pre-commit` 同步加零上传门禁。
+- 文档：`ROADMAP_v0.11_Plan.md` 的 A0–A5 RTM 标为已实现并留变更记录；
+  PRD 升 v1.3 补 15.6 收口复核；QA 核验报告新增第八章复核记录（不篡改原结论）。
+- 版本说明：`v0.10.0` tag 保持为功能封版基线，以上收口改动合入 `main`；
+  若需要包含收口补丁的发布版本，另按 `docs/RELEASING.md` bump `0.10.1`。
+- 全量回归（全绿）：`cargo test --lib` **403/403**（新增 12 项 A1/A2/A3 测试）、
+  `cargo fmt -- --check` / `cargo clippy --all-targets -- -D warnings` 通过；
+  `pnpm typecheck` 0；shared vitest **57/57**、frontend vitest **711/711**
+  （新增 9 项 P95 断言）；`pnpm build` 成功（主 chunk 665.53 kB / gzip 202.83 kB，
+  未回归）；`CI=1` Playwright E2E **20/20**（20.4s，单 worker）；
+  `git diff --exit-code -- packages/shared/src/generated/` 为 0；
+  FE grep / 零上传 / 评测集准确率 / P95 四个门禁全部通过。
 
 ## [0.10.0] - 2026-11-14
 
@@ -53,7 +95,8 @@ _暂无未发布变更；v0.10 已归档为 [0.10.0]。_
   清理 `normalize.ts` / `model/mod.rs` 注释及测试 fixture 中的疑似真实标识,
   更新 `docs/PARSER_ARCHITECTURE.md` 陈旧 `NormalizedBlockFE` 示例。
   G-1 埋点 / G-2 重试率评测集 / G-3 P95 采集三项配套缺口按放行建议结转
-  `docs/ROADMAP_v0.11_Plan.md` A1/A2/A3,不在 v0.10 实现。
+  `docs/ROADMAP_v0.11_Plan.md` A1/A2/A3,不在 v0.10 实现
+  （已于 2026-11-14 由 A1/A2/A3 在 `main` 补齐,见上文 `[Unreleased]` 与 PRD 15.6）。
   收口复跑核实: `cargo test --lib` 391 / shared vitest 57 / frontend vitest 702 /
   `CI=1` Playwright E2E 20/20(22.2s,单 worker),核验报告 §四「未复跑」项已补齐。
 - 回归: `cargo test --lib` 391 / shared vitest 57 / frontend vitest 702 /
