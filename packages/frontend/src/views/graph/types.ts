@@ -20,11 +20,17 @@ export interface SessionNode {
   primary_model: string | null;
   top_tools: string[];
   error_count: number;
+  /** v0.10 (FR-I1): Rust 聚合阶段算出的真实重试次数 / tool 调用总次数。
+   * 老版 NDJSON 没有这两列,故可选,消费端一律 `?? 0`。 */
+  retry_count?: number;
+  tool_call_count?: number;
   subagent_count: number;
   subagent_ids: string[];
   is_subagent_root: boolean;
   parent_session_id: string | null;
   message_count: number;
+  /** v0.10 (FR-I2): foldSubagents() 归并进本节点的 subagent 数(展示层派生,不入 DB) */
+  folded_subagent_count?: number;
   /** v0.6.1 (S3 RAG): top 3 assistant 文本块 (≤200 chars),给 hash-embedding 提供语料 */
   assistant_text_snippets?: string[];
   /** S6: subagent 的 agent-id (e.g. "agent-a4aa77")。main session 永远为 null */

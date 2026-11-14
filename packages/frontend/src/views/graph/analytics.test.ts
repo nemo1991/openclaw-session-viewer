@@ -12,13 +12,20 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  crossSourceByModel,
   cutoffMs,
   filterByRange,
+  foldGraphEntries,
+  foldSubagents,
+  modelsAcrossSources,
+  retryRateBySource,
+  retryRateSummary,
   sessionsByDay,
+  sessionsBySource,
   tokenTopN,
   topToolsBar,
   modelAvgThinking,
-  retryRateDistribution,
+  sourceKey,
   subagentChainDist,
   summary,
   type Range,
@@ -330,24 +337,282 @@ describe("modelAvgThinking", () => {
   });
 });
 
-// ===== retryRateDistribution =====
+// ===== v0.10 FR-I1: 真实重试率 (不再用 error 分桶冒充) =====
 
-describe("retryRateDistribution", () => {
-  it("按 error_count 分桶 (bucket 字符串格式)", () => {
-    const buckets = retryRateDistribution(NODES);
-    expect(buckets.length).toBeGreaterThan(0);
-    // 每个 row shape: { bucket, sessions_count }
-    buckets.forEach((b) => {
-      expect(typeof b.bucket).toBe("string");
-      expect(typeof b.sessions_count).toBe("number");
-    });
+describe("retryRateSummary (FR-I1)", () => {
+  it("重试率 = Σretry_count / Σtool_call_count,且 error_count 不参与计算", () => {
+    const nodes = [
+      makeNode({
+        node_id: "a",
+        session_id: "a",
+        retry_count: 1,
+        tool_call_count: 4,
+        error_count: 99, // 故意放大,验证不受 error 分桶影响
+      }),
+      makeNode({ node_id: "b", session_id: "b", retry_count: 2, tool_call_count: 6 }),
+    ];
+    const r = retryRateSummary(nodes);
+    expect(r.retry_count).toBe(3);
+    expect(r.tool_call_count).toBe(10);
+    expect(r.retry_rate).toBeCloseTo(0.3);
+    expect(r.sessions_with_retry).toBe(2);
+    expect(r.sessions_with_tool_calls).toBe(2);
   });
 
-  it("openclaw-err-1 (3 errors) 出现在高 error bucket", () => {
-    const buckets = retryRateDistribution(NODES);
-    const totalSessions = buckets.reduce((sum, b) => sum + b.sessions_count, 0);
-    // 至少 1 个有 error 的 session 应被分桶 (openclaw-err-1)
-    expect(totalSessions).toBeGreaterThan(0);
+  it("Given 仅单次失败无重试,Then 重试率 = 0", () => {
+    const r = retryRateSummary([makeNode({ error_count: 1, retry_count: 0, tool_call_count: 1 })]);
+    expect(r.retry_rate).toBe(0);
+    expect(r.sessions_with_retry).toBe(0);
+  });
+
+  it("分母为 0 时返回 0,不产生 NaN", () => {
+    const r = retryRateSummary([makeNode({ retry_count: 0, tool_call_count: 0 })]);
+    expect(r.retry_rate).toBe(0);
+    expect(Number.isNaN(r.retry_rate)).toBe(false);
+  });
+
+  it("老版 NDJSON 没有新列时按 0 处理(向后兼容)", () => {
+    const r = retryRateSummary(NODES);
+    expect(r.retry_rate).toBe(0);
+    expect(r.retry_count).toBe(0);
+  });
+});
+
+describe("retryRateBySource (FR-I3 口径不串源)", () => {
+  it("按 source 独立汇总,重试率只吃本 source 的记录", () => {
+    const nodes = [
+      makeNode({
+        node_id: "c1",
+        source: "Claude",
+        retry_count: 1,
+        tool_call_count: 2,
+      }),
+      makeNode({
+        node_id: "k1",
+        source: "Kimi",
+        retry_count: 3,
+        tool_call_count: 6,
+      }),
+    ];
+    const rows = retryRateBySource(nodes);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.source === "Claude")?.retry_rate).toBeCloseTo(0.5);
+    expect(rows.find((r) => r.source === "Kimi")?.retry_rate).toBeCloseTo(0.5);
+    expect(rows.find((r) => r.source === "Claude")?.retry_count).toBe(1);
+  });
+
+  it("dsh 的两种历史标签归一到同一 key", () => {
+    expect(sourceKey("DeepSeek Harness")).toBe("DeepSeekHarness");
+    expect(sourceKey("DeepSeekHarness")).toBe("DeepSeekHarness");
+  });
+});
+
+// ===== v0.10 FR-I2: subagent → parent 折叠 =====
+
+describe("foldSubagents (FR-I2)", () => {
+  const parent = makeNode({
+    node_id: "parent",
+    session_id: "parent",
+    source: "Claude",
+    token_total: 1000,
+    error_count: 1,
+    thinking_count: 4,
+    message_count: 20,
+    retry_count: 1,
+    tool_call_count: 10,
+    subagent_count: 2,
+  });
+
+  it("总量 = parent 自身 + Σ subagent,subagent 不再作为独立会话", () => {
+    const childA = makeNode({
+      node_id: "child-a",
+      session_id: "child-a",
+      is_subagent_root: true,
+      parent_session_id: "parent",
+      token_total: 200,
+      error_count: 2,
+      thinking_count: 1,
+      message_count: 5,
+      retry_count: 1,
+      tool_call_count: 3,
+    });
+    const childB = makeNode({
+      node_id: "child-b",
+      session_id: "child-b",
+      is_subagent_root: true,
+      parent_session_id: "parent",
+      token_total: 300,
+      error_count: 0,
+      thinking_count: 2,
+      message_count: 7,
+      retry_count: 0,
+      tool_call_count: 4,
+    });
+    const res = foldSubagents([parent, childA, childB]);
+    expect(res.nodes).toHaveLength(1);
+    expect(res.folded).toHaveLength(2);
+    expect(summary(res.nodes).total_sessions).toBe(1);
+    expect(summary(res.nodes).total_tokens).toBe(1500);
+    expect(summary(res.nodes).total_errors).toBe(3);
+    expect(res.nodes[0]?.folded_subagent_count).toBe(2);
+    expect(retryRateSummary(res.nodes).retry_count).toBe(2);
+    expect(retryRateSummary(res.nodes).tool_call_count).toBe(17);
+    // 纯函数:入参节点不被改写
+    expect(parent.token_total).toBe(1000);
+    expect(childA.is_subagent_root).toBe(true);
+  });
+
+  it("孤儿 subagent(parent 不在本批)按独立会话计", () => {
+    const orphan = makeNode({
+      node_id: "orphan",
+      session_id: "orphan",
+      is_subagent_root: true,
+      parent_session_id: "missing-parent",
+      token_total: 50,
+    });
+    const res = foldSubagents([parent, orphan]);
+    expect(res.nodes).toHaveLength(2);
+    expect(res.independent_subagents).toBe(1);
+  });
+
+  it("dsh 缺 parent_uuid 降级为独立计(PRD 第 13 章)", () => {
+    const dshChild = makeNode({
+      node_id: "dsh-child",
+      session_id: "dsh-child",
+      source: "DeepSeek Harness" as any,
+      is_subagent_root: true,
+      parent_session_id: "parent",
+      token_total: 77,
+    });
+    const res = foldSubagents([parent, dshChild]);
+    expect(res.nodes).toHaveLength(2);
+    expect(res.independent_subagents).toBe(1);
+  });
+
+  it("多级 subagent 递归归并到顶层 parent", () => {
+    const child = makeNode({
+      node_id: "child",
+      session_id: "child",
+      is_subagent_root: true,
+      parent_session_id: "parent",
+      token_total: 100,
+    });
+    const grandchild = makeNode({
+      node_id: "grandchild",
+      session_id: "grandchild",
+      is_subagent_root: true,
+      parent_session_id: "child",
+      token_total: 50,
+    });
+    const res = foldSubagents([parent, child, grandchild]);
+    expect(res.nodes).toHaveLength(1);
+    expect(res.nodes[0]?.token_total).toBe(1150);
+    expect(res.folded).toHaveLength(2);
+  });
+
+  it("foldGraphEntries 把子会话 edges 挂到 parent,不丢 tool 调用", () => {
+    const child = makeNode({
+      node_id: "child",
+      session_id: "child",
+      is_subagent_root: true,
+      parent_session_id: "parent",
+    });
+    const entries: GraphEntry[] = [
+      {
+        node: parent,
+        edges: [{ type: "used_tool", session: "parent", tool_name: "Bash", count: 5 }],
+      },
+      {
+        node: child,
+        edges: [{ type: "used_tool", session: "child", tool_name: "Read", count: 3 }],
+      },
+    ];
+    const res = foldGraphEntries(entries);
+    expect(res.entries).toHaveLength(1);
+    expect(res.entries[0]?.edges).toHaveLength(2);
+    expect(topToolsBar(res.entries, 10).find((r) => r.tool === "Read")?.total_calls).toBe(3);
+  });
+});
+
+// ===== v0.10 FR-I3: 跨 source 对比 + 4 source 独立分桶 =====
+
+describe("sessionsByDay / sessionsBySource (FR-I3 无串源)", () => {
+  it("Kimi / dsh 不再被算进 Claude 桶", () => {
+    const ts = new Date("2026-07-01T12:00:00Z").getTime();
+    const nodes = [
+      makeNode({ node_id: "c", source: "Claude", last_timestamp_ms: ts }),
+      makeNode({ node_id: "o", source: "OpenClaw", last_timestamp_ms: ts }),
+      makeNode({ node_id: "k", source: "Kimi", last_timestamp_ms: ts }),
+      makeNode({
+        node_id: "d",
+        source: "DeepSeek Harness" as any,
+        last_timestamp_ms: ts,
+      }),
+    ];
+    const [bucket] = sessionsByDay(nodes);
+    expect(bucket?.Claude).toBe(1);
+    expect(bucket?.OpenClaw).toBe(1);
+    expect(bucket?.Kimi).toBe(1);
+    expect(bucket?.DeepSeekHarness).toBe(1);
+    const bySource = sessionsBySource(nodes);
+    expect(bySource).toHaveLength(4);
+    expect(bySource.every((b) => b.sessions_count === 1)).toBe(true);
+  });
+});
+
+describe("crossSourceByModel (FR-I3 同模型跨 source 对齐)", () => {
+  it("同一 model 按 source 拆成独立行,modelsAcrossSources 只列 ≥2 source 的 model", () => {
+    const nodes = [
+      makeNode({
+        node_id: "m1",
+        source: "Claude",
+        primary_model: "opus-4",
+        token_total: 100,
+        retry_count: 1,
+        tool_call_count: 2,
+      }),
+      makeNode({
+        node_id: "m2",
+        source: "Kimi",
+        primary_model: "opus-4",
+        token_total: 300,
+        retry_count: 0,
+        tool_call_count: 4,
+      }),
+      makeNode({
+        node_id: "m3",
+        source: "Claude",
+        primary_model: "sonnet-4",
+        token_total: 50,
+      }),
+    ];
+    const rows = crossSourceByModel(nodes);
+    expect(rows).toHaveLength(3);
+    const opusRows = rows.filter((r) => r.primary_model === "opus-4");
+    expect(opusRows).toHaveLength(2);
+    expect(opusRows.find((r) => r.source === "Claude")?.total_tokens).toBe(100);
+    expect(opusRows.find((r) => r.source === "Kimi")?.total_tokens).toBe(300);
+    expect(opusRows.find((r) => r.source === "Claude")?.retry_rate).toBeCloseTo(0.5);
+    expect(modelsAcrossSources(rows)).toEqual(["opus-4"]);
+  });
+
+  it("primary_model 缺失的会话不参与对齐", () => {
+    const rows = crossSourceByModel([
+      makeNode({ node_id: "x", source: "Claude", primary_model: null }),
+    ]);
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe("summary retry fields (FR-I1)", () => {
+  it("汇总带上真实重试率分子/分母/比值", () => {
+    const s = summary([
+      makeNode({ retry_count: 1, tool_call_count: 4 }),
+      makeNode({ retry_count: 1, tool_call_count: 6 }),
+    ]);
+    expect(s.total_retry_count).toBe(2);
+    expect(s.total_tool_call_count).toBe(10);
+    expect(s.retry_rate).toBeCloseTo(0.2);
   });
 });
 

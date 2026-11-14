@@ -12,7 +12,10 @@
  * - token top 表行可点击 → 跳 /session/:id
  * - chart 1 (per day × source) 当只有 1 个 source 时给提示
  * - 范围切 24h/7d/30d/all 加每个范围的命中数 badge
- * - 去 emoji (❌)
+ * v0.10 (FR-I1/I2/I3):
+ * - chart 5 由 error 分桶 pie 换成真实重试率数值卡 (Rust 聚合的 retry_count / tool_call_count)
+ * - 全局汇总先折叠 subagent→parent,列表/ KPI 不重复计入;tokenTop 标注"含 N 个子会话"
+ * - 新增"同模型跨 source"对齐表;chart 1 按 4 个 source 独立堆叠,不再把 Kimi/dsh 算进 Claude
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -23,8 +26,6 @@ import {
   CartesianGrid,
   Cell,
   Legend,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -32,17 +33,24 @@ import {
 } from "recharts";
 import type { GraphEntry, SessionNode } from "./types";
 import {
+  crossSourceByModel,
   errorsByWorkspace,
+  foldGraphEntries,
   formatDate,
   formatNum,
   modelAvgThinking,
-  retryRateDistribution,
+  modelsAcrossSources,
+  retryRateBySource,
+  retryRateSummary,
   sessionsByDay,
+  sessionsBySource,
+  sourceKey,
   subagentChainDist,
   summary,
   tokenTopN,
   toolsByCategory,
   topToolsBar,
+  type DayBucket,
   type Range,
 } from "./analytics";
 import { useTitleStore } from "./titleStore";
@@ -72,10 +80,10 @@ export function AnalyticsView() {
     if (!entries) void graphLoad();
   }, [entries, graphLoad]);
 
-  const nodes = useMemo(() => {
-    if (!entries) return [];
-    return entries.map((e) => e.node);
-  }, [entries]);
+  /** v0.10 (FR-I2): 先折叠 subagent→parent,后续所有汇总都只吃折叠后的 nodes/entries */
+  const fold = useMemo(() => (entries ? foldGraphEntries(entries) : null), [entries]);
+  const nodes = useMemo(() => fold?.nodes ?? [], [fold]);
+  const foldedEntries = useMemo(() => fold?.entries ?? [], [fold]);
 
   /** 各范围的命中数(预先算好给 range badge 用)— 跟 inRange 用同样的 filter 逻辑 */
   const rangeCounts = useMemo(() => {
@@ -110,12 +118,21 @@ export function AnalyticsView() {
   const sum = useMemo(() => summary(inRange), [inRange]);
   const byDay = useMemo(() => sessionsByDay(inRange), [inRange]);
   const tokenTop = useMemo(() => tokenTopN(inRange, 10), [inRange]);
-  const topTools = useMemo(() => (entries ? topToolsBar(entries, 10) : []), [entries]);
+  const topTools = useMemo(() => topToolsBar(foldedEntries, 10), [foldedEntries]);
   const modelRows = useMemo(() => modelAvgThinking(inRange), [inRange]);
-  const retryRows = useMemo(() => retryRateDistribution(inRange), [inRange]);
+  const retry = useMemo(() => retryRateSummary(inRange), [inRange]);
+  const retryBySource = useMemo(() => retryRateBySource(inRange), [inRange]);
   const chainRows = useMemo(() => subagentChainDist(inRange), [inRange]);
   const errByWs = useMemo(() => errorsByWorkspace(inRange), [inRange]);
-  const toolCats = useMemo(() => (entries ? toolsByCategory(entries) : []), [entries]);
+  const toolCats = useMemo(() => toolsByCategory(foldedEntries), [foldedEntries]);
+  // v0.10 (FR-I3): 同模型跨 source 对齐 — 只展示出现在 ≥2 个 source 的 model
+  const crossRows = useMemo(() => crossSourceByModel(inRange), [inRange]);
+  const alignedModels = useMemo(() => modelsAcrossSources(crossRows), [crossRows]);
+  const alignedRows = useMemo(
+    () => crossRows.filter((r) => alignedModels.includes(r.primary_model)),
+    [crossRows, alignedModels]
+  );
+  const sourceRows = useMemo(() => sessionsBySource(inRange), [inRange]);
 
   /** session_id → SessionNode 索引,供 titles.get 用 */
   const nodeById = useMemo(() => {
@@ -163,7 +180,8 @@ export function AnalyticsView() {
       <header className="analytics-header">
         <h2>
           G2 Analytics — {sum.total_sessions} sessions · {formatNum(sum.total_tokens)} tokens ·{" "}
-          {sum.total_subagents} subagents · {sum.total_errors} errors
+          {sum.total_subagents} subagents · {sum.total_errors} errors · 真实重试率{" "}
+          {(sum.retry_rate * 100).toFixed(1)}%
         </h2>
         <div className="range-buttons">
           {RANGES.map((r) => (
@@ -178,7 +196,7 @@ export function AnalyticsView() {
         </div>
       </header>
 
-      <div className="kpi-row kpi-row-8">
+      <div className="kpi-row kpi-row-9">
         <Kpi label="总 token" value={formatNum(sum.total_tokens)} />
         <Kpi label="总 sessions" value={String(sum.total_sessions)} />
         <Kpi
@@ -191,6 +209,11 @@ export function AnalyticsView() {
           label="成功率 (0 errors)"
           value={`${successRate}%`}
           tone={successRate >= 70 ? "good" : successRate >= 40 ? "warn" : "bad"}
+        />
+        <Kpi
+          label="真实重试率"
+          value={`${(sum.retry_rate * 100).toFixed(1)}%`}
+          tone={sum.retry_rate >= 0.2 ? "bad" : sum.retry_rate > 0 ? "warn" : "good"}
         />
         <Kpi label="subagent 调用数" value={String(sum.total_subagents)} />
         <Kpi label="平均 session 持续" value={avgDurationLabel} />
@@ -208,6 +231,28 @@ export function AnalyticsView() {
           }
         />
       </div>
+
+      {fold && (fold.folded.length > 0 || fold.independent_subagents > 0) && (
+        <div className="fold-note" data-testid="subagent-fold-note">
+          已折叠 {fold.folded.length} 个 subagent 到
+          parent(用量/错误/工具调用归并,不重复计入全局汇总)
+          {fold.independent_subagents > 0 &&
+            `;${fold.independent_subagents} 个孤儿或 dsh subagent 按独立会话计`}
+          {fold.folded.length > 0 && (
+            <span className="fold-pairs">
+              {" "}
+              ·{" "}
+              {fold.folded
+                .slice(0, 3)
+                .map(
+                  (f) => `${f.child_session_id.slice(0, 8)} → ${f.parent_session_id.slice(0, 8)}`
+                )
+                .join(" / ")}
+              {fold.folded.length > 3 ? " …" : ""}
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="grid">
         <Chart
@@ -228,6 +273,8 @@ export function AnalyticsView() {
               <Legend wrapperStyle={legendStyle} />
               <Bar dataKey="Claude" stackId="s" fill="#3b82f6" />
               <Bar dataKey="OpenClaw" stackId="s" fill="#a855f7" />
+              <Bar dataKey="Kimi" stackId="s" fill="#22c55e" />
+              <Bar dataKey="DeepSeekHarness" stackId="s" fill="#f59e0b" />
             </BarChart>
           )}
         </Chart>
@@ -286,25 +333,57 @@ export function AnalyticsView() {
           </BarChart>
         </Chart>
 
-        <Chart title="5. retry_rate (error_count 分桶, pie)">
-          <PieChart>
-            <Pie
-              data={retryRows}
-              dataKey="sessions_count"
-              nameKey="bucket"
-              cx="50%"
-              cy="50%"
-              outerRadius={80}
-              label={(p: any) => `${p.bucket} ${p.sessions_count}`}
-              labelLine={false}
-            >
-              {retryRows.map((_, i) => (
-                <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
-              ))}
-            </Pie>
-            <Tooltip contentStyle={tooltipStyle} />
-          </PieChart>
-        </Chart>
+        <Panel title="5. 真实重试率 (Rust 聚合口径,非 error 分桶估值)">
+          <div className="retry-stat">
+            <div className="retry-stat-main">
+              <span className="retry-stat-value">{(retry.retry_rate * 100).toFixed(1)}%</span>
+              <span className="retry-stat-label">真实重试率</span>
+            </div>
+            <div className="retry-stat-side">
+              <div>
+                重试次数 <b>{formatNum(retry.retry_count)}</b>
+              </div>
+              <div>
+                tool 调用总数 <b>{formatNum(retry.tool_call_count)}</b>
+              </div>
+              <div>
+                发生重试的会话 <b>{retry.sessions_with_retry}</b> / {retry.sessions_with_tool_calls}
+              </div>
+              <div className="retry-stat-note">
+                口径:tool 调用失败后,紧随其后出现同名 tool 的下一次调用计 1 次重试;重试率 = 重试次数
+                ÷ tool 调用总数。按 source 分组时数据不串源。
+              </div>
+            </div>
+          </div>
+          <table className="token-table retry-by-source">
+            <thead>
+              <tr>
+                <th>source</th>
+                <th>sessions</th>
+                <th>重试 / 调用</th>
+                <th>重试率</th>
+              </tr>
+            </thead>
+            <tbody>
+              {retryBySource.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>当前范围内无会话</td>
+                </tr>
+              ) : (
+                retryBySource.map((r) => (
+                  <tr key={r.source}>
+                    <td>{r.source}</td>
+                    <td>{r.sessions_count}</td>
+                    <td>
+                      {r.retry_count} / {r.tool_call_count}
+                    </td>
+                    <td>{(r.retry_rate * 100).toFixed(1)}%</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </Panel>
 
         <Chart title="6. subagent_chain_distribution (bar)">
           <BarChart data={chainRows} margin={{ top: 10, right: 16, bottom: 0, left: 0 }}>
@@ -376,6 +455,55 @@ export function AnalyticsView() {
         )}
       </div>
 
+      <Panel
+        title={`9. 同模型跨 source 对比 · ${alignedModels.length} 个 model 出现在 ≥2 个 source`}
+        wide
+      >
+        <table className="token-table source-compare">
+          <thead>
+            <tr>
+              <th>model</th>
+              <th>source</th>
+              <th>sessions</th>
+              <th>tokens</th>
+              <th>errors</th>
+              <th>真实重试率</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alignedRows.length === 0 ? (
+              <tr>
+                <td colSpan={6}>
+                  当前范围没有同一 model 出现在多个 source 的会话(分组仍按 source 独立统计,无串源)
+                </td>
+              </tr>
+            ) : (
+              alignedRows.map((r) => (
+                <tr key={`${r.primary_model}-${r.source}`}>
+                  <td>{r.primary_model}</td>
+                  <td>{r.source}</td>
+                  <td>{r.sessions_count}</td>
+                  <td className="num">{formatNum(r.total_tokens)}</td>
+                  <td className="num">{r.total_errors}</td>
+                  <td className="num">{(r.retry_rate * 100).toFixed(1)}%</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        <div className="source-dimension">
+          <span>source 维度(独立分组):</span>
+          {sourceRows.length === 0
+            ? " 无会话"
+            : sourceRows.map((r) => (
+                <span key={r.source} className="source-chip">
+                  {r.source} {r.sessions_count} sessions / {formatNum(r.total_tokens)} tokens /{" "}
+                  {r.total_errors} errors
+                </span>
+              ))}
+        </div>
+      </Panel>
+
       <Chart
         title={`Token Top ${tokenTopTitled.length} sessions · 点击行跳会话详情 · 已自定义名标记`}
         wide
@@ -388,6 +516,7 @@ export function AnalyticsView() {
               <th>source</th>
               <th>model</th>
               <th>tokens</th>
+              <th>折叠 subagent</th>
               <th>last active</th>
             </tr>
           </thead>
@@ -417,6 +546,18 @@ export function AnalyticsView() {
                   <td>{r.source}</td>
                   <td>{r.primary_model ?? "—"}</td>
                   <td className="num">{formatNum(r.tokens)}</td>
+                  <td>
+                    {(n?.folded_subagent_count ?? 0) > 0 ? (
+                      <span
+                        className="fold-badge"
+                        title="该会话的用量/错误/工具调用已含归并进来的 subagent"
+                      >
+                        含 {n?.folded_subagent_count} 个
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td>{formatDate(r.when_ms)}</td>
                 </tr>
               );
@@ -429,16 +570,12 @@ export function AnalyticsView() {
 }
 
 /** 单一 source 时的"按日 sessions"展示 — 简单 line/bar,避免堆叠欺骗 */
-function SingleSourcePerDay({
-  data,
-  source,
-}: {
-  data: { day: string; Claude: number; OpenClaw: number }[];
-  source: string;
-}) {
+function SingleSourcePerDay({ data, source }: { data: DayBucket[]; source: string }) {
+  const key = sourceKey(source);
   const seriesData = data.map((d) => ({
     day: d.day,
-    sessions: (d as any)[source] ?? d.Claude + d.OpenClaw,
+    // 用规范化 key 读列,避免 "DeepSeek Harness"/"DeepSeekHarness" 两种拼写串源
+    sessions: d[key],
   }));
   return (
     <BarChart data={seriesData} margin={{ top: 10, right: 16, bottom: 0, left: 0 }}>
@@ -476,6 +613,16 @@ function Chart({ title, children, wide }: { title: string; children: any; wide?:
           {children}
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+}
+
+/** 非图表卡片(数值卡 / 对齐表) — 不套 ResponsiveContainer */
+function Panel({ title, children, wide }: { title: string; children: any; wide?: boolean }) {
+  return (
+    <div className={`chart-card ${wide ? "wide" : ""}`}>
+      <h3>{title}</h3>
+      <div className="panel-body">{children}</div>
     </div>
   );
 }
