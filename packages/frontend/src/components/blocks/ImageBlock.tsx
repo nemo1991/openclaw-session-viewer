@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * ImageBlock — block kind === "image" 的 Presentational 包装
  *
@@ -5,10 +6,8 @@
  * 内联 JSX 简单,不调外部组件。
  */
 
-import type { NormalizedBlockFE } from "../../lib/api";
-
 export interface ImageBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 export function ImageBlock({ block }: ImageBlockProps) {
@@ -16,7 +15,7 @@ export function ImageBlock({ block }: ImageBlockProps) {
     <div className="block-image">
       <em>
         📷 图片 (data:{String(block.mediaType ?? "image/png")},{" "}
-        {String(block.dataBase64 ?? "").length} 字符)
+        {String((block.data as string) ?? "").length} 字符)
       </em>
     </div>
   );

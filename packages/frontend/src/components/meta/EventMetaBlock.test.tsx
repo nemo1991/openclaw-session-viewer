@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.20 (M3): EventMetaBlock — L3 layer 单元测试
  *
@@ -17,19 +18,18 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { EventMetaBlock } from "./EventMetaBlock";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 beforeEach(() => {
   cleanup();
 });
 
-function renderEvent(block: NormalizedBlockFE) {
+function renderEvent(block: NormalizedBlock) {
   return render(<EventMetaBlock block={block} />);
 }
 
 describe("EventMetaBlock (M3 — L3 layer, inline meta)", () => {
   it("渲染 label 为 kind badge + 字段表", () => {
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "config.update",
       payload: { key1: "value1", key2: 42 },
@@ -44,7 +44,7 @@ describe("EventMetaBlock (M3 — L3 layer, inline meta)", () => {
   });
 
   it("顶层字段 + payload 双源都渲染", () => {
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "model_change",
       payload: { from: "claude-opus-4-5" },
@@ -58,7 +58,7 @@ describe("EventMetaBlock (M3 — L3 layer, inline meta)", () => {
   });
 
   it("完全空 payload + 无 label → UnknownBlockCard 兜底", () => {
-    const block: NormalizedBlockFE = { kind: "meta" };
+    const block: NormalizedBlock = { kind: "meta" };
     const { container } = renderEvent(block);
     // EventMetaBlock 不应渲染(完全无内容时兜底到 UnknownBlockCard)
     expect(container.querySelector(".event-meta-block-meta")).toBeNull();
@@ -68,7 +68,7 @@ describe("EventMetaBlock (M3 — L3 layer, inline meta)", () => {
 
   it("数组 payload preview (前 8 项 + 溢出标记)", () => {
     const arr = Array.from({ length: 12 }, (_, i) => `i${i}`);
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "list-event",
       payload: { items: arr },
@@ -82,7 +82,7 @@ describe("EventMetaBlock (M3 — L3 layer, inline meta)", () => {
 
   it("长字符串 preview (>240 字符截断)", () => {
     const longStr = "a".repeat(300);
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "long-event",
       payload: { data: longStr },
@@ -97,7 +97,7 @@ describe("EventMetaBlock (M3 — L3 layer, inline meta)", () => {
   it("折叠: >16 字段默认隐藏溢出", () => {
     const fields: Record<string, number> = {};
     for (let i = 0; i < 20; i++) fields[`field_${i}`] = i;
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "many-fields",
       payload: fields,

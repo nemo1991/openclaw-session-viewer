@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): CompactionChartMetaBlock — 从 MetaBlock.tsx 抽出
  *
@@ -10,10 +11,10 @@
  */
 
 import { UnknownBlockCard } from "../../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../../lib/api";
+
 import { num, formatTokens, readMetaField } from "./chart-utils";
 
-export function CompactionChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+export function CompactionChartMetaBlock({ block }: { block: NormalizedBlock }) {
   const summary =
     typeof readMetaField(block, "summary") === "string"
       ? (readMetaField(block, "summary") as string)

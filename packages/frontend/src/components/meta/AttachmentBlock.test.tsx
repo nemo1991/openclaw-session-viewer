@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.20 (M3): AttachmentBlock — L4 layer 单元测试
  *
@@ -23,7 +24,6 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AttachmentBlock } from "./AttachmentBlock";
 import * as api from "../../lib/api";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 const mockApiRevealInFinder = vi.spyOn(api, "apiRevealInFinder");
 
@@ -32,7 +32,7 @@ beforeEach(() => {
   mockApiRevealInFinder.mockReset();
 });
 
-function renderAttachment(block: NormalizedBlockFE, label: string) {
+function renderAttachment(block: NormalizedBlock, label: string) {
   return render(
     <MemoryRouter initialEntries={["/"]}>
       <Routes>
@@ -45,7 +45,7 @@ function renderAttachment(block: NormalizedBlockFE, label: string) {
 
 describe("AttachmentBlock (M3 — L4 layer, slate accent)", () => {
   it("13 attachment kind 全部用 attachment-block-meta wrapper", () => {
-    const cases: Array<[string, NormalizedBlockFE]> = [
+    const cases: Array<[string, NormalizedBlock]> = [
       ["agent_listing", { kind: "agent_listing", addedTypes: ["Explore"], isInitial: false }],
       ["skill_listing", { kind: "skill_listing", names: ["SkillA"] }],
       ["task_reminder", { kind: "task_reminder", content: [] }],
@@ -69,7 +69,7 @@ describe("AttachmentBlock (M3 — L4 layer, slate accent)", () => {
   });
 
   it("fallback: 未知 attachment label → UnknownBlockCard(<details>)", () => {
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "unknown-attachment",
       payload: { foo: "bar" },
@@ -80,7 +80,7 @@ describe("AttachmentBlock (M3 — L4 layer, slate accent)", () => {
   });
 
   it("hyphen twin (pr-link / agent-name) 走同一 case", () => {
-    const block: NormalizedBlockFE = {
+    const block: NormalizedBlock = {
       kind: "meta",
       label: "pr-link",
       payload: { prNumber: 99, prRepository: "foo/bar", prUrl: "https://example.com" },

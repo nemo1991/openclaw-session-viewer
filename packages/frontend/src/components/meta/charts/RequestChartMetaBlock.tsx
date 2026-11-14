@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): RequestChartMetaBlock — 从 MetaBlock.tsx 抽出
  *
@@ -12,10 +13,10 @@
 import { useState } from "react";
 import { RequestChartSvg } from "../RequestChart";
 import { UnknownBlockCard } from "../../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../../lib/api";
+
 import { num, formatDurationMs, readMetaField } from "./chart-utils";
 
-export function RequestChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+export function RequestChartMetaBlock({ block }: { block: NormalizedBlock }) {
   const pl = (block.payload ?? {}) as Record<string, unknown>;
   const requestCount = num(readMetaField(block, "request_count"));
   const kindLoop = num(readMetaField(block, "kind_loop")) ?? 0;

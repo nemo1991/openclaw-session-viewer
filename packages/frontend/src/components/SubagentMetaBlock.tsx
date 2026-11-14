@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * 子代理会话专属元数据块 (v0.6.x)
  *
@@ -14,11 +15,11 @@
 
 import { useCallback, useState } from "react";
 import { Bot, FileText, ExternalLink, Copy, Check } from "lucide-react";
-import type { NormalizedBlockFE } from "../lib/api";
+
 import { useTranscriptStore } from "../state/transcriptStore";
 
 interface Props {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 type BadgeKind = "mode" | "permission" | "title" | "last-prompt";
@@ -46,7 +47,7 @@ function chipTone(value: string): "danger" | "plan" | "neutral" {
   return "neutral";
 }
 
-function parse(block: NormalizedBlockFE): Parsed | null {
+function parse(block: NormalizedBlock): Parsed | null {
   const label = String(block.label ?? "");
   const payload = block.payload;
 

@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * TextBlock — block kind === "text" 的 Presentational 包装
  *
@@ -10,11 +11,11 @@
  */
 
 import { Markdown } from "../Markdown";
-import type { NormalizedBlockFE } from "../../lib/api";
+
 import { parseMessageText } from "../sessionInsights";
 
 export interface TextBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 export function TextBlock({ block }: TextBlockProps) {

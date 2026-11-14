@@ -18,7 +18,8 @@
  *   pipeline 串联(time → content),content 维度内 OR、跨维度 AND。
  */
 
-import type { TranscriptEntryOut, NormalizedBlockFE } from "./api";
+import type { TranscriptEntryOut } from "./api";
+import type { NormalizedBlock } from "@ocsv/shared";
 
 export interface TimeRange {
   from?: string;
@@ -63,16 +64,16 @@ export interface ContentFilterOptions {
 }
 
 /** 一个 block 的 kind === expected? — 读 open-index 的 name 字段 */
-function blockHasToolUse(blocks: NormalizedBlockFE[], expected: string): boolean {
+function blockHasToolUse(blocks: NormalizedBlock[], expected: string): boolean {
   return blocks.some((b) => b.kind === "tool_use" && String(b.name ?? "") === expected);
 }
 
-function blockHasKind(blocks: NormalizedBlockFE[], kind: string): boolean {
+function blockHasKind(blocks: NormalizedBlock[], kind: string): boolean {
   return blocks.some((b) => b.kind === kind);
 }
 
 /** v0.8.5 A: entry 是否含失败的 tool_result block (isError===true) */
-function entryHasToolError(blocks: NormalizedBlockFE[]): boolean {
+function entryHasToolError(blocks: NormalizedBlock[]): boolean {
   return blocks.some((b) => b.kind === "tool_result" && b.isError === true);
 }
 

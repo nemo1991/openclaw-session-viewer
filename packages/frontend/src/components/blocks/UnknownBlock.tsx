@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * UnknownBlock — block kind 未知时的兜底 Presentational 包装
  *
@@ -6,10 +7,9 @@
  */
 
 import { UnknownBlockCard } from "../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 export interface UnknownBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 export function UnknownBlock({ block }: UnknownBlockProps) {

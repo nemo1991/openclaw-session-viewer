@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 // @vitest-environment jsdom
 /**
  * SubagentMetaBlock 单元测试 (v0.6.x)
@@ -18,7 +19,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { SubagentMetaBlock } from "./SubagentMetaBlock";
 import { useTranscriptStore } from "../state/transcriptStore";
-import type { NormalizedBlockFE, TranscriptEntryOut } from "../lib/api";
+import type { TranscriptEntryOut } from "../lib/api";
 
 // 提供 :sessionId 给 useParams
 function renderInRoute(element: React.ReactNode, path = "/session/test-id") {
@@ -31,7 +32,7 @@ function renderInRoute(element: React.ReactNode, path = "/session/test-id") {
   );
 }
 
-function makeBlock(label: string, payload: unknown): NormalizedBlockFE {
+function makeBlock(label: string, payload: unknown): NormalizedBlock {
   return { kind: "meta", label, payload };
 }
 
@@ -42,7 +43,7 @@ function makeEntry(index: number, id: string, role = "user"): TranscriptEntryOut
     raw: {},
     normalized: {
       id,
-      role,
+      role: role as TranscriptEntryOut["normalized"]["role"],
       blocks: [{ kind: "text", text: "hi" }],
       rawType: role,
     },

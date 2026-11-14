@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * ToolResultBlock — block kind === "tool_result" 的 Presentational 包装
  *
@@ -8,10 +9,9 @@
  */
 
 import { ToolResultCard } from "../ToolResultCard";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 export interface ToolResultBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
   parentJsonlPath?: string;
 }
 

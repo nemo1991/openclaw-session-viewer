@@ -1,3 +1,4 @@
+import type { NormalizedMessage } from "@ocsv/shared";
 // @vitest-environment jsdom
 /**
  * Bug repro: 详情页点击搜索后界面变空
@@ -15,7 +16,7 @@ import { useTranscriptFilterStore } from "../state/transcriptFilterStore";
 import SessionDetailRoute from "../routes/SessionDetailRoute";
 import { useLivePids } from "../hooks/useLivePids";
 import { applyTimeFilter } from "../lib/filterEntries";
-import type { TranscriptEntryOut, NormalizedMessageFE } from "../lib/api";
+import type { TranscriptEntryOut } from "../lib/api";
 
 // Mock useLivePids
 vi.mock("../hooks/useLivePids", () => ({

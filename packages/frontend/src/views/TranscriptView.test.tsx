@@ -1,3 +1,4 @@
+import type { NormalizedMessage } from "@ocsv/shared";
 /**
  * TranscriptView 集成测试 (v0.7.0)
  *
@@ -26,7 +27,7 @@ import { TranscriptView } from "./TranscriptView";
 import { useTranscriptStore } from "../state/transcriptStore";
 import { useTranscriptFilterStore } from "../state/transcriptFilterStore";
 import { useSearchInSessionStore } from "../state/searchInSessionStore";
-import type { TranscriptEntryOut, NormalizedMessageFE } from "../lib/api";
+import type { TranscriptEntryOut } from "../lib/api";
 
 // ===== helpers =====
 
@@ -36,11 +37,11 @@ function mkEntry(
     role?: "user" | "assistant" | "tool";
     text?: string;
     ts?: string;
-    blocks?: NormalizedMessageFE["blocks"];
+    blocks?: NormalizedMessage["blocks"];
   } = {}
 ): TranscriptEntryOut {
   const role = opts.role ?? "user";
-  const blocks: NormalizedMessageFE["blocks"] =
+  const blocks: NormalizedMessage["blocks"] =
     opts.blocks ?? (opts.text !== undefined ? [{ kind: "text" as const, text: opts.text }] : []);
   const ts = opts.ts ?? `2026-07-01T10:00:0${index % 10}Z`;
   return {

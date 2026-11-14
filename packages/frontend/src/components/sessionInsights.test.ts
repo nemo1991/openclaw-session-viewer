@@ -1,3 +1,4 @@
+import type { NormalizedMessage } from "@ocsv/shared";
 /**
  * sessionInsights — 聚合 + 去噪函数单元测试
  *
@@ -17,7 +18,7 @@ import {
   parseMessageText,
   summarizeSession,
 } from "./sessionInsights";
-import type { TranscriptEntryOut, NormalizedMessageFE } from "../lib/api";
+import type { TranscriptEntryOut } from "../lib/api";
 
 /** 构造 mock entry helper */
 function mkEntry(
@@ -26,7 +27,7 @@ function mkEntry(
   opts: { ts?: string; stopReason?: string | null; id?: string } = {}
 ): TranscriptEntryOut {
   const id = opts.id ?? `e_${Math.random().toString(36).slice(2, 8)}`;
-  const normalized: NormalizedMessageFE = {
+  const normalized: NormalizedMessage = {
     id,
     role,
     timestamp: opts.ts,

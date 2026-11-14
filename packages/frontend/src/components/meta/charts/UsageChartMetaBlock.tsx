@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): UsageChartMetaBlock — 从 MetaBlock.tsx 抽出
  *
@@ -12,10 +13,10 @@
 import { useState } from "react";
 import { UsageChartSvg } from "../UsageChart";
 import { UnknownBlockCard } from "../../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../../lib/api";
+
 import { num, formatTokenShort, formatDurationMs, readMetaField } from "./chart-utils";
 
-export function UsageChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+export function UsageChartMetaBlock({ block }: { block: NormalizedBlock }) {
   const pl = (block.payload ?? {}) as Record<string, unknown>;
   const total = num(readMetaField(block, "total_tokens"));
   const inputOther = num(readMetaField(block, "input_other")) ?? 0;

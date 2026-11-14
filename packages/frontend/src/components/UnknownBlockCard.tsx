@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.3.0 PR5: 未知 block type 展开卡片
  *
@@ -10,11 +11,11 @@
 
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { NormalizedBlockFE } from "../lib/api";
+
 import "./UnknownBlockCard.css";
 
 interface Props {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 export function UnknownBlockCard({ block }: Props) {

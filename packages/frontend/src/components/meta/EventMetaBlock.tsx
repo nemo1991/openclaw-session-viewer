@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.20 (M3): EventMetaBlock — L3 layer
  *
@@ -28,12 +29,12 @@
  */
 
 import { useState } from "react";
-import type { NormalizedBlockFE } from "../../lib/api";
+
 import { formatPreviewValue } from "../../lib/meta";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 
 export interface EventMetaBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 const MAX_TABLE_ROWS = 16;

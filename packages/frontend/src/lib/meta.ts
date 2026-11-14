@@ -26,7 +26,7 @@
  * AttachmentBlock 内联 `get` 改用 `getMetaField`。
  */
 
-import type { NormalizedBlockFE } from "./api";
+import type { NormalizedBlock } from "@ocsv/shared";
 
 /**
  * 顶层字段 + payload 双源 fallback:
@@ -36,7 +36,7 @@ import type { NormalizedBlockFE } from "./api";
  *
  * 返回第一个非 null/undefined 的值;都没找到返回 undefined。
  */
-export function getMetaField(block: NormalizedBlockFE, ...keys: string[]): unknown {
+export function getMetaField(block: NormalizedBlock, ...keys: string[]): unknown {
   const blk = block as unknown as Record<string, unknown>;
   const pl = (block.payload ?? {}) as Record<string, unknown>;
   for (const k of keys) {

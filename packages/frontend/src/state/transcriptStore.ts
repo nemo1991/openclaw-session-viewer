@@ -1,10 +1,11 @@
+import type { NormalizedMessage } from "@ocsv/shared";
 /**
  * 转录 store — 管理流式加载的消息
  */
 
 import { create } from "zustand";
 import { extractErrorMessage } from "../lib/api";
-import type { NormalizedMessageFE, TranscriptEntryOut } from "../lib/api";
+import type { TranscriptEntryOut } from "../lib/api";
 import { listenTranscriptBatches, apiCountEntries } from "../lib/api";
 
 interface TranscriptStore {
@@ -120,7 +121,7 @@ export const useTranscriptStore = create<TranscriptStore>((set, get) => ({
   },
 }));
 
-export type { NormalizedMessageFE };
+export type { NormalizedMessage };
 
 // 重新导出共享工具(原文件 private 定义)
 export { extractErrorMessage };

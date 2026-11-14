@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.23 (M5): ChartsRegion — L2 层独立区域
  *
@@ -16,7 +17,7 @@
  *   `request.chart` / `todos.chart` / `ai-title.chart`) 从 `entries`
  *   抽离到 `StreamBatch.charts` 字段。
  * - 前端 `transcriptStore.charts` 收集所有 chart blocks,本组件读
- *   `entries[0].normalized.blocks[0]` 拿到 `NormalizedBlockFE`。
+ *   `entries[0].normalized.blocks[0]` 拿到 `NormalizedBlock`。
  * - 6 chart 各自保留独立 accent (compaction=teal / tools_snapshot=indigo /
  *   usage.chart=amber / request.chart=violet / todos.chart=emerald /
  *   ai-title.chart=rose),配色定义在 `theme/meta-palette.ts` 没变。
@@ -30,7 +31,7 @@
  */
 
 import { useTranslation } from "react-i18next";
-import type { NormalizedBlockFE, TranscriptEntryOut } from "../../lib/api";
+import type { TranscriptEntryOut } from "../../lib/api";
 import { ChartBlock } from "./ChartBlock";
 
 interface ChartsRegionProps {
@@ -39,10 +40,10 @@ interface ChartsRegionProps {
 }
 
 /**
- * 从 chart entry 提取要渲染的 NormalizedBlockFE (即 block.kind ===
+ * 从 chart entry 提取要渲染的 NormalizedBlock (即 block.kind ===
  * "meta",存了 label + payload)。
  */
-function chartEntryToBlock(entry: TranscriptEntryOut): NormalizedBlockFE | null {
+function chartEntryToBlock(entry: TranscriptEntryOut): NormalizedBlock | null {
   const block = entry.normalized.blocks[0];
   if (!block || block.kind !== "meta") return null;
   return block;

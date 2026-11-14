@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.20 (M3): AttachmentBlock — L4 layer
  *
@@ -35,12 +36,12 @@ import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useFileReveal } from "../../hooks/useFileReveal";
 import { useSettingsStore } from "../../state/settingsStore";
-import type { NormalizedBlockFE } from "../../lib/api";
+
 import { getMetaField } from "../../lib/meta";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 
 export interface AttachmentBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
   label: string;
   parentJsonlPath?: string;
 }

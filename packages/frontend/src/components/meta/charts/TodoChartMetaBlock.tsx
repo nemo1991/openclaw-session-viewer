@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): TodoChartMetaBlock — 从 MetaBlock.tsx 抽出
  *
@@ -12,10 +13,10 @@
 import { useState } from "react";
 import { TodoChartSvg } from "../TodoChart";
 import { UnknownBlockCard } from "../../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../../lib/api";
+
 import { num, formatDurationMs, readMetaField } from "./chart-utils";
 
-export function TodoChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+export function TodoChartMetaBlock({ block }: { block: NormalizedBlock }) {
   const updateCount = num(readMetaField(block, "update_count"));
   const uniqueTaskCount = num(readMetaField(block, "unique_task_count")) ?? 0;
   const currentDone = num(readMetaField(block, "current_done")) ?? 0;

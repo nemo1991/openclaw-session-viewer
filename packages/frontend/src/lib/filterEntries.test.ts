@@ -141,7 +141,7 @@ function makeBlockEntry(
     raw: {},
     normalized: {
       id: `e-${index}`,
-      role: opts.role ?? "assistant",
+      role: (opts.role ?? "assistant") as TranscriptEntryOut["normalized"]["role"],
       rawType: "test",
       timestamp: undefined,
       blocks: blocks as TranscriptEntryOut["normalized"]["blocks"],

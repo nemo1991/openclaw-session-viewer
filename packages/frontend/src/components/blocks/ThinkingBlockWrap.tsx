@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * ThinkingBlockWrap — block kind === "thinking" 的 Presentational 包装
  *
@@ -6,10 +7,9 @@
  */
 
 import { ThinkingBlock } from "../ThinkingBlock";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 export interface ThinkingBlockWrapProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
 }
 
 export function ThinkingBlockWrap({ block }: ThinkingBlockWrapProps) {

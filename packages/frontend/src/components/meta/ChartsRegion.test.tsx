@@ -1,3 +1,4 @@
+import type { NormalizedMessage } from "@ocsv/shared";
 /**
  * v0.9.23 (M5): ChartsRegion 单元测试
  *
@@ -12,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ChartsRegion } from "./ChartsRegion";
-import type { NormalizedMessageFE, TranscriptEntryOut } from "../../lib/api";
+import type { TranscriptEntryOut } from "../../lib/api";
 
 // @vitest-environment jsdom
 
@@ -22,7 +23,7 @@ function makeChartEntry(
   payload: Record<string, unknown> = {}
 ): TranscriptEntryOut {
   const block = { kind: "meta", label, payload };
-  const normalized: NormalizedMessageFE = {
+  const normalized: NormalizedMessage = {
     id: `chart-${index}`,
     role: "meta",
     rawType: label,

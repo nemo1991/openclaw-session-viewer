@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * ToolUseBlock — block kind === "tool_use" 的 Presentational 包装
  *
@@ -9,10 +10,9 @@
  */
 
 import { ToolUseCard } from "../ToolUseCard";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 export interface ToolUseBlockProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
   parentJsonlPath?: string;
   parentSessionId?: string;
 }

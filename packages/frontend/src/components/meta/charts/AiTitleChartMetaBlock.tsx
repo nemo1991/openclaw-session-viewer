@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): AiTitleChartMetaBlock — 从 MetaBlock.tsx 抽出
  *
@@ -17,10 +18,10 @@
 import { useState } from "react";
 import { AiTitleChartSvg } from "../AiTitleChart";
 import { UnknownBlockCard } from "../../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../../lib/api";
+
 import { num, formatDurationMs, readMetaField } from "./chart-utils";
 
-export function AiTitleChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+export function AiTitleChartMetaBlock({ block }: { block: NormalizedBlock }) {
   const eventCount = num(readMetaField(block, "event_count")) ?? 0;
   const uniqueTitleCount = num(readMetaField(block, "unique_title_count")) ?? 0;
   const customTitleCount = num(readMetaField(block, "custom_title_count")) ?? 0;

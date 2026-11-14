@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.21 (M6): MetaBlockRouter 单元测试
  *
@@ -21,7 +22,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MetaBlockRouter } from "./MetaBlockRouter";
-import type { NormalizedBlockFE } from "../../lib/api";
 
 const chartLabels = [
   "context.apply_compaction",
@@ -62,13 +62,13 @@ const eventMetaLabels = [
   "last-prompt",
 ];
 
-const makeBlock = (label: string, payload?: Record<string, unknown>): NormalizedBlockFE =>
+const makeBlock = (label: string, payload?: Record<string, unknown>): NormalizedBlock =>
   ({
     id: `b-${label}`,
     kind: "meta",
     label,
     payload: payload ?? {},
-  }) as unknown as NormalizedBlockFE;
+  }) as unknown as NormalizedBlock;
 
 // 6 chart 各自需要的最小 payload,否则 fallback 到 UnknownBlockCard
 const chartPayload: Record<string, Record<string, unknown>> = {

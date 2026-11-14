@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.21 (M6): `MetaBlock` → `MetaBlockRouter` rename
  *
@@ -28,7 +29,6 @@
  *   layer 的渲染逻辑,职责单一
  */
 
-import type { NormalizedBlockFE } from "../../lib/api";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 // v0.9.19 (M2): 6 chart kind 路由
 import { ChartBlock } from "./ChartBlock";
@@ -40,7 +40,7 @@ import { EventMetaBlock } from "./EventMetaBlock";
 import { ATTACHMENT_META_LABELS, CHART_META_LABELS } from "../../theme/meta-palette";
 
 export interface MetaBlockRouterProps {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
   label: string;
   /** v0.6.x: 透传 parentJsonlPath, 让 useFileReveal (file_snapshot / plan_mode reveal) 推 workspaceRoot */
   parentJsonlPath?: string;

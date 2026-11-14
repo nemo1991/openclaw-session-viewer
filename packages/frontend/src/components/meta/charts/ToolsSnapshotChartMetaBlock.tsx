@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): ToolsSnapshotChartMetaBlock — 从 MetaBlock.tsx 抽出
  *
@@ -10,10 +11,10 @@
 
 import { useState } from "react";
 import { UnknownBlockCard } from "../../UnknownBlockCard";
-import type { NormalizedBlockFE } from "../../../lib/api";
+
 import { readMetaField } from "./chart-utils";
 
-export function ToolsSnapshotChartMetaBlock({ block }: { block: NormalizedBlockFE }) {
+export function ToolsSnapshotChartMetaBlock({ block }: { block: NormalizedBlock }) {
   // v0.9.25 (M8): snapshotHash (camel) 和 hash (inbound Kimi wire key)
   // 都是 dead code — Rust emit "snapshot_hash" (snake) (kimi.rs:764),
   // "hash" 是 inbound Kimi wire key,re-emit 时已转 snake。3-key 简化为

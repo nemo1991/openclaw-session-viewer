@@ -32,7 +32,7 @@ function makeEntry(
     raw: {},
     normalized: {
       id: `entry-${index}`,
-      role,
+      role: role as TranscriptEntryOut["normalized"]["role"],
       rawType: "test",
       timestamp: "2026-06-25T14:00:00Z",
       blocks: blocks as TranscriptEntryOut["normalized"]["blocks"],

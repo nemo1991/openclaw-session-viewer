@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * MessageBubble — Container 角色
  *
@@ -19,7 +20,7 @@
 import { memo } from "react";
 import { FileText } from "lucide-react";
 
-import type { NormalizedBlockFE, TranscriptEntryOut } from "../lib/api";
+import type { TranscriptEntryOut } from "../lib/api";
 import { useTranscriptStore } from "../state/transcriptStore";
 import { MessageHeader } from "./MessageHeader";
 import { SubagentMetaBlock } from "./SubagentMetaBlock";
@@ -148,7 +149,7 @@ export function BlockRenderer({
   parentJsonlPath,
   parentSessionId,
 }: {
-  block: NormalizedBlockFE;
+  block: NormalizedBlock;
   parentJsonlPath?: string;
   parentSessionId?: string;
 }) {

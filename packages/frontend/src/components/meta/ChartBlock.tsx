@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * v0.9.18 (M2): ChartBlock dispatcher
  *
@@ -16,7 +17,6 @@
  * 兜底:未知 label 走 UnknownBlockCard(老 wire / 老 DB 缓存兼容)。
  */
 
-import type { NormalizedBlockFE } from "../../lib/api";
 import { UnknownBlockCard } from "../UnknownBlockCard";
 import { CompactionChartMetaBlock } from "./charts/CompactionChartMetaBlock";
 import { ToolsSnapshotChartMetaBlock } from "./charts/ToolsSnapshotChartMetaBlock";
@@ -25,7 +25,7 @@ import { RequestChartMetaBlock } from "./charts/RequestChartMetaBlock";
 import { TodoChartMetaBlock } from "./charts/TodoChartMetaBlock";
 import { AiTitleChartMetaBlock } from "./charts/AiTitleChartMetaBlock";
 
-export function ChartBlock({ block }: { block: NormalizedBlockFE }) {
+export function ChartBlock({ block }: { block: NormalizedBlock }) {
   switch (block.label) {
     case "context.apply_compaction":
       return <CompactionChartMetaBlock block={block} />;

@@ -7,7 +7,14 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AppSettings, SearchHit, SessionMeta, SubagentSummary } from "@ocsv/shared";
+import type {
+  AppSettings,
+  SearchHit,
+  SessionMeta,
+  SubagentSummary,
+  NormalizedMessage,
+  NormalizedBlock,
+} from "@ocsv/shared";
 
 // ===== 会话 =====
 export const apiListSessions = (): Promise<SessionMeta[]> => invoke("list_sessions");
@@ -45,26 +52,7 @@ export interface TranscriptEntryOut {
   index: number;
   byteOffset: number;
   raw: unknown;
-  normalized: NormalizedMessageFE;
-}
-
-export interface NormalizedMessageFE {
-  id: string;
-  role: string;
-  timestamp?: string;
-  blocks: NormalizedBlockFE[];
-  model?: string;
-  stopReason?: string | null;
-  tokenUsage?: { input: number; output: number; cacheRead: number; cacheWrite: number };
-  isSidechain?: boolean;
-  subagentId?: string;
-  parentUuid?: string | null;
-  rawType: string;
-}
-
-export interface NormalizedBlockFE {
-  kind: string;
-  [k: string]: unknown;
+  normalized: NormalizedMessage;
 }
 
 // ===== 实时 PID =====

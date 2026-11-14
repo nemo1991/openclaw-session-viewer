@@ -1,3 +1,4 @@
+import type { NormalizedBlock } from "@ocsv/shared";
 /**
  * useTranscriptPipeline hook 单元测试
  *
@@ -166,8 +167,6 @@ describe("useTranscriptPipeline", () => {
 
 // ===== v0.7.0: content filter integration =====
 
-import type { NormalizedBlockFE } from "../lib/api";
-
 function makeBlockEntry(
   index: number,
   blocks: Array<{ kind: string; name?: string }>,
@@ -179,10 +178,10 @@ function makeBlockEntry(
     raw: {},
     normalized: {
       id: `b-${index}`,
-      role,
+      role: role as TranscriptEntryOut["normalized"]["role"],
       rawType: role,
       timestamp: `2026-06-25T${String(10 + index).padStart(2, "0")}:00:00Z`,
-      blocks: blocks as NormalizedBlockFE[],
+      blocks: blocks as NormalizedBlock[],
     },
   };
 }
