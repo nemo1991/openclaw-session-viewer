@@ -1895,9 +1895,23 @@ mod tests {
             })
             .unwrap();
 
-        // 直接按 jsonl_path 命中
-        let path = tmp.path().join(".claude/projects/proj-a/sess-1.jsonl");
-        let path_str = path.to_string_lossy().to_string();
+        // 直接按 jsonl_path 命中。
+        // 不能手拼 `tmp.path().join(".claude/projects/proj-a/sess-1.jsonl")`:
+        // Windows 上 PathBuf::join 不会规范化字符串里的 '/',会得到混合分隔符路径,
+        // 与 walkdir 产出的全 '\\' 路径字符串失配 → fetch_session_meta_by_path miss
+        // → 走 fallback 现场解析 → display_title 变 None(CI 是 Ubuntu,两者都是 '/',
+        // 所以从未暴露)。改为直接读 sync 写入 DB 的真实 jsonl_path,跨平台一致,
+        // 也更贴近前端实际传入的 key(前端拿的就是 DB 里的 jsonl_path)。
+        let path_str: String = state
+            .db
+            .with(|c| {
+                Ok::<_, AppError>(c.query_row(
+                    "SELECT jsonl_path FROM session_meta WHERE session_id = 'sess-1'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .expect("read jsonl_path from DB");
         let m = get_session_meta_inner(&path_str, &state).expect("get_session_meta_inner");
         assert_eq!(m.session_id, "sess-1");
         assert_eq!(m.display_title.as_deref(), Some("From DB"));

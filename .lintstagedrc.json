@@ -2,6 +2,5 @@
   "*.{ts,tsx,css}": "prettier --write",
   "*.{md,mdx}": "prettier --write",
   "*.{yml,yaml,json}": "prettier --write",
-  "*.{rs,toml}": "cd src-tauri && cargo fmt --",
   ".github/workflows/scripts/*.sh": "prettier --write"
 }

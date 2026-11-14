@@ -800,10 +800,12 @@ mod tests {
         // 字典序
         assert_eq!(ids, vec!["agent-0", "agent-1"]);
         // jsonl_path 指向 agent-N/wire.jsonl
+        // Windows 下 walkdir 产出反斜杠路径,断言前先归一化分隔符,
+        // 避免在 Windows 本地跑 cargo test 时误判(CI 是 Ubuntu,不受影响)。
         for m in &r {
+            let normalized_path = m.jsonl_path.replace('\\', "/");
             assert!(
-                m.jsonl_path
-                    .ends_with(&format!("/{}/wire.jsonl", m.agent_id)),
+                normalized_path.ends_with(&format!("/{}/wire.jsonl", m.agent_id)),
                 "jsonl_path 应是 agents/<id>/wire.jsonl, got {}",
                 m.jsonl_path
             );

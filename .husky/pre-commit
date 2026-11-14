@@ -3,10 +3,23 @@
 #   2) 全局 Rust 格式检查 (即使没有 .rs 文件改动)
 # husky v9 直接执行该文件,不需要 shebang 或 shim。
 
-# 让 cargo 可用 (rustup 默认安装路径)
-[ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
+# 让 cargo 可用 (跨平台)
+# Unix rustup 会生成 ~/.cargo/env;Windows rustup 不生成该文件,
+# 工具链直接在 ~/.cargo/bin —— 若不显式补 PATH,下面第 2 步的全局
+# Rust 格式检查会被静默跳过 "cargo 未找到"(CI 才捕获,本地漏网)。
+if [ -f "$HOME/.cargo/env" ]; then
+  . "$HOME/.cargo/env"
+fi
+case ":$PATH:" in
+  *":$HOME/.cargo/bin:"*) ;;
+  *) export PATH="$HOME/.cargo/bin:$PATH" ;;
+esac
 
-# 1) lint-staged: prettier 格式化 TS/TSX/CSS + cargo fmt 格式化 Rust
+# 1) lint-staged: prettier 格式化 TS/TSX/CSS/MD/YAML/JSON
+#    (Rust 不在这里跑:lint-staged 会把暂存文件的绝对路径追加到命令末尾,
+#     "cd src-tauri && cargo fmt --" 在 Windows 的 cmd 下解析复合命令 +
+#     "D:\..." 路径会报「文件名、目录名或卷标语法不正确」;Rust 统一由
+#     下面第 2 步的全局 cargo fmt -- --check 负责,与 CI 完全一致。)
 pnpm exec lint-staged
 
 # 2) Rust 全局格式检查
