@@ -1,6 +1,7 @@
 //! Tauri 命令集合
 
 pub mod analyze;
+pub mod events; // v0.11 (A1/A3): 本地事件日志 commands
 pub mod export;
 pub mod fs_cmd;
 pub mod graph; // v0.8.5 C: G1/G2 NDJSON → DB 切换

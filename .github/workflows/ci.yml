@@ -71,6 +71,19 @@ jobs:
       - name: Assert no FE weak types (FR-T3)
         run: pnpm assert:no-fe-types
 
+      # v0.11 (A1 / D-2): 埋点链路零上传门禁
+      - name: Assert local-only event log (A1)
+        run: pnpm assert:local-events
+
+      # v0.11 (A2): 走真实聚合入口跑 26 个标注样本,准确率必须 ≥ 95%,
+      # --nocapture 把逐样本报告打进 CI 日志,便于复核而非只看一个数字。
+      - name: Evaluate retry-rate accuracy (A2)
+        run: pnpm eval:retry
+
+      # v0.11 (A3): P95 nearest-rank 计算 + <500ms 门槛(含慢样本注入验证)
+      - name: Assert P95 budget logic (A3)
+        run: pnpm assert:p95
+
       - name: Test (TS)
         working-directory: packages/shared
         run: pnpm test

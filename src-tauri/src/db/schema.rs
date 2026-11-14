@@ -182,6 +182,21 @@ CREATE TABLE IF NOT EXISTS sync_state (
   files_synced INTEGER NOT NULL DEFAULT 0,
   in_progress  INTEGER NOT NULL DEFAULT 0
 );
+
+-- v0.11 (A1/A3): 本地事件日志 — 只写本地 SQLite,禁止任何网络上报 (D-2)。
+-- 字段对应 v0.10 PRD 第十章:事件名 / 时间戳 / source / 会话数 / 是否真实口径;
+-- duration_ms 是 A3「打开 → 首屏可交互」的耗时样本。
+CREATE TABLE IF NOT EXISTS event_log (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_name     TEXT NOT NULL,
+  ts_ms          INTEGER NOT NULL,
+  source         TEXT,
+  session_count  INTEGER,
+  real_metric    INTEGER,
+  duration_ms    INTEGER,
+  detail         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_el_name_ts ON event_log(event_name, ts_ms DESC);
 "#;
 
 // ===== 数据行 struct(内部使用) =====

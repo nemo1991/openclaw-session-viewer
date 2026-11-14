@@ -43,3 +43,12 @@ pnpm assert:no-fe-types || {
   echo ""
   exit 1
 }
+
+# 4) v0.11 (A1 / D-2) 零上传门禁:埋点链路不得出现任何网络 API。
+#    与 CI 的 "Assert local-only event log" 步骤共用同一个脚本。
+pnpm assert:local-events || {
+  echo ""
+  echo "❌ 本地事件日志出现网络上报,违背 D-2「本地优先、零上传」。"
+  echo ""
+  exit 1
+}

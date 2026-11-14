@@ -20,6 +20,9 @@
     "codegen:contract": "cargo test --manifest-path src-tauri/Cargo.toml --lib parser::contract::tests::export_normalize_contract_snapshot",
     "codegen": "pnpm codegen:types && pnpm codegen:contract",
     "assert:no-fe-types": "node scripts/assert-no-fe-types.mjs",
+    "assert:local-events": "node scripts/assert-local-events.mjs",
+    "eval:retry": "cargo test --manifest-path src-tauri/Cargo.toml --lib parser::retry_eval::tests::eval_retry_rate_accuracy -- --nocapture",
+    "assert:p95": "pnpm --filter @ocsv/frontend exec vitest run src/views/graph/perf.test.ts",
     "build:icon": "node scripts/build-icon.mjs",
     "build:icons": "pnpm build:icon && pnpm tauri icon src-tauri/icons/icon.png",
     "prepare": "husky"

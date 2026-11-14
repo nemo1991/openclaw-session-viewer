@@ -18,7 +18,7 @@
  * - 新增"同模型跨 source"对齐表;chart 1 按 4 个 source 独立堆叠,不再把 Kimi/dsh 算进 Claude
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Bar,
@@ -55,6 +55,9 @@ import {
 } from "./analytics";
 import { useTitleStore } from "./titleStore";
 import { useGraphStore } from "./graphStore";
+// v0.11 (A1/A3): 本地事件日志 + 首屏性能断言(零上传)
+import { trackLocalEvent } from "../../lib/eventsApi";
+import { checkP95Budget, PERF_P95_BUDGET_MS } from "./perf";
 import "./AnalyticsView.css";
 
 const RANGES: { key: Range; label: string }[] = [
@@ -68,8 +71,15 @@ const PIE_COLORS = ["#3b82f6", "#a855f7", "#f59e0b", "#22c55e", "#ef4444", "#06b
 
 export function AnalyticsView() {
   const [range, setRange] = useState<Range>("all");
+  /** v0.11 (A1): source 维度选择,null = 全部 */
+  const [selectedSource, setSelectedSource] = useState<string | null>(null);
   const titles = useTitleStore();
   const navigate = useNavigate();
+
+  /** A3: mount 时刻,与首屏可交互时刻相减得到耗时样本 */
+  const mountAtRef = useRef<number>(typeof performance !== "undefined" ? performance.now() : 0);
+  /** 防止 StrictMode / 重复 render 造成同一事件重复落库 */
+  const reportedRef = useRef({ open: false, ready: false, retryKey: "" });
 
   // 数据源:跟 GraphView 共享 graphStore.entries
   const entries = useGraphStore((s) => s.entries);
@@ -133,6 +143,57 @@ export function AnalyticsView() {
     [crossRows, alignedModels]
   );
   const sourceRows = useMemo(() => sessionsBySource(inRange), [inRange]);
+
+  // ===== v0.11 (A1/A3): 本地事件日志,三个 v0.10 PRD 第十章事件 + 首屏耗时 =====
+  // 事件 1 analytics_view_open:打开 Analytics 即写,sessionCount 取当次折叠后节点数
+  useEffect(() => {
+    if (reportedRef.current.open) return;
+    reportedRef.current.open = true;
+    trackLocalEvent({
+      eventName: "analytics_view_open",
+      sessionCount: nodes.length,
+      realMetric: true,
+    });
+  }, [nodes.length]);
+
+  // A3:数据首次可渲染 = 首屏可交互,把「打开 → 首屏」耗时写入本地 event_log
+  useEffect(() => {
+    if (!entries || reportedRef.current.ready) return;
+    reportedRef.current.ready = true;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const elapsed = Math.max(0, Math.round(now - mountAtRef.current));
+    trackLocalEvent({
+      eventName: "analytics_ready",
+      durationMs: elapsed,
+      sessionCount: nodes.length,
+      realMetric: true,
+    });
+    // 可选性能断言:仅 DEV 模式按单次样本给提示;真实 P95 / 门槛由 Rust 侧
+    // check_p95_budget 用 event_log 的多样本计算,生产环境不硬失败。
+    if (import.meta.env.DEV) {
+      const verdict = checkP95Budget([elapsed], PERF_P95_BUDGET_MS);
+      if (!verdict.ok) console.warn(`[perf] ${verdict.reason}`);
+    }
+  }, [entries, nodes.length]);
+
+  // 事件 3 retry_rate_displayed:真实重试率数值卡口径变化时记一条
+  const retryKey = `${retry.retry_count}/${retry.tool_call_count}/${retry.sessions_with_tool_calls}`;
+  useEffect(() => {
+    if (!entries || reportedRef.current.retryKey === retryKey) return;
+    reportedRef.current.retryKey = retryKey;
+    trackLocalEvent({
+      eventName: "retry_rate_displayed",
+      sessionCount: retry.sessions_with_tool_calls,
+      realMetric: true,
+      detail: retryKey,
+    });
+  }, [entries, retryKey, retry.sessions_with_tool_calls]);
+
+  /** 事件 2 的过滤效果:点选 source 后只展示该 source 的跨 source 对比行 */
+  const visibleAlignedRows = useMemo(
+    () => alignedRows.filter((r) => selectedSource === null || r.source === selectedSource),
+    [alignedRows, selectedSource]
+  );
 
   /** session_id → SessionNode 索引,供 titles.get 用 */
   const nodeById = useMemo(() => {
@@ -456,7 +517,9 @@ export function AnalyticsView() {
       </div>
 
       <Panel
-        title={`9. 同模型跨 source 对比 · ${alignedModels.length} 个 model 出现在 ≥2 个 source`}
+        title={`9. 同模型跨 source 对比 · ${alignedModels.length} 个 model 出现在 ≥2 个 source${
+          selectedSource ? ` · 已筛选 ${selectedSource}` : ""
+        }`}
         wide
       >
         <table className="token-table source-compare">
@@ -471,14 +534,16 @@ export function AnalyticsView() {
             </tr>
           </thead>
           <tbody>
-            {alignedRows.length === 0 ? (
+            {visibleAlignedRows.length === 0 ? (
               <tr>
                 <td colSpan={6}>
-                  当前范围没有同一 model 出现在多个 source 的会话(分组仍按 source 独立统计,无串源)
+                  {selectedSource
+                    ? `${selectedSource} 在当前范围没有跨 source 对齐行(点该 source 可取消筛选)`
+                    : "当前范围没有同一 model 出现在多个 source 的会话(分组仍按 source 独立统计,无串源)"}
                 </td>
               </tr>
             ) : (
-              alignedRows.map((r) => (
+              visibleAlignedRows.map((r) => (
                 <tr key={`${r.primary_model}-${r.source}`}>
                   <td>{r.primary_model}</td>
                   <td>{r.source}</td>
@@ -492,14 +557,32 @@ export function AnalyticsView() {
           </tbody>
         </table>
         <div className="source-dimension">
-          <span>source 维度(独立分组):</span>
+          <span>source 维度(可点选,独立分组):</span>
           {sourceRows.length === 0
             ? " 无会话"
             : sourceRows.map((r) => (
-                <span key={r.source} className="source-chip">
+                <button
+                  type="button"
+                  key={r.source}
+                  className={`source-chip source-chip-btn ${
+                    selectedSource === r.source ? "active" : ""
+                  }`}
+                  title={`按 ${r.source} 过滤上方对比表,再次点击取消 · 会写入本地事件日志`}
+                  onClick={() => {
+                    const next = selectedSource === r.source ? null : r.source;
+                    setSelectedSource(next);
+                    // 事件 2 source_dimension_select
+                    trackLocalEvent({
+                      eventName: "source_dimension_select",
+                      source: next ?? "all",
+                      sessionCount: r.sessions_count,
+                      realMetric: true,
+                    });
+                  }}
+                >
                   {r.source} {r.sessions_count} sessions / {formatNum(r.total_tokens)} tokens /{" "}
                   {r.total_errors} errors
-                </span>
+                </button>
               ))}
         </div>
       </Panel>

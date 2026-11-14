@@ -92,6 +92,18 @@ const NEW_TABLES: &[&str] = &[
     )"#,
     r#"CREATE INDEX IF NOT EXISTS idx_tool_session_tool    ON tool_session(tool_name)"#,
     r#"CREATE INDEX IF NOT EXISTS idx_tool_session_session ON tool_session(session_id)"#,
+    // --- v0.11 (A1/A3): 老库补建本地事件日志表 (CREATE IF NOT EXISTS 幂等) ---
+    r#"CREATE TABLE IF NOT EXISTS event_log (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_name     TEXT NOT NULL,
+        ts_ms          INTEGER NOT NULL,
+        source         TEXT,
+        session_count  INTEGER,
+        real_metric    INTEGER,
+        duration_ms    INTEGER,
+        detail         TEXT
+    )"#,
+    r#"CREATE INDEX IF NOT EXISTS idx_el_name_ts ON event_log(event_name, ts_ms DESC)"#,
 ];
 
 /// 给 session_meta 加 v0.8.4 列 (仅缺失的列)。幂等。

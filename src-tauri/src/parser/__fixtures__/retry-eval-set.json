@@ -1,0 +1,327 @@
+{
+  "$schema": "v0.11 A2 retry-rate evaluation set",
+  "note": "人工标注的脱敏失败-重试序列评测集。所有 id / 路径 / 内容均为占位符,不含真实会话数据。Rust 侧 parser/retry_eval.rs 消费本文件,按 source 分别走真实聚合入口,比对 retry_count / tool_call_count 并输出准确率。",
+  "version": 1,
+  "algorithm": "RetryTracker: 按 wire 顺序记录 tool 调用, tool_result.is_error / step.error 按 id 回填失败标记, windows(2) 判定'失败后紧随同名调用'计 1 次重试;分母为 tool 调用总数。",
+  "cases": [
+    {
+      "id": "claude-basic-retry",
+      "source": "claude",
+      "label": "失败后紧随同名调用 → 1 次重试",
+      "edge": "basic",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-2", "content": "ok" }] } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "claude-single-fail-no-retry",
+      "source": "claude",
+      "label": "仅单次失败、无后续调用 → 0 次重试",
+      "edge": "single-fail-no-retry",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "err", "is_error": true }] } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 1 }
+    },
+    {
+      "id": "claude-success-success",
+      "source": "claude",
+      "label": "两次成功调用同名 → 不算重试",
+      "edge": "success-chain",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "ok", "is_error": false }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Read", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "claude-different-tool-after-fail",
+      "source": "claude",
+      "label": "失败后紧随不同名工具 → 不算重试",
+      "edge": "different-tool",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Bash", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "claude-retry-chain",
+      "source": "claude",
+      "label": "连续失败后连续重试 → 2 次",
+      "edge": "retry-chain",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-2", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:04Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-3", "name": "Read", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 2, "toolCallCount": 3 }
+    },
+    {
+      "id": "claude-no-calls",
+      "source": "claude",
+      "label": "无任何 tool 调用 → 分母 0",
+      "edge": "zero-denominator",
+      "wire": [
+        { "type": "user", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "user", "content": [{ "type": "text", "text": "hello" }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "assistant", "content": [{ "type": "text", "text": "hi" }] } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 0 }
+    },
+    {
+      "id": "claude-interleaved",
+      "source": "claude",
+      "label": "多工具交替,仅失败后同名相邻计 1 次",
+      "edge": "interleaved",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "ok" }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Bash", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-2", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:04Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-3", "name": "Bash", "input": {} }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:05Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-4", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:06Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-4", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:07Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-5", "name": "Edit", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 5 }
+    },
+    {
+      "id": "openclaw-basic-retry",
+      "source": "openclaw",
+      "label": "OpenClaw wire 同样口径 → 1 次重试",
+      "edge": "basic",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "agentId": "main", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "oc-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "oc-1", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "oc-2", "name": "Read", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "openclaw-late-results",
+      "source": "openclaw",
+      "label": "两个调用先出现、结果后到 → 按调用序列判定",
+      "edge": "late-results",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "oc-1", "name": "Read", "input": {} }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "oc-2", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "oc-1", "content": "err", "is_error": true }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "oc-2", "content": "ok" }] } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "openclaw-missing-result-id",
+      "source": "openclaw",
+      "label": "失败结果缺 tool_use_id → 无法回填,不计重试",
+      "edge": "missing-id",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "oc-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "oc-2", "name": "Read", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "claude-duplicate-id",
+      "source": "claude",
+      "label": "同一 id 重复声明 tool_use → 去重",
+      "edge": "dedup",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "dup-1", "name": "Read", "input": {} }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "dup-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "dup-1", "content": "err", "is_error": true }] } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 1 }
+    },
+    {
+      "id": "claude-meta-between",
+      "source": "claude",
+      "label": "调用之间夹文本消息不打断「紧随」判定",
+      "edge": "meta-between",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "text", "text": "interleaved note" }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Read", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "err", "is_error": true }] } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "claude-multi-fail-mixed",
+      "source": "claude",
+      "label": "多次失败但只有一次紧随同名 → 1 次",
+      "edge": "mixed",
+      "wire": [
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-1", "name": "Bash", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:01Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-1", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:02Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-2", "name": "Read", "input": {} }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:03Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-3", "name": "Bash", "input": {} }] } },
+        { "type": "user", "timestamp": "2026-01-01T00:00:04Z", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "tu-3", "content": "err", "is_error": true }] } },
+        { "type": "assistant", "timestamp": "2026-01-01T00:00:05Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": "tu-4", "name": "Bash", "input": {} }] } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 4 }
+    },
+    {
+      "id": "kimi-basic-retry",
+      "source": "kimi",
+      "label": "kimi loop event 嵌套 tool.call → 1 次重试",
+      "edge": "basic",
+      "wire": [
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u1", "stepUuid": "s1", "name": "Read" }, "time": 1000 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.result", "parentUuid": "u1", "result": { "isError": true } }, "time": 1001 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u2", "stepUuid": "s2", "name": "Read" }, "time": 1002 }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "kimi-single-fail-no-retry",
+      "source": "kimi",
+      "label": "kimi 单次失败无后续调用 → 0 次",
+      "edge": "single-fail-no-retry",
+      "wire": [
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u1", "stepUuid": "s1", "name": "Read" }, "time": 1000 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.result", "parentUuid": "u1", "result": { "isError": true } }, "time": 1001 }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 1 }
+    },
+    {
+      "id": "kimi-different-tool",
+      "source": "kimi",
+      "label": "kimi 失败后紧随不同名工具 → 0 次",
+      "edge": "different-tool",
+      "wire": [
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u1", "stepUuid": "s1", "name": "Read" }, "time": 1000 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.result", "parentUuid": "u1", "result": { "isError": true } }, "time": 1001 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u2", "stepUuid": "s2", "name": "Bash" }, "time": 1002 }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "kimi-no-calls",
+      "source": "kimi",
+      "label": "kimi 只有 turn.prompt → 分母 0",
+      "edge": "zero-denominator",
+      "wire": [
+        { "type": "turn.prompt", "time": 1000, "content": "hello" }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 0 }
+    },
+    {
+      "id": "kimi-success-chain",
+      "source": "kimi",
+      "label": "kimi 两次成功同名 → 0 次",
+      "edge": "success-chain",
+      "wire": [
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u1", "stepUuid": "s1", "name": "Read" }, "time": 1000 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.result", "parentUuid": "u1", "result": { "isError": false } }, "time": 1001 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u2", "stepUuid": "s2", "name": "Read" }, "time": 1002 }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "kimi-step-error",
+      "source": "kimi",
+      "label": "kimi step.end finishReason=error 回填该 step 内工具失败",
+      "edge": "step-error",
+      "wire": [
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u1", "stepUuid": "s1", "name": "Read" }, "time": 1000 },
+        { "type": "context.append_loop_event", "event": { "type": "step.end", "uuid": "s1", "finishReason": "error" }, "time": 1001 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u2", "stepUuid": "s2", "name": "Read" }, "time": 1002 }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "kimi-retry-chain",
+      "source": "kimi",
+      "label": "kimi 连续失败后连续重试 → 2 次",
+      "edge": "retry-chain",
+      "wire": [
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u1", "stepUuid": "s1", "name": "Read" }, "time": 1000 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.result", "parentUuid": "u1", "result": { "isError": true } }, "time": 1001 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u2", "stepUuid": "s2", "name": "Read" }, "time": 1002 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.result", "parentUuid": "u2", "result": { "isError": true } }, "time": 1003 },
+        { "type": "context.append_loop_event", "event": { "type": "tool.call", "uuid": "u3", "stepUuid": "s3", "name": "Read" }, "time": 1004 }
+      ],
+      "expected": { "retryCount": 2, "toolCallCount": 3 }
+    },
+    {
+      "id": "dsh-dedup-envelope",
+      "source": "dsh",
+      "label": "dsh 两种 envelope 同 callId 去重 → 1 次重试",
+      "edge": "dedup",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "c1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/call", "seq": 2, "time": 1001, "data": { "callId": "c1", "name": "Read" } },
+        { "type": "tool/result", "seq": 3, "time": 1002, "data": { "message": { "source": { "callId": "c1" }, "content": [{ "isError": true, "content": "err" }] } } },
+        { "type": "assistant/message", "seq": 4, "time": 1003, "data": { "message": { "content": [{ "type": "tool-call", "id": "c2", "name": "Read", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "dsh-single-fail-no-retry",
+      "source": "dsh",
+      "label": "dsh 单次失败无后续调用 → 0 次",
+      "edge": "single-fail-no-retry",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "c1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/result", "seq": 2, "time": 1001, "data": { "message": { "source": { "callId": "c1" }, "content": [{ "isError": true, "content": "err" }] } } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 1 }
+    },
+    {
+      "id": "dsh-different-tool",
+      "source": "dsh",
+      "label": "dsh 失败后紧随不同名工具 → 0 次",
+      "edge": "different-tool",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "c1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/result", "seq": 2, "time": 1001, "data": { "message": { "source": { "callId": "c1" }, "content": [{ "isError": true, "content": "err" }] } } },
+        { "type": "assistant/message", "seq": 3, "time": 1002, "data": { "message": { "content": [{ "type": "tool-call", "id": "c2", "name": "Bash", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "dsh-no-calls",
+      "source": "dsh",
+      "label": "dsh 只有纯文本 message → 分母 0",
+      "edge": "zero-denominator",
+      "wire": [
+        { "type": "user/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "text", "text": "hello" }] } } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 0 }
+    },
+    {
+      "id": "dsh-success-chain",
+      "source": "dsh",
+      "label": "dsh 两次成功同名 → 0 次",
+      "edge": "success-chain",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "c1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/result", "seq": 2, "time": 1001, "data": { "message": { "source": { "callId": "c1" }, "content": [{ "isError": false, "content": "ok" }] } } },
+        { "type": "assistant/message", "seq": 3, "time": 1002, "data": { "message": { "content": [{ "type": "tool-call", "id": "c2", "name": "Read", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "dsh-independent-ids",
+      "source": "dsh",
+      "label": "dsh 两个不同 callId 的独立同名调用 → 分母 2、0 次重试",
+      "edge": "independent-ids",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "c1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "assistant/message", "seq": 2, "time": 1001, "data": { "message": { "content": [{ "type": "tool-call", "id": "c2", "name": "Read", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 0, "toolCallCount": 2 }
+    }
+  ]
+}

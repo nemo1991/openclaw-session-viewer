@@ -278,6 +278,22 @@
   padding: 2px 6px;
   font-variant-numeric: tabular-nums;
 }
+/* v0.11 (A1): source 维度 chip 改为可点选按钮(点选会写本地事件日志) */
+.source-chip-btn {
+  border: 1px solid transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.source-chip-btn:hover {
+  border-color: var(--color-border);
+}
+.source-chip-btn.active {
+  border-color: var(--color-accent, #3b82f6);
+  background: var(--color-bg-active, var(--color-bg-hover));
+  color: var(--color-text);
+}
 .source-compare th,
 .source-compare td {
   font-size: 11px;
