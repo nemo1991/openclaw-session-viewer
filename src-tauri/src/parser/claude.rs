@@ -19,17 +19,36 @@ use serde_json::{json, Value};
 /// 字符串跟其它路径脱节。
 pub const CLAUDE_PARENT_KEY: &str = "parentUuid";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// v0.10 (Epic 1 / FR-T1): ts-rs 单一事实源 — Rust 归一化结构体即 TS 类型来源,
+// 经 #[ts(export)] 生成到 packages/shared/src/generated/normalize-types.ts。
+//
+// 说明: NormalizedBlock 是**开放可扩展结构**(kind:String + data:Map, 含 text/thinking/
+// tool_use/tool_result/image/meta 以及 agent_listing/attached_file/pr_link 等约 19 种
+// 自定义 kind), ts-rs 无法把 `serde_json::Map` flatten 成索引签名,故不从 Rust 生成其
+// 完整形态;前端渲染用的 NormalizedBlock 联合类型保留在 @ocsv/shared/normalize.ts,
+// 由 FR-T4 契约测试保证与 Rust 实际产出的 kind/字段不漂移。其余三个结构体为纯真单一源。
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(
+    export,
+    export_to = "normalize-types.ts",
+    rename = "RustNormalizedBlock"
+)]
 pub struct NormalizedBlock {
-    /// "text" | "thinking" | "tool_use" | "tool_result" | "image" | "meta"
+    /// "text" | "thinking" | "tool_use" | "tool_result" | "image" | "meta" | 各 source 自定义 kind
     pub kind: String,
     #[serde(flatten)]
+    #[ts(skip)]
     pub data: serde_json::Map<String, Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(
+    export,
+    export_to = "normalize-types.ts",
+    rename = "RustNormalizedMessage"
+)]
 pub struct NormalizedMessage {
     pub id: String,
     /// "user" | "assistant" | "tool" | "system" | "meta"
@@ -47,12 +66,19 @@ pub struct NormalizedMessage {
     pub raw_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(export, export_to = "normalize-types.ts", rename = "RustTokenUsageOut")]
 pub struct TokenUsageOut {
+    // u64 在 serde JSON 中序列化为 number(JS 侧即 number),用 #[ts(type)] 覆盖
+    // ts-rs 默认的 bigint 映射,确保生成类型与线格式一致、与 @ocsv/shared 前端类型对齐。
+    #[ts(type = "number")]
     pub input: u64,
+    #[ts(type = "number")]
     pub output: u64,
+    #[ts(type = "number")]
     pub cache_read: u64,
+    #[ts(type = "number")]
     pub cache_write: u64,
 }
 

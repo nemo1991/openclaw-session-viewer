@@ -48,6 +48,7 @@ zstd = "0.13"
 # v0.8.0: 嵌入式关系型 DB(observer.db),管理 session 元数据 + 用户 override
 # bundled: 跨平台自带 SQLite,避免 link OpenSSL
 rusqlite = { version = "0.31", features = ["bundled"] }
+ts-rs = { version = "10.1.0", features = ["serde-json-impl"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

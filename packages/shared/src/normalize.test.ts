@@ -344,32 +344,20 @@ describe("normalizeDshRecord", () => {
     expect(r!.blocks).toHaveLength(1);
     const block = r!.blocks[0]!;
     expect(block.kind).toBe("tool_result");
-    if (block.kind === "tool_result") {
-      expect(block.toolUseId).toBe("call_00_1");
-      expect(block.isError).toBe(false);
-    }
+    // v0.10 (Epic 1): 字段名对齐 Rust builder 线格式 (snake_case)
+    expect(block.tool_use_id).toBe("call_00_1");
+    expect(block.is_error).toBe(false);
   });
 
   it("filters streaming chunks to null", () => {
-    expect(
-      normalizeDshRecord({ type: "assistant/chunk" }, 0)
-    ).toBeNull();
-    expect(
-      normalizeDshRecord({ type: "reasoning-chunks" }, 0)
-    ).toBeNull();
-    expect(
-      normalizeDshRecord({ type: "text-chunks" }, 0)
-    ).toBeNull();
-    expect(
-      normalizeDshRecord({ type: "tool-call-chunks" }, 0)
-    ).toBeNull();
+    expect(normalizeDshRecord({ type: "assistant/chunk" }, 0)).toBeNull();
+    expect(normalizeDshRecord({ type: "reasoning-chunks" }, 0)).toBeNull();
+    expect(normalizeDshRecord({ type: "text-chunks" }, 0)).toBeNull();
+    expect(normalizeDshRecord({ type: "tool-call-chunks" }, 0)).toBeNull();
   });
 
   it("emits session header as meta", () => {
-    const r = normalizeDshRecord(
-      { type: "session", id: "s1", agentPreset: "cordis" },
-      0
-    );
+    const r = normalizeDshRecord({ type: "session", id: "s1", agentPreset: "cordis" }, 0);
     expect(r).not.toBeNull();
     expect(r!.role).toBe("meta");
     expect(r!.rawType).toBe("session");
@@ -377,10 +365,7 @@ describe("normalizeDshRecord", () => {
   });
 
   it("emits unknown types as meta without panicking", () => {
-    const r = normalizeDshRecord(
-      { type: "permission/preset", data: { foo: 1 } },
-      0
-    );
+    const r = normalizeDshRecord({ type: "permission/preset", data: { foo: 1 } }, 0);
     expect(r).not.toBeNull();
     expect(r!.role).toBe("meta");
     expect(r!.rawType).toBe("permission/preset");

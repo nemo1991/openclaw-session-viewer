@@ -54,6 +54,9 @@ const NEW_COLUMNS: &[(&str, &str)] = &[
     ("todo_summary_json", "TEXT"),
     ("kimi_token_usage_json", "TEXT"),
     ("meta_banner_json", "TEXT"),
+    // --- v0.10 (FR-I1): 真实重试率聚合列,老 DB 走 ALTER 补列,默认 0 保持向后兼容 ---
+    ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+    ("tool_call_count", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 /// v0.8.8: 列重命名 — 老 v0.8.x DB 用 `first_ts`/`last_ts`, list_graph SELECT 现在引用
@@ -440,6 +443,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(err_count, 0);
+        // v0.10 (FR-I1): 老 DB 补的两列同样有 0 默认值,历史行重试率不会变 NaN
+        let (retry_count, tool_call_count): (i64, i64) = conn
+            .query_row(
+                "SELECT retry_count, tool_call_count FROM session_meta WHERE session_id='abc'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((retry_count, tool_call_count), (0, 0));
     }
 
     // ===== v0.8.5 B: ensure_tables 幂等 =====

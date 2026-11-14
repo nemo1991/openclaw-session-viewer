@@ -44,6 +44,9 @@ pub struct GraphNodeFE {
     pub primary_model: Option<String>,
     pub top_tools: Vec<String>,
     pub error_count: u32,
+    /// v0.10 (FR-I1): 真实重试率分子/分母 (聚合阶段算,前端不再用 error 分桶估值)
+    pub retry_count: u32,
+    pub tool_call_count: u32,
     pub subagent_count: u32,
     pub subagent_ids: Vec<String>,
     pub is_subagent_root: bool,
@@ -205,7 +208,10 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 first_prompt,
                 agent_id,
                 tool_usage_json,
-                parent_uuids_text
+                parent_uuids_text,
+                -- v0.10 (FR-I1): 真实重试率 (SELECT 按名读,列序无关)
+                retry_count,
+                tool_call_count
          FROM session_meta
          ORDER BY mtime_ms DESC",
     )?;
@@ -269,6 +275,8 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 primary_model: r.get("primary_model")?,
                 top_tools,
                 error_count,
+                retry_count: r.get::<_, i64>("retry_count")? as u32,
+                tool_call_count: r.get::<_, i64>("tool_call_count")? as u32,
                 subagent_count,
                 subagent_ids: subagent_ids.clone(), // v0.8.6 A: edges 派生也要用
                 is_subagent_root,                   // v0.8.7 B: 反向 map 派生
@@ -635,7 +643,8 @@ mod tests {
                    first_timestamp, last_timestamp, message_count, thinking_count, tool_use_count,
                    top_tools_json, total_tokens_json, primary_model,
                    error_count, subagent_count, subagent_ids_json,
-                   first_prompt, agent_id, tool_usage_json, parent_uuids_text
+                   first_prompt, agent_id, tool_usage_json, parent_uuids_text,
+                   retry_count, tool_call_count
                  ) VALUES (
                    'sid-1', 'proj-1', 'claude', '/tmp/x.jsonl',
                    100, 5000, 50, 0,
@@ -647,7 +656,8 @@ mod tests {
                    2, 3, '[\"sub-1\",\"sub-2\"]',
                    'First prompt text', 'agent-1',
                    '[[\"Bash\",5],[\"Read\",3]]',
-                   'parent-uuid-1\nparent-uuid-2'
+                   'parent-uuid-1\nparent-uuid-2',
+                   4, 25
                  )",
                 [],
             )?;
@@ -673,6 +683,9 @@ mod tests {
         assert_eq!(n.token_total, 150); // 100+50+0+0
         assert_eq!(n.primary_model.as_deref(), Some("claude-opus-4-8"));
         assert_eq!(n.top_tools, vec!["Read"]);
+        // v0.10 (FR-I1): 真实重试率两列必须按名读到,不跟相邻列错位
+        assert_eq!(n.retry_count, 4);
+        assert_eq!(n.tool_call_count, 25);
     }
 
     // 2. 锁 L244: first_prompt 不能跟 subagent_ids_json 错位

@@ -89,7 +89,10 @@ CREATE TABLE IF NOT EXISTS session_meta (
   -- v0.9.8: Kimi 专属聚合列 — 详情页折叠面板 + chip 数据来源
   todo_summary_json           TEXT,
   kimi_token_usage_json       TEXT,
-  meta_banner_json            TEXT
+  meta_banner_json            TEXT,
+  -- v0.10 (FR-I1): 真实重试率 — retry_count / tool_call_count 由聚合阶段写入
+  retry_count                 INTEGER NOT NULL DEFAULT 0,
+  tool_call_count             INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_sm_mtime    ON session_meta(mtime_ms DESC);
@@ -330,7 +333,8 @@ pub fn upsert_session_meta(
           available_models_json, tool_error_json, parent_uuids_text,
           todo_summary_json, kimi_token_usage_json, meta_banner_json,
           -- v0.9.28 (M11.1): first_prompt 列 — SessionCard preview 用 (之前 schema 有列但 INSERT 漏了, dsh 受影响最大)
-          first_prompt
+          -- v0.10 (FR-I1): 真实重试率的分子/分母
+          first_prompt, retry_count, tool_call_count
         ) VALUES (
           ?1, ?2, ?3, ?4, ?5,
           ?6, ?7, ?8, ?9,
@@ -350,7 +354,7 @@ pub fn upsert_session_meta(
           ?40, ?41,
           ?42, ?43, ?44,
           ?45, ?46, ?47,
-          ?48
+          ?48, ?49, ?50
         )
         ON CONFLICT(session_id) DO UPDATE SET
           project_key      = excluded.project_key,
@@ -402,7 +406,10 @@ pub fn upsert_session_meta(
           kimi_token_usage_json     = excluded.kimi_token_usage_json,
           meta_banner_json          = excluded.meta_banner_json,
           -- v0.9.28 (M11.1): first_prompt 更新
-          first_prompt = excluded.first_prompt
+          first_prompt = excluded.first_prompt,
+          -- v0.10 (FR-I1): 聚合重跑后覆盖真实重试率
+          retry_count = excluded.retry_count,
+          tool_call_count = excluded.tool_call_count
         "#,
         params![
             m.session_id,
@@ -464,6 +471,9 @@ pub fn upsert_session_meta(
             meta_banner_json.as_deref(),
             // v0.9.28 (M11.1): first_prompt 写入(之前 schema 有列,但 INSERT 漏了 → DB 永远 NULL)
             m.first_prompt.as_deref(),
+            // v0.10 (FR-I1): 真实重试率分子/分母,None → 0 (NOT NULL DEFAULT 0)
+            m.retry_count.map(|v| v as i64).unwrap_or(0),
+            m.tool_call_count.map(|v| v as i64).unwrap_or(0),
         ],
     )?;
     Ok(())
@@ -545,7 +555,10 @@ SELECT
   m.kimi_token_usage_json,
   m.meta_banner_json,
   -- v0.9.28 (M11.1): first_prompt — SessionCard preview 用
-  m.first_prompt
+  m.first_prompt,
+  -- v0.10 (FR-I1): 追加在末尾,避免前面所有 r.get(index) 位移
+  m.retry_count,
+  m.tool_call_count
 FROM session_meta m
 LEFT JOIN session_override o ON m.session_id = o.session_id
 LEFT JOIN session_tag st     ON m.session_id = st.session_id
@@ -665,6 +678,9 @@ fn joined_row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<JoinedRow> {
             .and_then(|s| serde_json::from_str(&s).ok()),
         // v0.9.28 (M11.1): first_prompt — SessionCard preview 用 (之前 schema 有列但 joined_row_mapper 硬填 None)
         first_prompt: row.get(52)?,
+        // v0.10 (FR-I1): 真实重试率 — 老 DB 经 migration 补列后为 0
+        retry_count: Some(row.get::<_, i64>(53)? as u32),
+        tool_call_count: Some(row.get::<_, i64>(54)? as u32),
     };
 
     Ok(JoinedRow {
@@ -1033,6 +1049,9 @@ mod round_trip_tests {
                 approval_count: 2,
                 ..Default::default()
             }),
+            // v0.10 (FR-I1): 真实重试率 round-trip
+            retry_count: Some(4),
+            tool_call_count: Some(25),
             // 以下字段不在 session_meta 表 (live / display 字段),filled by reader side
             live_pid: None,
             subagent_dir: None,
@@ -1129,6 +1148,9 @@ mod round_trip_tests {
             r.parent_uuids_text.as_deref(),
             Some("uuid-a\nuuid-b\nuuid-c")
         );
+        // v0.10 (FR-I1): 真实重试率两列必须无损 round-trip
+        assert_eq!(r.retry_count, Some(4));
+        assert_eq!(r.tool_call_count, Some(25));
         assert_eq!(
             r.todo_summary.as_ref(),
             Some(&TodoSummary {

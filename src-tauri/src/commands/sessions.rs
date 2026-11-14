@@ -550,6 +550,9 @@ pub(crate) fn build_claude_session_meta(
         } else {
             Some(extras.parent_uuids.join("\n"))
         },
+        // v0.10 (FR-I1): 真实重试率 (聚合阶段按 wire 顺序算,不再用 error 分桶估值)
+        retry_count: Some(extras.retry_count),
+        tool_call_count: Some(extras.tool_call_count),
         // v0.9.8: kimi 专属聚合字段,claude 路径全 None
         todo_summary: None,
         kimi_token_usage: None,
@@ -743,6 +746,9 @@ pub(crate) fn build_openclaw_session_meta(
         } else {
             Some(extras.parent_uuids.join("\n"))
         },
+        // v0.10 (FR-I1): 真实重试率 (聚合阶段按 wire 顺序算,不再用 error 分桶估值)
+        retry_count: Some(extras.retry_count),
+        tool_call_count: Some(extras.tool_call_count),
         // v0.9.8: kimi 专属聚合字段,openclaw 路径全 None
         todo_summary: None,
         kimi_token_usage: None,
@@ -1074,6 +1080,9 @@ pub(crate) fn build_kimi_session_meta(
         } else {
             Some(extras.parent_uuids.join("\n"))
         },
+        // v0.10 (FR-I1): 真实重试率 (聚合阶段按 wire 顺序算,不再用 error 分桶估值)
+        retry_count: Some(extras.retry_count),
+        tool_call_count: Some(extras.tool_call_count),
         // v0.9.8: kimi 专属聚合 (TodoWrite + token + MetaBanner) — aggregator 一次算齐
         todo_summary: extras.todo_summary,
         kimi_token_usage: extras.kimi_token_usage,
@@ -1362,6 +1371,9 @@ pub(crate) fn build_dsh_session_meta(ds: &crate::fs::walker::DshSession) -> AppR
         } else {
             Some(extras.parent_uuids.join("\n"))
         },
+        // v0.10 (FR-I1): dsh 同样接入真实重试率 (callId 去重由 RetryTracker 负责)
+        retry_count: Some(extras.retry_count),
+        tool_call_count: Some(extras.tool_call_count),
         // v0.9.28 (M11.3): todo_summary (todo/write) + meta_banner (session.version /
         // permission/preset + sandbox/mode + approval/policy + request/header.config)
         // 之前 v0.9.28 直填 None,dsh session 在 frontend 不显示 todo chip 和 banner fold。

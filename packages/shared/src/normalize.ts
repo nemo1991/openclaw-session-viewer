@@ -125,6 +125,11 @@ export interface SessionMeta {
   /** per-tool error count, 按 count 降序: `[["Bash", 3], ["WebFetch", 1], ...]`
    * 跟 `errorCount` (message 级 stop_reason=="error") 正交互补, 互补的是 tool_result.is_error==true */
   toolError?: [string, number][];
+  // --- v0.10 (FR-I1): 真实重试率 (Rust meta_aggregator::RetryTracker 聚合阶段算) ---
+  /** 真实重试次数 — tool 调用失败后紧随同名 tool 的下一次调用 */
+  retryCount?: number;
+  /** tool 调用总次数(重试率分母),同一调用的多 envelope 已去重 */
+  toolCallCount?: number;
   // --- v0.8.7 A: parent_uuids 累积 ---
   /** 该 session 出现过的全部 parent_uuid 引用 (去重), newline-separated text
    * 给 GraphView 派生 ParentUuid edges (G1 跨 session 关联可视化) */
@@ -156,21 +161,46 @@ export interface SessionMeta {
   };
 }
 
-/** 归一化后的内容块 */
-export type NormalizedBlock =
-  | { kind: "text"; text: string }
-  | { kind: "thinking"; text: string }
-  | { kind: "tool_use"; id: string; name: string; input: unknown }
-  | {
-      kind: "tool_result";
-      toolUseId: string;
-      content: string;
-      isError?: boolean;
-      /** 工具结果中文件路径(若涉及 Read/Edit/Write) */
-      filePath?: string;
-    }
-  | { kind: "image"; mediaType: string; dataBase64?: string }
-  | { kind: "meta"; label: string; payload?: unknown };
+/**
+ * 归一化后的内容块。
+ *
+ * v0.10 (Epic 1 / FR-T1): 单一事实源说明 — Rust 侧 `NormalizedBlock` 是开放结构
+ * (`kind:String` + `data:Map`,含 text/thinking/tool_use/tool_result/image/meta 及约 19 种
+ * 自定义 kind,如 agent_listing / attached_file / pr_link / task_reminder 等),ts-rs 无法把
+ * `serde_json::Map` 展平成闭合联合类型,故前端采用「开放接口 + 已知字段文档」形式:
+ *   具名字段键名严格对齐 Rust builder 实际序列化的线格式
+ *   (tool_result → `tool_use_id`/`is_error`; image → `mediaType`/`data`; thinking → `thinking`),
+ *   其余自定义字段经索引签名透传。FR-T4 契约测试保证两侧不漂移。
+ *   注意: 各 source 对 tool_result 的 id 字段命名不一致(claude/openclaw/kimi 用 `tool_use_id`,
+ *   dsh 用 `tool_call_id`),统一经索引签名兜底。
+ */
+export interface NormalizedBlock {
+  kind: string;
+  // —— 已知 kind 的字段名锚点(键名以 Rust builder 线格式为准)——
+  // 值一律用 unknown: Rust `data:Map` 中同名字段在不同 kind/source 下类型并不统一
+  // (例: `content` 在 tool_result 是 string、在 task_reminder 是数组), 故不锁死具体类型,
+  // 由消费方按需 String()/Boolean()/getMetaField() 收窄。字段名在此仅作文档 + IDE 提示。
+  text?: unknown;
+  thinking?: unknown;
+  signature?: unknown;
+  id?: unknown;
+  name?: unknown;
+  input?: unknown;
+  /** tool_result: 对应 tool 调用的 id(claude/openclaw/kimi 线格式为 snake_case) */
+  tool_use_id?: unknown;
+  content?: unknown;
+  /** tool_result: 该工具结果是否为错误(Rust 线格式为 snake_case `is_error`) */
+  is_error?: unknown;
+  mediaType?: unknown;
+  /** image: base64 数据(Rust 线格式字段名为 `data`) */
+  data?: unknown;
+  label?: unknown;
+  payload?: unknown;
+  /** tool_result: 涉及 Read/Edit/Write 时的文件路径 */
+  filePath?: unknown;
+  /** 任意自定义 kind 的附加字段透传 */
+  [k: string]: unknown;
+}
 
 /** 归一化后的消息 */
 export interface NormalizedMessage {
@@ -354,7 +384,7 @@ function normalizeContentBlock(block: ContentBlock): NormalizedBlock | null {
     case "text":
       return { kind: "text", text: block.text };
     case "thinking":
-      return { kind: "thinking", text: block.thinking };
+      return { kind: "thinking", thinking: block.thinking };
     case "tool_use":
       return { kind: "tool_use", id: block.id, name: block.name, input: block.input };
     case "tool_result": {
@@ -362,9 +392,9 @@ function normalizeContentBlock(block: ContentBlock): NormalizedBlock | null {
       if (typeof c === "string") {
         return {
           kind: "tool_result",
-          toolUseId: block.tool_use_id,
+          tool_use_id: block.tool_use_id,
           content: c,
-          isError: block.is_error,
+          is_error: block.is_error,
         };
       }
       const text = c
@@ -376,9 +406,9 @@ function normalizeContentBlock(block: ContentBlock): NormalizedBlock | null {
       const filePath = fileItem && "file" in fileItem ? fileItem.file?.filePath : undefined;
       return {
         kind: "tool_result",
-        toolUseId: block.tool_use_id,
+        tool_use_id: block.tool_use_id,
         content: text,
-        isError: block.is_error,
+        is_error: block.is_error,
         filePath,
       };
     }
@@ -518,7 +548,7 @@ function openClawContentToBlocks(content: unknown): NormalizedBlock[] {
         if (typeof it.text === "string") out.push({ kind: "text", text: it.text });
         break;
       case "thinking":
-        if (typeof it.thinking === "string") out.push({ kind: "thinking", text: it.thinking });
+        if (typeof it.thinking === "string") out.push({ kind: "thinking", thinking: it.thinking });
         break;
       case "tool_use":
       case "toolUse":
@@ -535,16 +565,16 @@ function openClawContentToBlocks(content: unknown): NormalizedBlock[] {
       case "toolResult":
         out.push({
           kind: "tool_result",
-          toolUseId: String(it.tool_use_id ?? it.toolCallId ?? ""),
+          tool_use_id: String(it.tool_use_id ?? it.toolCallId ?? ""),
           content: stringifyUnknown(it.content),
-          isError: Boolean(it.is_error),
+          is_error: Boolean(it.is_error),
         });
         break;
       case "image":
         out.push({
           kind: "image",
           mediaType: String(it.mediaType ?? "image/png"),
-          dataBase64: it.data as string | undefined,
+          data: it.data as string | undefined,
         });
         break;
       default:
@@ -673,7 +703,7 @@ export function normalizeDshRecord(record: unknown, index: number): NormalizedMe
         id,
         role: "tool",
         timestamp,
-        blocks: [{ kind: "tool_result", toolUseId, content: text, isError }],
+        blocks: [{ kind: "tool_result", tool_use_id: toolUseId, content: text, is_error: isError }],
         rawType: type,
       };
     }

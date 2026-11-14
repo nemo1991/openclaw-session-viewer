@@ -1,0 +1,267 @@
+{
+  "$schema": "v0.10 FR-T4 normalize contract samples",
+  "note": "脱敏代表性样本，不含真实 PII / 路径 / 密钥。路径一律用 /redacted/... 占位。Rust 与 TS 两侧消费同一份文件。",
+  "version": 1,
+  "samples": [
+    {
+      "id": "claude-user-text",
+      "source": "claude",
+      "index": 0,
+      "record": {
+        "type": "user",
+        "uuid": "c-u1",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {
+          "role": "user",
+          "content": [{ "type": "text", "text": "please read the placeholder file" }]
+        }
+      }
+    },
+    {
+      "id": "claude-assistant-tool-use-token",
+      "source": "claude",
+      "index": 1,
+      "record": {
+        "type": "assistant",
+        "uuid": "c-a1",
+        "timestamp": "2026-01-01T00:00:01Z",
+        "message": {
+          "role": "assistant",
+          "model": "model-placeholder",
+          "stop_reason": "tool_use",
+          "content": [
+            { "type": "text", "text": "reading now" },
+            {
+              "type": "tool_use",
+              "id": "tu-1",
+              "name": "Read",
+              "input": { "file_path": "/redacted/placeholder.txt" }
+            }
+          ],
+          "usage": {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cache_read_input_tokens": 50,
+            "cache_creation_input_tokens": 10
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-assistant-stop-error",
+      "source": "claude",
+      "index": 2,
+      "record": {
+        "type": "assistant",
+        "uuid": "c-a2",
+        "timestamp": "2026-01-01T00:00:02Z",
+        "message": {
+          "role": "assistant",
+          "stop_reason": "error",
+          "content": [{ "type": "text", "text": "something went wrong" }],
+          "usage": {
+            "input_tokens": 12,
+            "output_tokens": 3,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-tool-result-error",
+      "source": "claude",
+      "index": 3,
+      "record": {
+        "type": "user",
+        "uuid": "c-u3",
+        "timestamp": "2026-01-01T00:00:03Z",
+        "message": {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "tu-1",
+              "content": "Error: placeholder file not found",
+              "is_error": true
+            }
+          ]
+        }
+      }
+    },
+
+    {
+      "id": "openclaw-message-user-text",
+      "source": "openclaw",
+      "index": 0,
+      "record": {
+        "type": "message",
+        "id": "oc-1",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "message": {
+          "role": "user",
+          "content": [{ "type": "text", "text": "hello openclaw" }]
+        }
+      }
+    },
+    {
+      "id": "openclaw-message-assistant-tool-use",
+      "source": "openclaw",
+      "index": 1,
+      "record": {
+        "type": "message",
+        "id": "oc-2",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "tu-2",
+              "name": "Bash",
+              "input": { "command": "echo placeholder" }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "openclaw-message-tool-result-error",
+      "source": "openclaw",
+      "index": 2,
+      "record": {
+        "type": "message",
+        "id": "oc-3",
+        "message": {
+          "role": "tool",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "tu-2",
+              "content": "command failed",
+              "is_error": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "openclaw-session-header-skip",
+      "source": "openclaw",
+      "index": 3,
+      "record": { "type": "session", "id": "oc-session" }
+    },
+
+    {
+      "id": "kimi-turn-prompt",
+      "source": "kimi",
+      "index": 0,
+      "record": {
+        "type": "turn.prompt",
+        "time": 1735689600000,
+        "input": [{ "type": "text", "text": "do the placeholder task" }]
+      }
+    },
+    {
+      "id": "kimi-append-message-assistant",
+      "source": "kimi",
+      "index": 1,
+      "record": {
+        "type": "context.append_message",
+        "time": 1735689601000,
+        "message": { "role": "assistant", "content": "the placeholder answer" }
+      }
+    },
+    {
+      "id": "kimi-metadata-meta",
+      "source": "kimi",
+      "index": 2,
+      "record": {
+        "type": "metadata",
+        "time": 1735689602000,
+        "data": { "placeholder": true }
+      }
+    },
+    {
+      "id": "kimi-usage-record-skip",
+      "source": "kimi",
+      "index": 3,
+      "record": {
+        "type": "usage.record",
+        "time": 1735689603000,
+        "usage": { "inputTokens": 10 }
+      }
+    },
+
+    {
+      "id": "dsh-user-message",
+      "source": "dsh",
+      "index": 0,
+      "record": {
+        "type": "user/message",
+        "time": 1735689600000,
+        "data": {
+          "content": [{ "type": "text", "text": "hello dsh" }]
+        }
+      }
+    },
+    {
+      "id": "dsh-assistant-message-token-tool",
+      "source": "dsh",
+      "index": 1,
+      "record": {
+        "type": "assistant/message",
+        "time": 1735689601000,
+        "data": {
+          "message": {
+            "id": "dsh-a1",
+            "source": { "model": "model-placeholder" },
+            "content": [
+              { "type": "reasoning", "text": "thinking about it" },
+              { "type": "text", "text": "the placeholder answer" },
+              {
+                "type": "tool-call",
+                "id": "tc-1",
+                "name": "Read",
+                "arguments": "{\"file_path\":\"/redacted/placeholder.txt\"}"
+              }
+            ]
+          },
+          "usage": {
+            "inputTokens": 80,
+            "outputTokens": 12,
+            "cacheReadTokens": 40,
+            "cacheCreationTokens": 5
+          }
+        }
+      }
+    },
+    {
+      "id": "dsh-tool-result-error",
+      "source": "dsh",
+      "index": 2,
+      "record": {
+        "type": "tool/result",
+        "time": 1735689602000,
+        "data": {
+          "message": {
+            "id": "dsh-t1",
+            "source": { "callId": "tc-1" },
+            "content": [
+              {
+                "type": "text",
+                "isError": true,
+                "content": [{ "type": "text", "text": "Error: placeholder not found" }]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "dsh-streaming-chunk-skip",
+      "source": "dsh",
+      "index": 3,
+      "record": { "type": "assistant/chunk", "time": 1735689603000 }
+    }
+  ]
+}

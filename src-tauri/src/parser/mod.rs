@@ -2,6 +2,9 @@
 
 pub mod blocks;
 pub mod claude;
+#[cfg(test)]
+pub mod codegen; // v0.10 (Epic 1): 受控 ts-rs 代码生成测试
+pub mod contract; // v0.10 (Epic 1 / FR-T4): Rust↔TS 归一化契约快照生成
 pub mod dsh; // v0.9.28: DeepSeek Harness (dsh) wire format
 pub mod jsonl;
 pub mod jsonl_zst; // v0.9.28: transparent .jsonl.zstd reader (DeepSeek Harness)

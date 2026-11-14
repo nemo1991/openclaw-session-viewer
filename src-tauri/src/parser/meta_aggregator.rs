@@ -38,10 +38,66 @@ const REPEAT_RUN_MIN: usize = 3;
 /// v0.8.4 item 2': idle_gap 的 5 分钟阈值(同 frontend `findIdleGaps(entries, 5*60_000)`)
 const IDLE_GAP_THRESHOLD_MS: i64 = 5 * 60 * 1000;
 
+/// v0.10 (Epic 2 / FR-I1): 真实重试率追踪器。
+///
+/// PRD 口径:某 tool_use 结果为 error,且**紧随其后**出现同一 tool 名的下一个
+/// tool_use → 计 1 次重试;会话级重试率 = retry_count / tool_call_count。
+///
+/// 实现要点:wire 里 tool_use 与其 tool_result 是分离的(结果晚于调用出现),
+/// 因此先按消息顺序记录**有序调用序列**,遇到 tool_result.is_error 时通过
+/// tool_use_id 回填 failed 标记,扫描结束后再用 `windows(2)` 统一判定。
+/// 这样"紧随其后"严格按调用序列而非文件行序,避免被中间的 meta / user 文本干扰。
+#[derive(Debug, Default)]
+struct RetryTracker {
+    /// (tool_use_id, tool_name, 结果是否 error) —— 按出现顺序
+    calls: Vec<(String, String, bool)>,
+    /// tool_use_id → calls 下标,用于 tool_result 回填;同一 id 重复声明时去重
+    id_to_idx: std::collections::HashMap<String, usize>,
+}
+
+impl RetryTracker {
+    /// 记录一次 tool 调用。id 重复(dsh 的 `tool/call` 与 `assistant/message`
+    /// 内的 `tool-call` 是同一调用的两种表示)时不新增,避免重复计数。
+    fn record_call(&mut self, id: &str, name: &str) {
+        if !id.is_empty() && self.id_to_idx.contains_key(id) {
+            return;
+        }
+        let idx = self.calls.len();
+        if !id.is_empty() {
+            self.id_to_idx.insert(id.to_string(), idx);
+        }
+        self.calls.push((id.to_string(), name.to_string(), false));
+    }
+
+    /// 回填某次调用的失败结果(找不到 id 时静默忽略,best-effort)。
+    fn mark_failed(&mut self, id: &str) {
+        if let Some(&idx) = self.id_to_idx.get(id) {
+            self.calls[idx].2 = true;
+        }
+    }
+
+    /// 返回 (retry_count, tool_call_count)。
+    fn finalize(self) -> (u32, u32) {
+        let total = self.calls.len() as u32;
+        let mut retries = 0u32;
+        for pair in self.calls.windows(2) {
+            // 前一次调用失败 + 紧随其后是同名工具的再次调用 → 1 次重试
+            if pair[0].2 && pair[0].1 == pair[1].1 {
+                retries += 1;
+            }
+        }
+        (retries, total)
+    }
+}
+
 /// 派生指标集合
 #[derive(Debug, Default, Clone)]
 pub struct MetaExtras {
     pub error_count: u32,
+    /// v0.10 (FR-I1): 真实重试次数(失败后紧随同名 tool 再次调用)
+    pub retry_count: u32,
+    /// v0.10 (FR-I1): tool 调用总次数(重试率分母)
+    pub tool_call_count: u32,
     pub user_message_count: u32,
     pub assistant_message_count: u32,
     pub duration_seconds: Option<u64>,
@@ -122,6 +178,8 @@ pub fn aggregate_claude_openclaw(path: &Path) -> AppResult<MetaExtras> {
         std::collections::HashMap::new();
     let mut tool_error_counts: std::collections::HashMap<String, u32> =
         std::collections::HashMap::new();
+    // v0.10 (FR-I1): 真实重试率的有序调用序列
+    let mut retry_tracker = RetryTracker::default();
     // v0.8.7 A: parent_uuids 累积 (去重, 每个 session 收集所有 entry 的 parentUuid 引用)
     let mut parent_uuids_set: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
@@ -216,6 +274,8 @@ pub fn aggregate_claude_openclaw(path: &Path) -> AppResult<MetaExtras> {
                                     if let Some(tool_use_id) =
                                         item_obj.get("tool_use_id").and_then(|v| v.as_str())
                                     {
+                                        // v0.10 (FR-I1): 回填该次调用的失败标记
+                                        retry_tracker.mark_failed(tool_use_id);
                                         if let Some(name) = tool_use_id_to_name.get(tool_use_id) {
                                             *tool_error_counts.entry(name.clone()).or_insert(0) +=
                                                 1;
@@ -274,9 +334,13 @@ pub fn aggregate_claude_openclaw(path: &Path) -> AppResult<MetaExtras> {
                                     let name = name.to_string();
                                     *tool_counts.entry(name.clone()).or_insert(0) += 1;
                                     // v0.8.5 A: 记 tool_use.id → tool_name, 给后面 user tool_result 反查用
-                                    if let Some(id) = item_obj.get("id").and_then(|v| v.as_str()) {
+                                    let id =
+                                        item_obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                    if !id.is_empty() {
                                         tool_use_id_to_name.insert(id.to_string(), name.clone());
                                     }
+                                    // v0.10 (FR-I1): 按 wire 顺序记录一次 tool 调用
+                                    retry_tracker.record_call(id, &name);
                                     // phase 统计
                                     match name.as_str() {
                                         "Read" => read_count += 1,
@@ -406,6 +470,11 @@ pub fn aggregate_claude_openclaw(path: &Path) -> AppResult<MetaExtras> {
         }
     }
 
+    // v0.10 (FR-I1): 真实重试率 —— 有序序列扫描结束后统一判定
+    let (retry_count, tool_call_count) = retry_tracker.finalize();
+    out.retry_count = retry_count;
+    out.tool_call_count = tool_call_count;
+
     Ok(out)
 }
 
@@ -501,6 +570,8 @@ pub fn aggregate_kimi(path: &Path) -> AppResult<MetaExtras> {
     let mut step_to_tool_uuids: HashMap<String, Vec<String>> = HashMap::new();
     let mut tool_uuid_to_name: HashMap<String, String> = HashMap::new();
     let mut tool_error_counts: HashMap<String, u32> = HashMap::new();
+    // v0.10 (FR-I1): 真实重试率的有序调用序列
+    let mut retry_tracker = RetryTracker::default();
     // B: repeat_run 跟踪 (current_tool / current_count, step.end 切时 flush)
     let mut current_tool: Option<String> = None;
     let mut current_count: u32 = 0;
@@ -585,6 +656,8 @@ pub fn aggregate_kimi(path: &Path) -> AppResult<MetaExtras> {
                         if let Some(name) = name {
                             // v0.9.4: tool_usage 累加不依赖 stepUuid/uuid (轻量,只数 name)
                             *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                            // v0.10 (FR-I1): 按 wire 顺序记录一次 tool 调用 (uuid 作 id)
+                            retry_tracker.record_call(uuid.unwrap_or(""), name);
                             // uuid + stepUuid 用于 A: error_count → tool_error 反查 (best-effort,缺则跳过该 tool)
                             if let (Some(uuid), Some(step_uuid)) = (uuid, step_uuid) {
                                 step_to_tool_uuids
@@ -622,6 +695,8 @@ pub fn aggregate_kimi(path: &Path) -> AppResult<MetaExtras> {
                             out.error_count += 1;
                             let parent = ev.get("parentUuid").and_then(|x| x.as_str());
                             if let Some(p) = parent {
+                                // v0.10 (FR-I1): parentUuid 即 tool.call.uuid,回填失败标记
+                                retry_tracker.mark_failed(p);
                                 if let Some(name) = tool_uuid_to_name.get(p) {
                                     *tool_error_counts.entry(name.clone()).or_insert(0) += 1;
                                 }
@@ -639,6 +714,8 @@ pub fn aggregate_kimi(path: &Path) -> AppResult<MetaExtras> {
                             if let Some(su) = &step_uuid {
                                 if let Some(tool_uuids) = step_to_tool_uuids.get(su) {
                                     for tu in tool_uuids {
+                                        // v0.10 (FR-I1): step 级 error 也回填该 step 内 tool 失败
+                                        retry_tracker.mark_failed(tu);
                                         if let Some(name) = tool_uuid_to_name.get(tu) {
                                             *tool_error_counts.entry(name.clone()).or_insert(0) +=
                                                 1;
@@ -803,6 +880,10 @@ pub fn aggregate_kimi(path: &Path) -> AppResult<MetaExtras> {
     out.tool_usage = tool_vec;
     // C: available_models BTreeSet → Vec (字典序)
     out.available_models = model_set.into_iter().collect();
+    // v0.10 (FR-I1): 真实重试率
+    let (retry_count, tool_call_count) = retry_tracker.finalize();
+    out.retry_count = retry_count;
+    out.tool_call_count = tool_call_count;
 
     Ok(out)
 }
@@ -856,6 +937,8 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
     // A: callId → tool name (tool/call 反查 tool/result)
     let mut call_id_to_name: HashMap<String, String> = HashMap::new();
     let mut tool_error_counts: HashMap<String, u32> = HashMap::new();
+    // v0.10 (FR-I1): 真实重试率的有序调用序列
+    let mut retry_tracker = RetryTracker::default();
     // B: repeat_run tracking (consecutive assistant/message 同 tool ≥ REPEAT_RUN_MIN)
     let mut current_tool: Option<String> = None;
     let mut current_count: u32 = 0;
@@ -1029,6 +1112,11 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                                 tool_call_count += 1;
                                 if let Some(name) = part.get("name").and_then(|x| x.as_str()) {
                                     *tool_counts.entry(name.to_string()).or_insert(0) += 1;
+                                    // v0.10 (FR-I1): 按 content[] 顺序记录调用 (part.id 作 id)
+                                    retry_tracker.record_call(
+                                        part.get("id").and_then(|x| x.as_str()).unwrap_or(""),
+                                        name,
+                                    );
                                     // B: repeat_run — 同名累加, 改名 flush
                                     if Some(name) == current_tool.as_deref() {
                                         current_count += 1;
@@ -1094,6 +1182,9 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                 let name = data.and_then(|d| d.get("name")).and_then(|x| x.as_str());
                 if let (Some(cid), Some(n)) = (call_id, name) {
                     call_id_to_name.insert(cid.to_string(), n.to_string());
+                    // v0.10 (FR-I1): 独立 `tool/call` envelope 也记录一次调用。
+                    // 若同一 callId 已在 assistant/message.content[] 记过, record_call 会去重。
+                    retry_tracker.record_call(cid, n);
                     // v0.9.28: 独立 `tool/call` event 也算一次 tool_usage(某些 dsh
                     // session 把 tool-call 信息放在独立 envelope,不在
                     // assistant/message.content[] 内)
@@ -1118,6 +1209,8 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                         .and_then(|s| s.get("callId"))
                         .and_then(|x| x.as_str());
                     if let Some(cid) = call_id {
+                        // v0.10 (FR-I1): 回填该 callId 对应调用的失败标记
+                        retry_tracker.mark_failed(cid);
                         if let Some(name) = call_id_to_name.get(cid) {
                             *tool_error_counts.entry(name.clone()).or_insert(0) += 1;
                         }
@@ -1165,6 +1258,10 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
     // v0.9.28 (M11.3): todo_summary + meta_banner
     out.todo_summary = todo_summary;
     out.meta_banner = Some(banner);
+    // v0.10 (FR-I1): 真实重试率
+    let (retry_count, tool_call_count) = retry_tracker.finalize();
+    out.retry_count = retry_count;
+    out.tool_call_count = tool_call_count;
 
     Ok(out)
 }
@@ -2018,5 +2115,94 @@ mod tests {
             Some("docker"),
             "sandbox/mode 切到 docker 后,permission_mode 应保持 preset 值"
         );
+    }
+
+    // ===== v0.10 (Epic 2 / FR-I1): 真实重试率 =====
+
+    #[test]
+    fn retry_tracker_counts_only_failed_then_same_tool() {
+        // PRD: tool A 失败 → tool A 再调用 计 1 次重试; tool A 失败 → tool B 不算重试
+        let mut t = RetryTracker::default();
+        t.record_call("id1", "Read");
+        t.record_call("id2", "Read");
+        t.record_call("id3", "Bash");
+        t.record_call("id4", "Read");
+        t.mark_failed("id1"); // Read 失败 → 下一个是 Read  : 重试 +1
+        t.mark_failed("id2"); // Read 失败 → 下一个是 Bash  : 不算
+        t.mark_failed("id3"); // Bash 失败 → 下一个是 Read  : 不算
+        let (retries, total) = t.finalize();
+        assert_eq!(total, 4);
+        assert_eq!(retries, 1);
+        assert_eq!((retries as f64) / (total as f64), 0.25);
+    }
+
+    #[test]
+    fn retry_tracker_single_failure_without_retry_is_zero() {
+        // PRD 验收: Given 仅单次失败无重试, Then 重试率 = 0
+        let mut t = RetryTracker::default();
+        t.record_call("id1", "Read");
+        t.mark_failed("id1");
+        let (retries, total) = t.finalize();
+        assert_eq!(total, 1);
+        assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn retry_tracker_dedups_same_call_id() {
+        // dsh: `tool/call` 与 assistant/message.content[] 的 `tool-call` 是同一调用
+        let mut t = RetryTracker::default();
+        t.record_call("tc-1", "Read");
+        t.record_call("tc-1", "Read"); // 重复声明应被去重
+        t.mark_failed("tc-1");
+        assert_eq!(t.finalize(), (0, 1));
+    }
+
+    #[test]
+    fn aggregate_claude_openclaw_real_retry_rate() {
+        // 序列: Read(失败) → Read(成功,重试) → Bash(失败) → Edit(不同名,不算重试)
+        let jsonl = r#"{"type":"assistant","timestamp":"2026-07-08T10:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-1","name":"Read","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-1","content":"err","is_error":true}]}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-2","name":"Read","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:03Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-2","content":"ok"}]}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:04Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-3","name":"Bash","input":{}}]}}
+{"type":"user","timestamp":"2026-07-08T10:00:05Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu-3","content":"err","is_error":true}]}}
+{"type":"assistant","timestamp":"2026-07-08T10:00:06Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu-4","name":"Edit","input":{}}]}}
+"#;
+        let p = write_tmp("retry_claude.jsonl", jsonl);
+        let m = aggregate_claude_openclaw(&p).unwrap();
+        assert_eq!(m.tool_call_count, 4, "分母 = 全部 tool 调用次数");
+        assert_eq!(
+            m.retry_count, 1,
+            "仅 tu-1(Read 失败) → tu-2(Read) 算 1 次重试"
+        );
+    }
+
+    #[test]
+    fn aggregate_kimi_real_retry_rate() {
+        // kimi: tool.call.uuid → tool.result.parentUuid 反查失败;
+        // 真实 wire 的 loop event 包在 `context.append_loop_event.event` 里。
+        let jsonl = "\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"u1\",\"stepUuid\":\"s1\",\"name\":\"Read\"},\"time\":1000}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.result\",\"parentUuid\":\"u1\",\"result\":{\"isError\":true}},\"time\":1001}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.call\",\"uuid\":\"u2\",\"stepUuid\":\"s2\",\"name\":\"Read\"},\"time\":1002}\n\
+{\"type\":\"context.append_loop_event\",\"event\":{\"type\":\"tool.result\",\"parentUuid\":\"u2\",\"result\":{\"isError\":false}},\"time\":1003}\n";
+        let p = write_tmp("retry_kimi.jsonl", jsonl);
+        let m = aggregate_kimi(&p).unwrap();
+        assert_eq!(m.tool_call_count, 2);
+        assert_eq!(m.retry_count, 1);
+    }
+
+    #[test]
+    fn aggregate_dsh_real_retry_rate_dedups_call_envelope() {
+        // dsh: assistant/message 内 tool-call + 独立 tool/call 是同一 callId, 不应重复计数
+        let jsonl = r#"{"type":"assistant/message","seq":1,"time":1000,"data":{"message":{"content":[{"type":"tool-call","id":"c1","name":"Read","arguments":"{}"}]}}}
+{"type":"tool/call","seq":2,"time":1001,"data":{"callId":"c1","name":"Read"}}
+{"type":"tool/result","seq":3,"time":1002,"data":{"message":{"source":{"callId":"c1"},"content":[{"isError":true,"content":"err"}]}}}
+{"type":"assistant/message","seq":4,"time":1003,"data":{"message":{"content":[{"type":"tool-call","id":"c2","name":"Read","arguments":"{}"}]}}}
+"#;
+        let p = write_tmp("retry_dsh.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        assert_eq!(m.tool_call_count, 2, "c1 的两种 envelope 应去重");
+        assert_eq!(m.retry_count, 1, "c1 失败 → c2 同名 Read 计 1 次重试");
     }
 }

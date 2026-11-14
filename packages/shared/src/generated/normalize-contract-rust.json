@@ -1,0 +1,212 @@
+{
+  "cases": [
+    {
+      "blockKinds": [
+        "text"
+      ],
+      "hasError": false,
+      "id": "claude-user-text",
+      "index": 0,
+      "normalized": true,
+      "role": "user",
+      "source": "claude",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "text",
+        "tool_use"
+      ],
+      "hasError": false,
+      "id": "claude-assistant-tool-use-token",
+      "index": 1,
+      "normalized": true,
+      "role": "assistant",
+      "source": "claude",
+      "tokenUsage": {
+        "cacheRead": 50,
+        "cacheWrite": 10,
+        "input": 100,
+        "output": 20
+      }
+    },
+    {
+      "blockKinds": [
+        "text"
+      ],
+      "hasError": true,
+      "id": "claude-assistant-stop-error",
+      "index": 2,
+      "normalized": true,
+      "role": "assistant",
+      "source": "claude",
+      "tokenUsage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "input": 12,
+        "output": 3
+      }
+    },
+    {
+      "blockKinds": [
+        "tool_result"
+      ],
+      "hasError": true,
+      "id": "claude-tool-result-error",
+      "index": 3,
+      "normalized": true,
+      "role": "user",
+      "source": "claude",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "text"
+      ],
+      "hasError": false,
+      "id": "openclaw-message-user-text",
+      "index": 0,
+      "normalized": true,
+      "role": "user",
+      "source": "openclaw",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "tool_use"
+      ],
+      "hasError": false,
+      "id": "openclaw-message-assistant-tool-use",
+      "index": 1,
+      "normalized": true,
+      "role": "assistant",
+      "source": "openclaw",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "tool_result"
+      ],
+      "hasError": true,
+      "id": "openclaw-message-tool-result-error",
+      "index": 2,
+      "normalized": true,
+      "role": "tool",
+      "source": "openclaw",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [],
+      "hasError": false,
+      "id": "openclaw-session-header-skip",
+      "index": 3,
+      "normalized": false,
+      "role": null,
+      "source": "openclaw",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "text"
+      ],
+      "hasError": false,
+      "id": "kimi-turn-prompt",
+      "index": 0,
+      "normalized": true,
+      "role": "user",
+      "source": "kimi",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "text"
+      ],
+      "hasError": false,
+      "id": "kimi-append-message-assistant",
+      "index": 1,
+      "normalized": true,
+      "role": "assistant",
+      "source": "kimi",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "meta"
+      ],
+      "hasError": false,
+      "id": "kimi-metadata-meta",
+      "index": 2,
+      "normalized": true,
+      "role": "meta",
+      "source": "kimi",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [],
+      "hasError": false,
+      "id": "kimi-usage-record-skip",
+      "index": 3,
+      "normalized": false,
+      "role": null,
+      "source": "kimi",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "text"
+      ],
+      "hasError": false,
+      "id": "dsh-user-message",
+      "index": 0,
+      "normalized": true,
+      "role": "user",
+      "source": "dsh",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [
+        "thinking",
+        "text",
+        "tool_use"
+      ],
+      "hasError": false,
+      "id": "dsh-assistant-message-token-tool",
+      "index": 1,
+      "normalized": true,
+      "role": "assistant",
+      "source": "dsh",
+      "tokenUsage": {
+        "cacheRead": 40,
+        "cacheWrite": 5,
+        "input": 80,
+        "output": 12
+      }
+    },
+    {
+      "blockKinds": [
+        "tool_result"
+      ],
+      "hasError": true,
+      "id": "dsh-tool-result-error",
+      "index": 2,
+      "normalized": true,
+      "role": "tool",
+      "source": "dsh",
+      "tokenUsage": null
+    },
+    {
+      "blockKinds": [],
+      "hasError": false,
+      "id": "dsh-streaming-chunk-skip",
+      "index": 3,
+      "normalized": false,
+      "role": null,
+      "source": "dsh",
+      "tokenUsage": null
+    }
+  ],
+  "generator": "cargo test --lib parser::contract::tests::export_normalize_contract_snapshot",
+  "note": "由 Rust parser 归一化投影生成，请勿手工编辑。TS 侧契约测试以此为准。",
+  "source": "rust",
+  "version": 1
+}

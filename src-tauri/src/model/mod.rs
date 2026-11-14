@@ -216,6 +216,13 @@ pub struct SessionMeta {
     /// tool_error 数单个 tool_result.is_error==true 的 tool 调用失败。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_error: Option<Vec<(String, u32)>>,
+    // --- v0.10 (FR-I1): 真实重试率口径,由 meta_aggregator::RetryTracker 在聚合阶段算 ---
+    /// 真实重试次数 — 某 tool 调用失败后,紧随其后出现同名 tool 的下一次调用
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_count: Option<u32>,
+    /// tool 调用总次数(重试率分母) — 同一调用的多 envelope 已去重
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_count: Option<u32>,
     /// v0.8.7 A: parent_uuids (newline-separated UUIDs), GraphView ParentUuid edges 用
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_uuids_text: Option<String>,
@@ -278,8 +285,15 @@ pub struct SubagentMeta {
 }
 
 /// v0.6.0: 单个子代理的摘要(轻量级,Agent 卡片内嵌展开用)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+// v0.10 (Epic 1 / FR-T1): ts-rs 单一事实源 — 与 NormalizedMessage/Block 一并生成到
+// packages/shared/src/generated/normalize-types.ts,前端 @ocsv/shared 复用。
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(
+    export,
+    export_to = "normalize-types.ts",
+    rename = "RustSubagentSummary"
+)]
 pub struct SubagentSummary {
     pub agent_id: String,
     pub description: Option<String>,
@@ -291,6 +305,7 @@ pub struct SubagentSummary {
     pub first_timestamp: Option<String>,
     pub last_timestamp: Option<String>,
     /// 从 first 到 last 的秒数(None 当时间不可解析)
+    #[ts(type = "number | null")]
     pub duration_seconds: Option<u64>,
 }
 
