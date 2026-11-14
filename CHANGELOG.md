@@ -4,15 +4,55 @@
 
 ## [Unreleased]
 
+### v0.10 洞察真实化（技术债治理 + G2 OLAP 真实化）
+
+按 `docs/PRD_v0.10_Insight_Realization.md` 落地双 Epic（FR-T1~T4 / FR-I1~I3）。
+
+- **Epic 1 技术债治理**
+  - FR-T1/T2: Rust `NormalizedMessage` / `NormalizedBlock` / `TokenUsageOut` /
+    `SubagentSummary` 标注 `#[derive(ts_rs::TS)]` 作为唯一事实源;
+    `cargo test --lib` 把类型确定性写到 `packages/shared/src/generated/normalize-types.ts`,
+    契约快照写到 `.../normalize-contract-rust.json`。新增 `pnpm codegen` 脚本;
+    CI 在 Rust 测试后用 `git diff --exit-code` 门禁、且把 Typecheck 移到生成之后,
+    产物不一致即阻断合并。`src-tauri/bindings/`(ts-rs 默认导出)改为忽略的构建产物。
+  - FR-T3: `api.ts` 删除 `NormalizedMessageFE` / `NormalizedBlockFE` 弱类型,
+    渲染链路统一消费 `@ocsv/shared` 强类型,全量 typecheck 通过。
+  - FR-T4: 4 种 source 脱敏样本 + Rust/TS 双侧归一化契约测试
+    (`packages/shared/src/contract.test.ts`),锁定 role / blockKinds / tokenUsage /
+    hasError,任一字段不一致即 FAIL 并打印差异。
+  - 范围决策: `NormalizedBlock` 的 `data` 是开放 `serde_json::Map`(约 19 种自定义
+    kind),ts-rs 无法生成闭合 union;shared 保留手写开放 interface +
+    `[k: string]: unknown`,由契约测试门禁保证不漂移,而非强行生成错误类型。
+- **Epic 2 G2 真实化**
+  - FR-I1: `meta_aggregator::RetryTracker` 按 wire 顺序记录 tool 调用,失败结果
+    通过 id 回填,`windows(2)` 判定"失败后紧随同名调用";产出
+    `retry_count` / `tool_call_count`,3 个聚合入口(claude/openclaw/kimi/dsh)全接入。
+    字段经 `MetaExtras → SessionMeta → session_meta` 两列(含老 DB `ALTER TABLE` 迁移)
+    → `JOIN_SELECT_BASE` → `GraphNodeFE` → 前端 `SessionNode`。Analytics 把
+    error 分桶 pie 换成真实重试率数值卡 + 按 source 明细 + 口径说明。
+  - FR-I2: `analytics.ts::foldSubagents` / `foldGraphEntries` 把 subagent 的
+    token/error/tool 调用/retry 归并到 parent(支持多级递归 + 环保护),子会话
+    不再作为独立会话重复加总,edges 挂到 parent 不丢调用;孤儿与 dsh(缺
+    `parent_uuid`)按 PRD 降级独立计。列表项显示"含 N 个"折叠标记。
+    注: `is_subagent_root` / `parent_session_id` 沿用 `commands/graph.rs`
+    由 `subagent_ids_json` 反向 map 派生的等价标记,未重复在 parser 加字段。
+  - FR-I3: `sessionsByDay` 拆成 Claude / OpenClaw / Kimi / DeepSeekHarness
+    四个独立桶(此前 Kimi/dsh 被静默算进 Claude);新增
+    `crossSourceByModel` 同模型跨 source 对齐表 + `retryRateBySource` /
+    `sessionsBySource`,分组 key 含 source,不串源。
+- 口径文档: PRD RTM 已更新为"已实现",并列出上述实现决策与降级项。
+- 回归: `cargo test --lib` 391 / shared vitest 57 / frontend vitest 702 /
+  `cargo fmt -- --check` + `clippy -D warnings` 全绿;CI 参数下 Playwright E2E 20/20。
+  (本地 `fullyParallel` 多 worker 下 `content-filter.spec.ts` 仍偶发 click 超时,
+  属 11-14 已记录的既有抖动;CI 用单 worker + retries 稳定。)
+
 ### 已知技术债 / 改进方向
 
-- **双份手写归一化**: `packages/shared/src/normalize.ts` 与 `src-tauri/src/parser/*.rs`
-  各实现一份 wire → 归一化逻辑,无 ts-rs / Zod / 代码生成保证两边一致。新增或修改字段时
-  必须手动同步 Rust 与 TS 两侧,否则会出现静默的解析 / 渲染错位。改进方向:抽取共享
-  schema 或引入代码生成。
-- **渲染层未复用 shared 强类型**: 前端 `packages/frontend/src/lib/api.ts` 自行定义
-  `NormalizedMessageFE` / `NormalizedBlockFE`(弱类型),未采用 `@ocsv/shared` 的
-  `NormalizedMessage` / `NormalizedBlock`。改进方向:让渲染链路统一到 shared 类型。
+- **双份手写归一化**: ~~无代码生成保证两侧一致~~ → v0.10 已由 ts-rs 类型生成 +
+  4 source 契约测试门禁覆盖。剩余风险是开放 `data` 字典里的自定义 kind 取值,
+  新增 kind 时仍需补契约样本(见上"范围决策")。
+- **渲染层弱类型**: ~~`api.ts` 自定 `NormalizedMessageFE` / `NormalizedBlockFE`~~
+  → v0.10 已删除,渲染链路统一到 `@ocsv/shared` 强类型(grep 断言无 FE 残留)。
 - **i18n**: 框架层已支持 `en-US` / `zh-CN` 切换(设置页选择即生效,启动按已保存语言加载);
   组件级文案迁移到 `t()` 已完成(已合并 main,`en-US` 下组件文案现已翻译),断言中文的
   测试已同步更新。`zh-CN` / `en-US` 资源位于 `packages/frontend/src/i18n/`。

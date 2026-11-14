@@ -8,6 +8,9 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/WixTools/
+# v0.10 (FR-T2): #[ts(export)] 自动导出的默认目录,是构建产物;
+# 受控产物在 packages/shared/src/generated/(纳入版本控制 + CI 门禁)
+src-tauri/bindings/
 
 # Claude Code 自身的工作目录(避免污染项目)
 .claude/

@@ -16,6 +16,9 @@
     "typecheck": "pnpm -r typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,css,md}\"",
     "format:rust": "cd src-tauri && cargo fmt",
+    "codegen:types": "cargo test --manifest-path src-tauri/Cargo.toml --lib parser::codegen::tests::export_normalize_types",
+    "codegen:contract": "cargo test --manifest-path src-tauri/Cargo.toml --lib parser::contract::tests::export_normalize_contract_snapshot",
+    "codegen": "pnpm codegen:types && pnpm codegen:contract",
     "build:icon": "node scripts/build-icon.mjs",
     "build:icons": "pnpm build:icon && pnpm tauri icon src-tauri/icons/icon.png",
     "prepare": "husky"

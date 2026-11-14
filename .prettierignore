@@ -3,6 +3,9 @@ dist/
 target/
 src-tauri/target/
 src-tauri/gen/
+# v0.10 (FR-T2): ts-rs / 契约快照生成产物,交给 CI 的 git diff 门禁,不要被 prettier 改写
+packages/shared/src/generated/
+src-tauri/bindings/
 **/*.json
 !package.json
 !tsconfig*.json
