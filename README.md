@@ -200,6 +200,7 @@ sudo xattr -rd com.apple.quarantine /Applications/OpenClaw\ Session\ Viewer.app
 
 近期 release timeline:
 
+- **v0.11.0** — 会话体检：可配置规则 + 可解释标签、体检 tab 分布/Top 风险/下钻、阈值本地持久化；C1 dsh 不同 id 去重（评测集 29 例）
 - **v0.10.0** — 洞察真实化：真实重试率、subagent→parent 折叠、跨 source 对比；ts-rs 类型生成 + 归一化契约测试 + CI 门禁
 - **v0.9.30** — 隐私治理:删除真实会话 fixture、用户路径脱敏、`fixtures/` 整目录忽略
 - **v0.9.29** — M11.1~M11.5 dsh 修复、`first_prompt` 持久化、隐私脱敏

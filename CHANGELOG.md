@@ -4,6 +4,49 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-15
+
+### 会话体检（B1 / B2 / B3）+ C1 dsh 去重鲁棒性
+
+按 `docs/ROADMAP_v0.11_Plan.md`（v1.2）与 `docs/PRD_v0.11_Session_Health_Check.md` 落地。
+
+- **B1 异常会话标记（FR-H1）**：新增 `packages/frontend/src/views/graph/health.ts` 纯函数规则引擎，
+  四条可配置规则 —— `error_count ≥ 20`、`token_total > μ + 3σ`（总体标准差）、
+  `subagent_count ≥ 10`、`available_models.length ≥ 2`（同会话模型漂移）。
+  每条标记输出**可解释标签**（命中规则 + 实际值 + 阈值 + hover 判定依据），不做黑盒评分。
+  样本 < 2 或 σ = 0 时不判定离群；阈值经 `normalizeHealthRules()` clamp，NaN / 负数 /
+  越界值回退默认；字段缺失静默跳过，空数据不报错。
+- **数据链路**：`commands/graph.rs` 的 `list_graph` 增读 `available_models_json`
+  （`GraphNodeFE.available_models`，NULL 降级空数组），前端 `SessionNode` 同步增可选字段。
+  体检与 G2 Analytics **共用 `foldGraphEntries()` 折叠后的 nodes**，不产生第二套汇总口径。
+- **B2 全局体检报告（FR-H2）**：`GraphExplorerRoute` 新增 `?view=health` 深链与「G4 体检」tab；
+  `HealthView.tsx` 提供 KPI、按规则 / 按 source 分布图、Top 风险会话表（点击下钻
+  `/session/:id`）、空数据空状态与口径说明。新增 `health_view_open` 本地事件，
+  零上传门禁扫描文件由 3 个扩到 4 个并增加事件落地断言。
+- **B3 阈值配置与持久化（RK-V1）**：`HealthRulesConfig` 定义在 `@ocsv/shared`（单一事实源），
+  Rust `commands/settings.rs` 用 `#[serde(default)]` 兼容老 `settings.json`；设置页新增
+  4 组开关 / 数值输入 + 恢复默认值，保存后体检页自动重算、重启保留。
+- **C1 dsh 去重鲁棒性**：`RetryTracker` 增 `alias_id` / `mark_failed_by_name`，
+  `aggregate_dsh` 按「工具名 + wire 顺序」FIFO 配对两种 envelope 的不同 id，
+  `source.callId` 为第三种取值时按最近同名未失败调用 best-effort 回填。
+  评测集 26 → 29 例，`pnpm eval:retry` 实测 **100.00%（29/29）**。
+- **文档**：新增 `docs/PRD_v0.11_Session_Health_Check.md`；ROADMAP 升 v1.2
+  （RTM 的 B1/B2/B3/C1 标为已实现，C2/C3 待排期）；QA 核验报告新增第九章复核
+  （不改第一~八章历史判定）；评测报告更新样本数与 C1 说明；README 时间线补 v0.11.0；
+  6 处版本 bump 至 `0.11.0`。
+- **全量回归（全绿）**：`cargo test --lib` **413/413**（新增 10 项）、`cargo fmt -- --check` /
+  `clippy --all-targets -D warnings` 通过；`pnpm typecheck` 0；shared vitest **57/57**、
+  frontend vitest **727/727**（新增 16 项体检规则）；`pnpm build` 成功
+  （主 chunk 669.38 kB / gzip 204.23 kB，未回归）；`CI=1` Playwright E2E **22/22**
+  （22.8s，单 worker）；`git diff --exit-code -- packages/shared/src/generated/` 为 0；
+  FE grep / 零上传 / 评测集准确率 / P95 四个门禁全部通过。
+
+**保留边界（不得写成已通过）**：FR-T1 双份手写归一化根因未消除（按 ROADMAP 第四章
+Won't 不重写）；A2 的 100% 是人工标注集准确率、非真实生产分布（RK-V3 未消除）；
+A3 的 `<500ms` 仍是估算预算、无 9000+ 行大会话 P95 实测值；
+「体检标记有用率 ≥70%」缺「用户确认有用」反馈入口、指标仍不可测；
+C2 / C3 待排期；dsh `parent_uuid` 折叠降级仍在。
+
 ### v0.10 验收收口（v0.11 规划 A 组 A0–A5 全部完成）
 
 按 `docs/QA_v0.10_Acceptance_Verification.md` 与 `docs/ROADMAP_v0.11_Plan.md`，
@@ -38,8 +81,8 @@
   `pnpm assert:p95`；`.husky/pre-commit` 同步加零上传门禁。
 - 文档：`ROADMAP_v0.11_Plan.md` 的 A0–A5 RTM 标为已实现并留变更记录；
   PRD 升 v1.3 补 15.6 收口复核；QA 核验报告新增第八章复核记录（不篡改原结论）。
-- 版本说明：`v0.10.0` tag 保持为功能封版基线，以上收口改动合入 `main`；
-  若需要包含收口补丁的发布版本，另按 `docs/RELEASING.md` bump `0.10.1`。
+- 版本说明：`v0.10.0` tag 保持为功能封版基线、不回改；以上收口补丁与本版 B 组改动
+  一同在 `v0.11.0` 发布（遵循 `docs/RELEASING.md`「tag 之后的 fix 累积到下一版本」）。
 - 全量回归（全绿）：`cargo test --lib` **403/403**（新增 12 项 A1/A2/A3 测试）、
   `cargo fmt -- --check` / `cargo clippy --all-targets -- -D warnings` 通过；
   `pnpm typecheck` 0；shared vitest **57/57**、frontend vitest **711/711**
