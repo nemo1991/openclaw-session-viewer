@@ -4,6 +4,64 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-15
+
+### 首页减负与操作简化（A1/A2 + B1/C1/C2 + Could）
+
+按 `docs/ROADMAP_v0.12_UI_Simplification.md`、`docs/PRD_v0.12_Navigation.md`、
+`docs/PRD_v0.12_Home_Simplification.md` 落地，覆盖 v0.12 的 A / B / C 主线。
+
+- **A1/A2 统一一级导航（方案 α）**：新增 `components/AppLayout.tsx` + `AppLayout.css`，
+  `App.tsx` 用其包裹 `<Routes>`，左侧 `SideNav` 常驻 7 项（会话 / 图探索 / 分析 /
+  体检 / 知识问答 / 工具 / 设置），「体检」一步直达 `/graph?view=health`；Logo 可点回首页。
+  高亮以 `useLocation`（path + `?view=`）为唯一真相源，与 `explorer-tabs` 天然双向同步，
+  **`?view=` 深链与 `health-tab` testid 原样保留**。`SessionsRoute` 顶部冗余的
+  graph / tools / settings 图标移除，`search` / `refresh` 保留为首页上下文操作；
+  zh-CN / en-US 同步新增 `nav.*` 文案。
+- **B1 筛选收敛（FR-F1/F2/F3）**：`sessionsStore` 的 `source` 扩为含 `"all"` 并设为默认
+  （修复开箱只能看 openclaw），`filteredSessions` 在 `all` 时跳过 source 过滤；
+  新增 `DEFAULT_SESSIONS_FILTER` 与 `resetFilter()` 作为单一归位入口。首页筛选区拆为
+  「常驻区」（5 个 source radio 含「全部」+ 搜索框 = 6 控件）与默认折叠的「高级筛选」
+  （liveOnly / hasSubagents / last7Days / agent / showHidden / showArchived，
+  `aria-expanded` 按钮），新增「重置筛选」同步复位本地 `showHidden` / `showArchived`。
+- **FR-F4（Could）**：高级筛选展开态用 localStorage 持久化，重启保留。
+- **C1 卡片分层（FR-C1）**：新增 `routes/sessionCardChips.ts` 纯函数，按
+  `error > repeat > duration` 优先、其余折叠，卡片默认只露 ≤3 个 stat-chip，
+  「展开 / 收起」切换显示原有全部 chip 与 topTools。
+- **C2 风险徽标前置（FR-C2）**：新增 `views/graph/healthBridge.ts`，首页消费
+  `useGraphStore.entries`（空则懒触发一次 `load()`）+ `settings.healthRules`，
+  `useMemo` 执行 `foldGraphEntries` → `evaluateHealth` →
+  `Map<session_id, FlaggedSession>`。**强制复用 v0.11 引擎，零第二套口径**；
+  命中卡片叠加「风险(N)」徽标（hover 显示规则 / 实际值 / 阈值，`aria-label` 含命中数），
+  点击直达 `/graph?view=health`。entries 加载中 / 为空 / 脏数据均返回空索引、不阻塞首屏。
+- **FR-C3（Could，D4）**：卡片操作区重命名改为显式文字按钮（保留双击标题），
+  补 `aria-label` / testid。
+- **文档**：三份 v0.12 PRD 的 RTM 与实施记录回填、ROADMAP 升 v1.1、README 时间线、
+  6 处版本 bump 至 `0.12.0`；i18n 两组语言同步。
+- **全量回归（全绿）**：`cargo test --lib` **413/413**、`cargo fmt -- --check` /
+  `clippy --all-targets -D warnings` 通过；`pnpm typecheck` 0；shared **57/57**、
+  frontend **748/748**（新增 21 项：B1 5 / C1 7 / C2 9）；`pnpm build` 成功
+  （主 chunk 687.75 kB / gzip 210.04 kB，较 v0.11 +18 kB，因首页复用体检计算模块）；
+  `CI=1` Playwright E2E **30/30**（新增 8 项）；四个门禁与 generated 产物幂等通过。
+
+**按代码事实修正的 PRD 偏差（不改写 PRD 历史判定，仅登记）**
+
+1. PRD 描述的 `?source=` 分享 / 书签深链在代码中**不存在**（`SessionsRoute` 无
+   `URLSearchParams`），本期未引入该解析，单 source 单选行为不变。
+2. PRD §5.2 把「带 `subagentDir` 的卡片」当作子会话；实际 `subagentDir` 表示
+   **该会话拥有子会话目录（即 parent）**，首页用它渲染 `⎇ N` 徽标。若按字面排除
+   会把全部 parent 卡片排除、徽标几乎不显示。实现改为按 `foldGraphEntries` 折叠后的
+   `node.session_id` 精确匹配；子会话 id 不在索引中，自然不重复计数。
+3. PRD 称「重命名仅靠双击」；实际已有 `✎` 按钮但无文字标签，FR-C3 改为显式文字 + 保留双击。
+4. PRD 依赖表写 `useSettingsStore.healthRules`；实际读取为
+   `useSettingsStore((s) => s.settings.healthRules)`（v0.11 既有形态）。
+5. v0.12 的 A1 在代码里原本未实现（PRD 写「已拍板先行」），本版与 B / C 组一并落地。
+
+**保留边界（不得写成已通过）**：D1 / D2 / D3（悬浮菜单 / 阈值内联 / 快捷键提示）未开发；
+C2 徽标直达**全局体检页**，未内嵌单条会话专属体检详情（留 v0.12.x）；
+v0.11 五项保留边界仍有效（FR-T1 部分实现、A2 标注集准确率、A3 无真实 P95、
+标记有用率不可测、C2 / C3 待排期）；本期不新增任何埋点与网络上报（D-2）。
+
 ## [0.11.0] - 2026-11-15
 
 ### 会话体检（B1 / B2 / B3）+ C1 dsh 去重鲁棒性
