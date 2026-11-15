@@ -35,6 +35,12 @@ export interface SessionNode {
   assistant_text_snippets?: string[];
   /** S6: subagent 的 agent-id (e.g. "agent-a4aa77")。main session 永远为 null */
   agent_id?: string | null;
+  /**
+   * v0.11 (B1): 该会话出现过的 model id 列表(来自 `session_meta.available_models_json`)。
+   * 用于「同会话模型漂移」体检规则。老库 / 部分 source 可能没有该列,故可选;
+   * 缺失时该规则不参与判定,不臆造模型信息。
+   */
+  available_models?: string[];
 }
 
 export type Edge =

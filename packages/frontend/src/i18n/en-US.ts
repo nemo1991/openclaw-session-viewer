@@ -251,6 +251,25 @@ const enUS = {
       allowRelaxedHint:
         "With this on, reveal is still guarded by assert_within_any_root against sensitive paths like ~/.ssh, but allows cross-workspace",
     },
+    // v0.11 (B3): session health check rule thresholds
+    healthCheck: {
+      title: "Session health check",
+      hint: "These thresholds are estimates, not research findings. Saving recalculates flags immediately. Config is stored in the local settings.json only, survives restarts, and is never uploaded.",
+      enabled: "Enabled",
+      threshold: "Threshold",
+      highErrors: "High error count",
+      highErrorsHint: "Flag a session when error_count >= threshold",
+      tokenOutlier: "Token outlier",
+      tokenSigma: "Sigma multiplier",
+      tokenSigmaHint:
+        "Flag when token_total > mean + N x population stddev; skipped if samples < 2 or stddev = 0",
+      subagents: "Too many subagents",
+      subagentsHint: "Flag a session when subagent_count >= threshold",
+      modelDrift: "In-session model drift",
+      modelDriftMinModels: "Minimum model count",
+      modelDriftHint: "Flag when available_models >= N; sources without that field are skipped",
+      reset: "Restore defaults",
+    },
   },
   blocks: {
     thinking: "Thinking",

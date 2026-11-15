@@ -25,6 +25,8 @@ const TELEMETRY_FILES = [
   "src-tauri/src/db/event_log.rs",
   "src-tauri/src/commands/events.rs",
   "packages/frontend/src/lib/eventsApi.ts",
+  // v0.11 (B2): 体检 tab 也是埋点调用点,必须一起纳入零上传扫描
+  "packages/frontend/src/views/graph/HealthView.tsx",
 ];
 
 const FORBIDDEN_NET = [
@@ -92,6 +94,15 @@ if (!view.includes('eventName: "analytics_ready"')) {
   errors.push("A3: AnalyticsView.tsx 缺少首屏耗时 analytics_ready 事件");
 }
 
+// 2b) v0.11 (B2): 体检 tab 的本地事件必须在 Rust 白名单与前端调用点同时存在
+const healthView = read("packages/frontend/src/views/graph/HealthView.tsx");
+if (!rustConstants.includes('"health_view_open"')) {
+  errors.push("Rust 事件常量缺失: health_view_open");
+}
+if (!healthView.includes('eventName: "health_view_open"')) {
+  errors.push("HealthView.tsx 缺少 health_view_open 的埋点调用");
+}
+
 // 3) 新库 / 老库两处 DDL
 for (const rel of ["src-tauri/src/db/schema.rs", "src-tauri/src/db/migrations.rs"]) {
   if (!read(rel).includes("CREATE TABLE IF NOT EXISTS event_log")) {
@@ -116,6 +127,6 @@ if (errors.length > 0) {
 
 console.log(
   `A1 门禁通过:${TELEMETRY_FILES.length} 个埋点文件零网络 API,` +
-    `3 个 PRD 事件 + analytics_ready 已落地,新/老库 DDL 与 command 注册齐备。`
+    `3 个 PRD 事件 + analytics_ready + health_view_open 已落地,新/老库 DDL 与 command 注册齐备。`
 );
 console.log(`  扫描文件:${TELEMETRY_FILES.map((f) => relative(ROOT, join(ROOT, f))).join(", ")}`);

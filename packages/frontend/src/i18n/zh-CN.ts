@@ -249,6 +249,24 @@ const zhCN = {
       allowRelaxedHint:
         "打开后 reveal 仍受 assert_within_any_root 兜底防 ~/.ssh 等敏感路径, 但允许跨 workspace",
     },
+    // v0.11 (B3): 会话体检规则阈值
+    healthCheck: {
+      title: "会话体检",
+      hint: "以下阈值为估算默认值,不是调研结论。修改并保存后立即重算标记;配置只写入本地 settings.json,重启应用后仍保留,不会上传。",
+      enabled: "启用",
+      threshold: "阈值",
+      highErrors: "高错误数",
+      highErrorsHint: "会话 error_count ≥ 阈值时标记",
+      tokenOutlier: "token 离群",
+      tokenSigma: "离群倍数 (σ)",
+      tokenSigmaHint: "token_total > 均值 + N×总体标准差时标记;样本不足或标准差为 0 时不判定",
+      subagents: "子会话过多",
+      subagentsHint: "subagent_count ≥ 阈值时标记",
+      modelDrift: "同会话模型漂移",
+      modelDriftMinModels: "模型数下限",
+      modelDriftHint: "available_models ≥ N 个模型时标记;缺少该字段的 source 不参与判定",
+      reset: "恢复默认值",
+    },
   },
   blocks: {
     thinking: "思考",

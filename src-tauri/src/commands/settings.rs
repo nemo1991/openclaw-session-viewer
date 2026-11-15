@@ -32,6 +32,40 @@ pub struct CustomRootConfig {
     pub kind: String,
 }
 
+/// v0.11 (B3): 会话体检规则阈值(估算默认值,可在设置页修改)。
+///
+/// 与 `packages/shared/src/ipc.ts::HealthRulesConfig` 字段一一对应 ——
+/// camelCase 序列化直接写进 settings.json。struct 级 `#[serde(default)]` 保证
+/// 老配置(没有该字段)或只写了部分字段的配置都能安全读出,不阻断应用启动。
+/// 默认值必须与 TS 侧 `DEFAULT_HEALTH_RULES` 保持一致(下方单测锁定)。
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct HealthRulesConfig {
+    pub high_errors_enabled: bool,
+    pub high_errors_threshold: u32,
+    pub token_outlier_enabled: bool,
+    pub token_sigma: f64,
+    pub subagents_enabled: bool,
+    pub subagents_threshold: u32,
+    pub model_drift_enabled: bool,
+    pub model_drift_min_models: u32,
+}
+
+impl Default for HealthRulesConfig {
+    fn default() -> Self {
+        Self {
+            high_errors_enabled: true,
+            high_errors_threshold: 20,
+            token_outlier_enabled: true,
+            token_sigma: 3.0,
+            subagents_enabled: true,
+            subagents_threshold: 10,
+            model_drift_enabled: true,
+            model_drift_min_models: 2,
+        }
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -45,6 +79,9 @@ pub struct AppSettings {
     /// v0.4.2: 时区。"auto" 或 IANA 名(Asia/Shanghai 等)。None = auto
     #[serde(default)]
     pub timezone: Option<String>,
+    /// v0.11 (B3): 体检规则阈值,写入本地 settings.json,重启后保留
+    #[serde(default)]
+    pub health_rules: HealthRulesConfig,
 }
 
 impl Default for AppSettings {
@@ -61,6 +98,7 @@ impl Default for AppSettings {
             default_export_dir: None,
             custom_roots: vec![],
             timezone: None,
+            health_rules: HealthRulesConfig::default(),
         }
     }
 }
@@ -139,3 +177,70 @@ pub async fn save_settings(
 
 #[allow(dead_code)]
 fn _ensure_state(_s: &Arc<AppState>) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 老 settings.json(v0.10 及以前)没有 healthRules 字段 —— 必须仍能读出,
+    /// 且自动补齐估算默认值,不能因为新增字段导致应用启动失败。
+    #[test]
+    fn legacy_settings_without_health_rules_deserializes_with_defaults() {
+        let legacy = r#"{
+            "anthropic": {
+                "baseUrl": "https://api.anthropic.com",
+                "apiKey": "",
+                "model": "claude-sonnet-4-6",
+                "maxTokens": 4096
+            },
+            "theme": "dark",
+            "uiLanguage": "zh-CN",
+            "defaultExportDir": null,
+            "customRoots": [],
+            "timezone": "auto"
+        }"#;
+        let s: AppSettings = serde_json::from_str(legacy).expect("老配置必须能反序列化");
+        assert_eq!(s.health_rules, HealthRulesConfig::default());
+        assert_eq!(s.ui_language, "zh-CN");
+    }
+
+    /// 锁住 Rust ↔ TS 默认值一致:改了一边而忘了另一边,这里立刻失败。
+    #[test]
+    fn health_rules_defaults_match_ts_contract() {
+        let d = HealthRulesConfig::default();
+        assert!(d.high_errors_enabled);
+        assert_eq!(d.high_errors_threshold, 20);
+        assert!(d.token_outlier_enabled);
+        assert_eq!(d.token_sigma, 3.0);
+        assert!(d.subagents_enabled);
+        assert_eq!(d.subagents_threshold, 10);
+        assert!(d.model_drift_enabled);
+        assert_eq!(d.model_drift_min_models, 2);
+    }
+
+    /// 设置页改阈值 → save_settings 写盘 → 重启读出,key 必须是 camelCase 且值不丢。
+    #[test]
+    fn health_rules_round_trip_uses_camel_case_keys() {
+        let mut s = AppSettings::default();
+        s.health_rules.high_errors_threshold = 30;
+        s.health_rules.high_errors_enabled = false;
+        let json = serde_json::to_string(&s).expect("serialize settings");
+        assert!(json.contains("\"healthRules\""), "根 key 应为 camelCase");
+        assert!(json.contains("\"highErrorsThreshold\":30"));
+        assert!(json.contains("\"highErrorsEnabled\":false"));
+        let back: AppSettings = serde_json::from_str(&json).expect("deserialize settings");
+        assert_eq!(back.health_rules, s.health_rules);
+    }
+
+    /// 手改 settings.json 只写两个字段时,其余字段用默认值补齐(struct 级 serde default)。
+    #[test]
+    fn partial_health_rules_json_fills_missing_fields_with_defaults() {
+        let partial = r#"{"highErrorsThreshold":30,"tokenSigma":2.5}"#;
+        let r: HealthRulesConfig = serde_json::from_str(partial).expect("部分配置必须可读");
+        assert_eq!(r.high_errors_threshold, 30);
+        assert_eq!(r.token_sigma, 2.5);
+        assert_eq!(r.subagents_threshold, 10);
+        assert_eq!(r.model_drift_min_models, 2);
+        assert!(r.high_errors_enabled);
+    }
+}

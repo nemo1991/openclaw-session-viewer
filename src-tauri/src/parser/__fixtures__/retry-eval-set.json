@@ -322,6 +322,45 @@
         { "type": "assistant/message", "seq": 2, "time": 1001, "data": { "message": { "content": [{ "type": "tool-call", "id": "c2", "name": "Read", "arguments": "{}" }] } } }
       ],
       "expected": { "retryCount": 0, "toolCallCount": 2 }
+    },
+    {
+      "id": "dsh-dedup-mismatched-ids",
+      "source": "dsh",
+      "label": "C1: part.id / tool-call.callId / source.callId 取值不一致(后两者相同) → 去重后 1 次重试",
+      "edge": "dedup",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "part-1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/call", "seq": 2, "time": 1001, "data": { "callId": "call-1", "name": "Read" } },
+        { "type": "tool/result", "seq": 3, "time": 1002, "data": { "message": { "source": { "callId": "call-1" }, "content": [{ "isError": true, "content": "err" }] } } },
+        { "type": "assistant/message", "seq": 4, "time": 1003, "data": { "message": { "content": [{ "type": "tool-call", "id": "part-2", "name": "Read", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "dsh-dedup-result-uses-part-id",
+      "source": "dsh",
+      "label": "C1: source.callId 用 part.id 而 tool/call 用另一值 → 精确命中 canonical",
+      "edge": "dedup",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "part-1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/call", "seq": 2, "time": 1001, "data": { "callId": "call-1", "name": "Read" } },
+        { "type": "tool/result", "seq": 3, "time": 1002, "data": { "message": { "source": { "callId": "part-1" }, "content": [{ "isError": true, "content": "err" }] } } },
+        { "type": "assistant/message", "seq": 4, "time": 1003, "data": { "message": { "content": [{ "type": "tool-call", "id": "part-2", "name": "Read", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
+    },
+    {
+      "id": "dsh-dedup-third-result-id",
+      "source": "dsh",
+      "label": "C1: 三种 id 互不相同 → 按工具名 best-effort 回填,不重复计数",
+      "edge": "dedup",
+      "wire": [
+        { "type": "assistant/message", "seq": 1, "time": 1000, "data": { "message": { "content": [{ "type": "tool-call", "id": "part-1", "name": "Read", "arguments": "{}" }] } } },
+        { "type": "tool/call", "seq": 2, "time": 1001, "data": { "callId": "call-1", "name": "Read" } },
+        { "type": "tool/result", "seq": 3, "time": 1002, "data": { "message": { "source": { "callId": "third-1" }, "content": [{ "isError": true, "content": "err" }] } } },
+        { "type": "assistant/message", "seq": 4, "time": 1003, "data": { "message": { "content": [{ "type": "tool-call", "id": "part-2", "name": "Read", "arguments": "{}" }] } } }
+      ],
+      "expected": { "retryCount": 1, "toolCallCount": 2 }
     }
   ]
 }

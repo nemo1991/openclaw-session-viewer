@@ -288,3 +288,21 @@
   color: var(--color-text-muted);
   padding: 4px 0;
 }
+
+/* v0.11 (B3): 会话体检规则阈值配置 */
+.health-rules-section .health-rule-threshold {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.health-rules-section .health-rule-threshold input {
+  width: 96px;
+}
+
+.health-rules-section > button.secondary {
+  margin-top: 8px;
+}

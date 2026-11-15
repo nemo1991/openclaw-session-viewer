@@ -11,6 +11,7 @@
 //! - `source_dimension_select`  切换 source 维度
 //! - `retry_rate_displayed`     真实重试率数值卡渲染
 //! - `analytics_ready`          A3: 打开 → 首屏可交互耗时 (duration_ms)
+//! - `health_view_open`         v0.11 (B2): 打开会话体检 tab
 //!
 //! 表 `event_log` 由 `db/schema.rs::SCHEMA_SQL`(新库)与
 //! `db/migrations.rs::NEW_TABLES`(老库)两处幂等创建。
@@ -26,13 +27,16 @@ pub const EVENT_SOURCE_DIMENSION_SELECT: &str = "source_dimension_select";
 pub const EVENT_RETRY_RATE_DISPLAYED: &str = "retry_rate_displayed";
 /// A3: 打开 Analytics → 首屏可交互的耗时,写入 duration_ms
 pub const EVENT_ANALYTICS_READY: &str = "analytics_ready";
+/// v0.11 (B2): 打开体检 tab,为「体检标记有用率」指标提供本地数据底座
+pub const EVENT_HEALTH_VIEW_OPEN: &str = "health_view_open";
 
-/// command 侧白名单 — 只允许这四个事件名入库,避免前端把任意字符串写进本地 DB
+/// command 侧白名单 — 只允许这些事件名入库,避免前端把任意字符串写进本地 DB
 pub const ALLOWED_EVENTS: &[&str] = &[
     EVENT_ANALYTICS_VIEW_OPEN,
     EVENT_SOURCE_DIMENSION_SELECT,
     EVENT_RETRY_RATE_DISPLAYED,
     EVENT_ANALYTICS_READY,
+    EVENT_HEALTH_VIEW_OPEN,
 ];
 
 /// A3 门槛(PRD 估算目标 <500ms)。真实阈值待运行期采集校正,不作为生产硬失败。

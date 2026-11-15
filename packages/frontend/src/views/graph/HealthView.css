@@ -1,0 +1,84 @@
+/* v0.11 (B2): 会话体检 tab 样式
+ * 复用 AnalyticsView.css 的 .analytics-view / .kpi / .chart-card / .token-table 基础样式,
+ * 本文件只补体检页特有布局,颜色一律走 theme tokens(浅/深主题都可读)。
+ */
+
+.health-kpi-row {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.health-rule-summary {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46%;
+}
+
+.health-note {
+  background: var(--color-panel);
+  border: 1px solid var(--color-panel-border);
+  border-left: 3px solid var(--color-primary);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--color-text-muted);
+}
+
+.health-empty {
+  background: var(--color-panel);
+  border: 1px dashed var(--color-input-border);
+  border-radius: 6px;
+  padding: 28px 20px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.health-empty h3 {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.health-empty p {
+  font-size: 12px;
+  margin: 0;
+}
+
+.health-table-card {
+  margin-bottom: 16px;
+  overflow: auto;
+}
+
+.health-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.health-flag {
+  display: inline-block;
+  background: var(--color-primary-bg);
+  border: 1px solid var(--color-warning);
+  color: var(--color-text);
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+@media (max-width: 900px) {
+  .health-kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .health-rule-summary {
+    display: none;
+  }
+}

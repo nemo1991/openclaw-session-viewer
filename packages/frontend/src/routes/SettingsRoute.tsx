@@ -13,11 +13,17 @@ import {
   Database,
   ExternalLink,
   ShieldCheck,
+  Activity,
 } from "lucide-react";
 
 import { useSettingsStore } from "../state/settingsStore";
 import { apiPickExportDir, apiRevealInFinder } from "../lib/api";
-import type { CustomRootConfig, CustomRootKind } from "@ocsv/shared";
+import {
+  DEFAULT_HEALTH_RULES,
+  type CustomRootConfig,
+  type CustomRootKind,
+  type HealthRulesConfig,
+} from "@ocsv/shared";
 // v0.8.10: DatabasePanel 从 inline (~150 行 JSX) 抽到 components/DatabasePanel.tsx,
 // 便于单独 unit test。SettingsRoute 只 import,不再 bind 业务逻辑。
 import { DatabasePanel } from "../components/DatabasePanel";
@@ -41,6 +47,13 @@ export default function SettingsRoute() {
     if (dir) {
       update({ defaultExportDir: dir });
     }
+  };
+
+  /** v0.11 (B3): 老 settings.json 没有 healthRules 时用估算默认值兜底 */
+  const healthRules: HealthRulesConfig = settings.healthRules ?? DEFAULT_HEALTH_RULES;
+  /** 改任一阈值都是整体替换 healthRules —— 保存后体检页 useMemo 自动重算 */
+  const setHealthRule = (patch: Partial<HealthRulesConfig>) => {
+    update({ healthRules: { ...healthRules, ...patch } });
   };
 
   const handleAddCustomRoot = async () => {
@@ -260,6 +273,69 @@ export default function SettingsRoute() {
           )}
         </section>
 
+        {/* v0.11 (B3): 体检规则阈值 —— 本地 settings.json 持久化,重启保留 */}
+        <section className="health-rules-section" data-testid="settings-health-rules">
+          <h2>
+            <Activity size={14} /> {t("settings.healthCheck.title")}
+          </h2>
+          <p className="hint">{t("settings.healthCheck.hint")}</p>
+
+          <HealthRuleField
+            label={t("settings.healthCheck.highErrors")}
+            hint={t("settings.healthCheck.highErrorsHint")}
+            valueLabel={t("settings.healthCheck.threshold")}
+            enabled={healthRules.highErrorsEnabled}
+            value={healthRules.highErrorsThreshold}
+            testId="settings-health-high-errors"
+            onToggle={(v) => setHealthRule({ highErrorsEnabled: v })}
+            onValue={(v) => setHealthRule({ highErrorsThreshold: v })}
+          />
+          <HealthRuleField
+            label={t("settings.healthCheck.tokenOutlier")}
+            hint={t("settings.healthCheck.tokenSigmaHint")}
+            valueLabel={t("settings.healthCheck.tokenSigma")}
+            enabled={healthRules.tokenOutlierEnabled}
+            value={healthRules.tokenSigma}
+            step={0.5}
+            min={0.01}
+            max={100}
+            testId="settings-health-token-outlier"
+            onToggle={(v) => setHealthRule({ tokenOutlierEnabled: v })}
+            onValue={(v) => setHealthRule({ tokenSigma: v })}
+          />
+          <HealthRuleField
+            label={t("settings.healthCheck.subagents")}
+            hint={t("settings.healthCheck.subagentsHint")}
+            valueLabel={t("settings.healthCheck.threshold")}
+            enabled={healthRules.subagentsEnabled}
+            value={healthRules.subagentsThreshold}
+            testId="settings-health-subagents"
+            onToggle={(v) => setHealthRule({ subagentsEnabled: v })}
+            onValue={(v) => setHealthRule({ subagentsThreshold: v })}
+          />
+          <HealthRuleField
+            label={t("settings.healthCheck.modelDrift")}
+            hint={t("settings.healthCheck.modelDriftHint")}
+            valueLabel={t("settings.healthCheck.modelDriftMinModels")}
+            enabled={healthRules.modelDriftEnabled}
+            value={healthRules.modelDriftMinModels}
+            min={2}
+            max={100}
+            testId="settings-health-model-drift"
+            onToggle={(v) => setHealthRule({ modelDriftEnabled: v })}
+            onValue={(v) => setHealthRule({ modelDriftMinModels: v })}
+          />
+
+          <button
+            type="button"
+            className="secondary"
+            data-testid="settings-health-reset"
+            onClick={() => setHealthRule({ ...DEFAULT_HEALTH_RULES })}
+          >
+            {t("settings.healthCheck.reset")}
+          </button>
+        </section>
+
         {/* v0.2.5: 数据源管理 */}
         <section>
           <h2>
@@ -345,6 +421,62 @@ export default function SettingsRoute() {
           <DatabasePanel />
         </section>
       </div>
+    </div>
+  );
+}
+
+/** v0.11 (B3): 一条体检规则的「启用开关 + 数值阈值」输入行 */
+interface HealthRuleFieldProps {
+  label: string;
+  hint: string;
+  valueLabel: string;
+  enabled: boolean;
+  value: number;
+  step?: number;
+  min?: number;
+  max?: number;
+  testId: string;
+  onToggle: (v: boolean) => void;
+  onValue: (v: number) => void;
+}
+
+function HealthRuleField({
+  label,
+  hint,
+  valueLabel,
+  enabled,
+  value,
+  step = 1,
+  min = 0,
+  max = 1_000_000,
+  testId,
+  onToggle,
+  onValue,
+}: HealthRuleFieldProps) {
+  return (
+    <div className="field">
+      <label className="checkbox-row">
+        <input
+          type="checkbox"
+          data-testid={`${testId}-enabled`}
+          checked={enabled}
+          onChange={(e) => onToggle(e.target.checked)}
+        />
+        <span>{label}</span>
+      </label>
+      <label className="health-rule-threshold">
+        {valueLabel}
+        <input
+          type="number"
+          data-testid={`${testId}-value`}
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          onChange={(e) => onValue(Number(e.target.value))}
+        />
+      </label>
+      <p className="hint">{hint}</p>
     </div>
   );
 }

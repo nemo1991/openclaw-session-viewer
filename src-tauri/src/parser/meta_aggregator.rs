@@ -56,10 +56,15 @@ struct RetryTracker {
 }
 
 impl RetryTracker {
+    /// 该 id 是否已登记(含通过别名登记)。空 id 不参与去重。
+    fn has_id(&self, id: &str) -> bool {
+        !id.is_empty() && self.id_to_idx.contains_key(id)
+    }
+
     /// 记录一次 tool 调用。id 重复(dsh 的 `tool/call` 与 `assistant/message`
     /// 内的 `tool-call` 是同一调用的两种表示)时不新增,避免重复计数。
     fn record_call(&mut self, id: &str, name: &str) {
-        if !id.is_empty() && self.id_to_idx.contains_key(id) {
+        if self.has_id(id) {
             return;
         }
         let idx = self.calls.len();
@@ -69,11 +74,43 @@ impl RetryTracker {
         self.calls.push((id.to_string(), name.to_string(), false));
     }
 
-    /// 回填某次调用的失败结果(找不到 id 时静默忽略,best-effort)。
-    fn mark_failed(&mut self, id: &str) {
+    /// v0.11 (C1): 为同一逻辑调用建立 id 别名。
+    ///
+    /// dsh 的 `assistant/message.content[].tool-call.id` 与 `tool/call.data.callId`
+    /// 可能取不同值(旧实现假设三者字符串相等)。配对成功后,后续用别名 id 调
+    /// `mark_failed` 会回填到同一条调用,且不会把一次调用算成两次。
+    /// 返回 false 表示 canonical 不存在,调用方应退回「独立调用」路径。
+    fn alias_id(&mut self, alias: &str, canonical: &str) -> bool {
+        if alias.is_empty() || canonical.is_empty() {
+            return false;
+        }
+        if let Some(&idx) = self.id_to_idx.get(canonical) {
+            self.id_to_idx.insert(alias.to_string(), idx);
+            return true;
+        }
+        false
+    }
+
+    /// 回填某次调用的失败结果。返回是否命中,供调用方决定要不要走兜底。
+    fn mark_failed(&mut self, id: &str) -> bool {
         if let Some(&idx) = self.id_to_idx.get(id) {
             self.calls[idx].2 = true;
+            return true;
         }
+        false
+    }
+
+    /// v0.11 (C1) 兜底:`tool/result.source.callId` 是第三种取值、精确与别名
+    /// 都未命中时,按工具名回填**最近一条同名且尚未失败**的调用。
+    /// 只匹配同名,不会把失败错误地算到别的工具上;仍属 best-effort。
+    fn mark_failed_by_name(&mut self, name: &str) -> bool {
+        for (_, call_name, failed) in self.calls.iter_mut().rev() {
+            if call_name.as_str() == name && !*failed {
+                *failed = true;
+                return true;
+            }
+        }
+        false
     }
 
     /// 返回 (retry_count, tool_call_count)。
@@ -926,7 +963,7 @@ fn flush_repeat_run_kimi(
 /// - `tool/call` 提供 `data.callId → data.name` 反查,`tool/result` 错
 ///   误时按 `data.message.source.callId` 反查到 tool name
 pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
-    use std::collections::{BTreeSet, HashMap};
+    use std::collections::{BTreeSet, HashMap, VecDeque};
     let mut out = MetaExtras::default();
     let mut tool_counts: HashMap<String, u32> = HashMap::new();
     let mut model_set: BTreeSet<String> = BTreeSet::new();
@@ -939,6 +976,12 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
     let mut tool_error_counts: HashMap<String, u32> = HashMap::new();
     // v0.10 (FR-I1): 真实重试率的有序调用序列
     let mut retry_tracker = RetryTracker::default();
+    // v0.11 (C1): assistant/message.content[].tool-call 的 canonical id 队列。
+    // 后续独立 tool/call envelope 即使 callId 取值不同,也按 (工具名, wire 顺序)
+    // FIFO 配对到同一逻辑调用,避免重复计数 / 失败回填丢失。
+    let mut unpaired_parts: HashMap<String, VecDeque<String>> = HashMap::new();
+    // 最近一次工具名:tool/result 的 callId 是第三种取值时做 best-effort 兜底
+    let mut last_tool_name: Option<String> = None;
     // B: repeat_run tracking (consecutive assistant/message 同 tool ≥ REPEAT_RUN_MIN)
     let mut current_tool: Option<String> = None;
     let mut current_count: u32 = 0;
@@ -1113,10 +1156,18 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                                 if let Some(name) = part.get("name").and_then(|x| x.as_str()) {
                                     *tool_counts.entry(name.to_string()).or_insert(0) += 1;
                                     // v0.10 (FR-I1): 按 content[] 顺序记录调用 (part.id 作 id)
-                                    retry_tracker.record_call(
-                                        part.get("id").and_then(|x| x.as_str()).unwrap_or(""),
-                                        name,
-                                    );
+                                    let part_id =
+                                        part.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                                    retry_tracker.record_call(part_id, name);
+                                    // v0.11 (C1): part.id 是 canonical id,入队等待
+                                    // 后续 tool/call envelope 用不同 callId 来配对
+                                    if !part_id.is_empty() {
+                                        unpaired_parts
+                                            .entry(name.to_string())
+                                            .or_default()
+                                            .push_back(part_id.to_string());
+                                    }
+                                    last_tool_name = Some(name.to_string());
                                     // B: repeat_run — 同名累加, 改名 flush
                                     if Some(name) == current_tool.as_deref() {
                                         current_count += 1;
@@ -1183,8 +1234,22 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                 if let (Some(cid), Some(n)) = (call_id, name) {
                     call_id_to_name.insert(cid.to_string(), n.to_string());
                     // v0.10 (FR-I1): 独立 `tool/call` envelope 也记录一次调用。
-                    // 若同一 callId 已在 assistant/message.content[] 记过, record_call 会去重。
-                    retry_tracker.record_call(cid, n);
+                    // v0.11 (C1): 三种 id 取值可能互不相同,按优先级判定:
+                    //   ① cid == part.id            → 同一调用,精确去重
+                    //   ② 同 name 队列有未配对 part → 建立 id 别名,不新增调用
+                    //   ③ 队列为空(独立 tool/call)  → 新增一次调用
+                    if retry_tracker.has_id(cid) {
+                        if let Some(q) = unpaired_parts.get_mut(n) {
+                            q.retain(|x| x != cid);
+                        }
+                    } else if let Some(canonical) =
+                        unpaired_parts.get_mut(n).and_then(|q| q.pop_front())
+                    {
+                        retry_tracker.alias_id(cid, &canonical);
+                    } else {
+                        retry_tracker.record_call(cid, n);
+                    }
+                    last_tool_name = Some(n.to_string());
                     // v0.9.28: 独立 `tool/call` event 也算一次 tool_usage(某些 dsh
                     // session 把 tool-call 信息放在独立 envelope,不在
                     // assistant/message.content[] 内)
@@ -1209,8 +1274,19 @@ pub fn aggregate_dsh(path: &Path) -> AppResult<MetaExtras> {
                         .and_then(|s| s.get("callId"))
                         .and_then(|x| x.as_str());
                     if let Some(cid) = call_id {
-                        // v0.10 (FR-I1): 回填该 callId 对应调用的失败标记
-                        retry_tracker.mark_failed(cid);
+                        // v0.10 (FR-I1): 回填该 callId 对应调用的失败标记(精确 id 或 C1 别名)
+                        let hit = retry_tracker.mark_failed(cid);
+                        // v0.11 (C1): source.callId 是第三种取值时,按工具名回填
+                        // 最近一条同名未失败调用。只匹配同名,不跨工具误标。
+                        if !hit {
+                            let fallback_name = call_id_to_name
+                                .get(cid)
+                                .cloned()
+                                .or_else(|| last_tool_name.clone());
+                            if let Some(name) = fallback_name {
+                                retry_tracker.mark_failed_by_name(&name);
+                            }
+                        }
                         if let Some(name) = call_id_to_name.get(cid) {
                             *tool_error_counts.entry(name.clone()).or_insert(0) += 1;
                         }
@@ -2155,6 +2231,70 @@ mod tests {
         t.record_call("tc-1", "Read"); // 重复声明应被去重
         t.mark_failed("tc-1");
         assert_eq!(t.finalize(), (0, 1));
+    }
+
+    // ===== v0.11 (C1): dsh 双 envelope / 三种 id 取值不一致的去重鲁棒性 =====
+
+    #[test]
+    fn retry_tracker_alias_id_dedups_mismatched_envelope_ids() {
+        let mut t = RetryTracker::default();
+        t.record_call("part-1", "Read");
+        // tool/call 用了完全不同的 callId:建立别名,不新增调用
+        assert!(t.alias_id("call-1", "part-1"));
+        assert!(t.has_id("call-1"));
+        assert!(t.mark_failed("call-1"), "别名应能回填到 canonical 调用");
+        t.record_call("part-2", "Read"); // 紧随同名调用 = 1 次重试
+        assert_eq!(t.finalize(), (1, 2));
+        // canonical 不存在时不能建立别名
+        let mut other = RetryTracker::default();
+        assert!(!other.alias_id("call-x", "missing"));
+    }
+
+    #[test]
+    fn retry_tracker_mark_failed_by_name_only_matches_same_tool() {
+        let mut t = RetryTracker::default();
+        t.record_call("id1", "Read");
+        t.record_call("id2", "Bash");
+        // 第三种 id 无映射 → 按最近一条同名未失败调用回填,不能误标 Bash
+        assert!(t.mark_failed_by_name("Read"));
+        assert!(t.calls[0].2, "Read 被回填失败");
+        assert!(!t.calls[1].2, "Bash 不能被误标");
+        // 同名调用已失败时不再重复命中
+        assert!(!t.mark_failed_by_name("Read"));
+        assert!(!t.mark_failed_by_name("Edit"));
+    }
+
+    #[test]
+    fn aggregate_dsh_mismatched_envelope_ids_still_counts_one_retry() {
+        // 三种 id: part.id = part-1 / tool-call.callId = call-1 /
+        // tool-result.source.callId = call-1 —— 旧实现会算成 3 次调用且失败回填丢失
+        let jsonl = r#"{"type":"assistant/message","seq":1,"time":1000,"data":{"message":{"content":[{"type":"tool-call","id":"part-1","name":"Read","arguments":"{}"}]}}}
+{"type":"tool/call","seq":2,"time":1001,"data":{"callId":"call-1","name":"Read"}}
+{"type":"tool/result","seq":3,"time":1002,"data":{"message":{"source":{"callId":"call-1"},"content":[{"isError":true,"content":"err"}]}}}
+{"type":"assistant/message","seq":4,"time":1003,"data":{"message":{"content":[{"type":"tool-call","id":"part-2","name":"Read","arguments":"{}"}]}}}
+"#;
+        let p = write_tmp("dsh_mismatched_ids.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        assert_eq!(
+            m.tool_call_count, 2,
+            "双 envelope 是同一逻辑调用,不能重复计数"
+        );
+        assert_eq!(m.retry_count, 1, "失败回填不能因 id 不同而丢失");
+    }
+
+    #[test]
+    fn aggregate_dsh_third_result_id_falls_back_by_tool_name() {
+        // tool/result 的 callId 是第三种取值,精确 / 别名都不命中 →
+        // 按最近同名调用 best-effort 回填,不误计分母
+        let jsonl = r#"{"type":"assistant/message","seq":1,"time":1000,"data":{"message":{"content":[{"type":"tool-call","id":"part-1","name":"Read","arguments":"{}"}]}}}
+{"type":"tool/call","seq":2,"time":1001,"data":{"callId":"call-1","name":"Read"}}
+{"type":"tool/result","seq":3,"time":1002,"data":{"message":{"source":{"callId":"third-1"},"content":[{"isError":true,"content":"err"}]}}}
+{"type":"assistant/message","seq":4,"time":1003,"data":{"message":{"content":[{"type":"tool-call","id":"part-2","name":"Read","arguments":"{}"}]}}}
+"#;
+        let p = write_tmp("dsh_third_result_id.jsonl", jsonl);
+        let m = aggregate_dsh(&p).unwrap();
+        assert_eq!(m.tool_call_count, 2);
+        assert_eq!(m.retry_count, 1);
     }
 
     #[test]

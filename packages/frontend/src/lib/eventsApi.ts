@@ -15,7 +15,8 @@ export type LocalEventName =
   | "analytics_view_open"
   | "source_dimension_select"
   | "retry_rate_displayed"
-  | "analytics_ready";
+  | "analytics_ready"
+  | "health_view_open";
 
 /** 字段与 Rust `commands/events.rs::LocalEventInput` 对齐 (camelCase ↔ snake_case) */
 export interface LocalEventInput {

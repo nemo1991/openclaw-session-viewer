@@ -86,6 +86,36 @@ export interface CustomRootConfig {
   kind: CustomRootKind;
 }
 
+/**
+ * v0.11 (B1/B3): 会话体检规则配置。
+ *
+ * 单一事实源:此结构同时被 TS 侧 `views/graph/health.ts` 与 Rust 侧
+ * `commands/settings.rs::HealthRulesConfig` 消费,字段名按 camelCase 序列化。
+ * 所有默认值均为 ROADMAP 标注的估算值,用户可在设置页修改。
+ */
+export interface HealthRulesConfig {
+  highErrorsEnabled: boolean;
+  highErrorsThreshold: number;
+  tokenOutlierEnabled: boolean;
+  tokenSigma: number;
+  subagentsEnabled: boolean;
+  subagentsThreshold: number;
+  modelDriftEnabled: boolean;
+  modelDriftMinModels: number;
+}
+
+/** ROADMAP 6 / B1 建议默认值(估算,非调研结论)——必须与 Rust `HealthRulesConfig::default()` 一致 */
+export const DEFAULT_HEALTH_RULES: HealthRulesConfig = {
+  highErrorsEnabled: true,
+  highErrorsThreshold: 20,
+  tokenOutlierEnabled: true,
+  tokenSigma: 3,
+  subagentsEnabled: true,
+  subagentsThreshold: 10,
+  modelDriftEnabled: true,
+  modelDriftMinModels: 2,
+};
+
 export interface AppSettings {
   anthropic: AnthropicConfig;
   theme: "dark" | "light" | "system";
@@ -110,6 +140,11 @@ export interface AppSettings {
   pathSecurity?: {
     allowRelaxed: boolean;
   };
+  /**
+   * v0.11 (B3): 体检规则阈值。可选 —— 老 settings.json 没有该字段时,
+   * 消费端一律用 `DEFAULT_HEALTH_RULES` 兜底(见 `normalizeHealthRules`)。
+   */
+  healthRules?: HealthRulesConfig;
 }
 
 /** 分析范围 */
@@ -205,4 +240,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   timezone: "auto",
   // v0.6.0:文件路径 reveal 默认锁紧在 workspace 内
   pathSecurity: { allowRelaxed: false },
+  // v0.11 (B3): 体检规则默认值,写到 settings.json 后重启仍保留
+  healthRules: { ...DEFAULT_HEALTH_RULES },
 };

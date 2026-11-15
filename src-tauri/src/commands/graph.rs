@@ -53,6 +53,9 @@ pub struct GraphNodeFE {
     pub parent_session_id: Option<String>,
     pub message_count: u32,
     pub agent_id: Option<String>,
+    /// v0.11 (B1): 该会话出现过的 model id(来自 `session_meta.available_models_json`),
+    /// 供「同会话模型漂移」体检规则使用。老库 / 部分 source 无该列时为空 vec。
+    pub available_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,7 +214,9 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 parent_uuids_text,
                 -- v0.10 (FR-I1): 真实重试率 (SELECT 按名读,列序无关)
                 retry_count,
-                tool_call_count
+                tool_call_count,
+                -- v0.11 (B1): 同会话模型漂移依据 (按名读,列序无关)
+                available_models_json
          FROM session_meta
          ORDER BY mtime_ms DESC",
     )?;
@@ -252,6 +257,12 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 .as_deref()
                 .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
                 .unwrap_or_default();
+            // v0.11 (B1): available_models_json 可为 NULL / 非法 JSON,一律降级为空 vec
+            let available_models_json: Option<String> = r.get("available_models_json")?;
+            let available_models: Vec<String> = available_models_json
+                .as_deref()
+                .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                .unwrap_or_default();
             // v0.8.6 A: 提前读 error_count / subagent_count 给 edges 派生用
             let error_count: u32 = r.get::<_, i64>("error_count")? as u32;
             let subagent_count: u32 = r.get::<_, i64>("subagent_count")? as u32;
@@ -283,6 +294,7 @@ pub(crate) fn list_graph_from_conn(c: &Connection) -> AppResult<Vec<GraphEntryFE
                 parent_session_id,                  // v0.8.7 B: 反向 map 派生
                 message_count: r.get::<_, i64>("message_count")? as u32,
                 agent_id: r.get("agent_id")?,
+                available_models,
             };
 
             // UsedTool edges 派生 from tool_usage_json: [["Bash", 286], ...]
@@ -808,5 +820,38 @@ mod tests {
         );
         assert_eq!(attempted_fix, 1, "AttemptedFix = 1 (error_count=2 > 0)");
         assert_eq!(spawned, 2, "Spawned = 2 (sub-1, sub-2)");
+    }
+
+    // 8. v0.11 (B1): available_models_json 为 NULL 时降级为空 vec,不能 panic
+    #[test]
+    fn list_graph_available_models_defaults_to_empty_when_column_is_null() {
+        let (_tmp, pool) = fixture_pool();
+        let entries = pool.with_read(list_graph_from_conn).expect("list_graph");
+        assert!(
+            entries[0].node.available_models.is_empty(),
+            "fixture 未插 available_models_json,应为空 vec"
+        );
+    }
+
+    // 9. v0.11 (B1): 有值时按名读到,供「同会话模型漂移」规则使用
+    #[test]
+    fn list_graph_reads_available_models_json() {
+        let (_tmp, pool) = fixture_pool();
+        pool.with_write(|c| {
+            c.execute(
+                "UPDATE session_meta SET available_models_json = ?1 WHERE session_id = 'sid-1'",
+                ["[\"claude-opus-4-8\",\"claude-sonnet-4-6\"]"],
+            )?;
+            Ok::<(), AppError>(())
+        })
+        .expect("update available_models_json");
+        let entries = pool.with_read(list_graph_from_conn).expect("list_graph");
+        assert_eq!(
+            entries[0].node.available_models,
+            vec![
+                "claude-opus-4-8".to_string(),
+                "claude-sonnet-4-6".to_string()
+            ]
+        );
     }
 }
