@@ -476,3 +476,112 @@
   margin: 4px 0;
   color: var(--color-text);
 }
+
+/* ===== v0.12 (B1): 筛选收敛 ===== */
+.filter-source-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.advanced-filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.advanced-filter-toggle:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+
+.advanced-filter-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.advanced-filter-toggle svg.rotated {
+  transform: rotate(90deg);
+}
+
+.advanced-filters {
+  padding: 4px 8px 8px;
+  border: 1px solid var(--color-border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: color-mix(in srgb, var(--color-bg) 60%, transparent);
+}
+
+.advanced-filters h4 {
+  margin-top: 12px;
+}
+
+.filter-reset {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.filter-reset:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+  border-color: var(--color-primary);
+}
+
+/* ===== v0.12 (C1): 卡片指标分层 ===== */
+.stats-toggle {
+  padding: 1px 6px;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.stats-toggle:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* ===== v0.12 (C2): 风险徽标(与 HealthView 风险语义同色系) ===== */
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, transparent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-error) 15%, transparent);
+  color: var(--color-error);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.risk-badge:hover {
+  background: color-mix(in srgb, var(--color-error) 28%, transparent);
+}
+
+.risk-badge svg {
+  flex: 0 0 auto;
+}

@@ -5,6 +5,19 @@ const enUS = {
     error: "Error",
     retry: "Retry",
   },
+  // v0.12 (A1 / FR-N6): global side nav labels
+  nav: {
+    ariaLabel: "Main navigation",
+    home: "Back to sessions",
+    sessions: "Sessions",
+    graph: "Graph",
+    analytics: "Analytics",
+    health: "Health Check",
+    rag: "Knowledge Q&A",
+    tools: "Tools",
+    settings: "Settings",
+    localOnly: "Local-first · zero upload",
+  },
   sessions: {
     title: "Sessions",
     totalCount: "{{count}} total",
@@ -16,8 +29,15 @@ const enUS = {
       source: "Source",
       agent: "Filter by agent",
       allAgents: "All agents",
+      // v0.12 (B1 / FR-F1~F3)
+      all: "All",
+      advanced: "Advanced filters",
+      reset: "Reset filters",
+      agentHint: "Agent filter applies to OpenClaw sessions only",
+      expandHint: "Show low-frequency filters (expanded state is remembered)",
     },
     source: {
+      all: "All",
       claude: "Claude Code",
       openclaw: "OpenClaw",
       // v0.9.0: Kimi Code (Moonshot Kimi CLI)
@@ -84,6 +104,13 @@ const enUS = {
     statTokens: "input {{input}}, output {{output}}, cache hit {{cache}}",
     statCompaction: "{{count}} compactions",
     statCompactionDetail: "{{count}} compactions, last {{sec}}s",
+    // v0.12 (C1 / FR-C1): stat-chip layering
+    statsExpand: "Show {{count}} more stats",
+    statsCollapse: "Show less",
+    // v0.12 (C2 / FR-C2): home page risk badge
+    riskBadge: "Risk ({{count}})",
+    riskBadgeAria: "{{count}} health rules matched, open Health Check",
+    riskBadgeHint: "Matched health rules",
   },
   sync: {
     scanning: "Scanning…",

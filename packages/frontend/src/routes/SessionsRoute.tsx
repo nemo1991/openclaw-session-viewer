@@ -1,31 +1,56 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
-  Settings,
   Search,
   RefreshCw,
   Filter,
   Bot,
   MessageSquare,
-  Network,
   Pin,
   EyeOff,
   Archive,
-  Wrench, // v0.8.5 B: 工具分析页
+  AlertTriangle,
+  ChevronRight,
+  RotateCcw,
+  Pencil,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 
-import { useSessionsStore } from "../state/sessionsStore";
+import { useSessionsStore, type SourceFilter } from "../state/sessionsStore";
 import { useSearchStore } from "../state/searchStore";
 import { useOverrides } from "../state/overridesStore";
+import { useSettingsStore } from "../state/settingsStore";
+import { useGraphStore } from "../views/graph/graphStore";
+import { normalizeHealthRules } from "../views/graph/health";
+import type { FlaggedSession } from "../views/graph/health";
+import { buildRiskIndex } from "../views/graph/healthBridge";
 import { useKey } from "../lib/keymap";
 import { formatBytes, formatDuration, formatNumber, formatTime } from "../lib/format";
 import { useFormatOpts } from "../hooks/useFormatOpts";
 import { SearchPalette } from "../views/SearchPalette";
 import { HomeStatusBar } from "../components/HomeStatusBar"; // v0.8.4 item 1
 import type { SessionMeta } from "@ocsv/shared";
+import { selectStatChips, type RankedChip } from "./sessionCardChips";
 import "./SessionsRoute.css";
+
+/** v0.12 (B1 / FR-F1): 5 个 source 选项,「全部」为默认 */
+const SOURCE_OPTIONS: SourceFilter[] = ["all", "claude", "openclaw", "kimi", "dsh"];
+
+/** v0.12 (FR-F4): 高级筛选展开态本地持久化 key(无网络、无账号) */
+const ADVANCED_FILTERS_KEY = "ocsv.filter.advancedOpen.v1";
+
+/** v0.12 (C1 / FR-C1): 卡片默认最多露 3 个高信号 chip */
+const MAX_VISIBLE_CHIPS = 3;
+
+function readAdvancedOpen(): boolean {
+  try {
+    return window.localStorage.getItem(ADVANCED_FILTERS_KEY) === "1";
+  } catch {
+    // localStorage 可能被隐私策略禁用,默认折叠即可
+    return false;
+  }
+}
 
 interface SessionCardProps {
   s: SessionMeta;
@@ -39,6 +64,8 @@ interface SessionCardProps {
   commitRename: (s: SessionMeta) => Promise<void>;
   /** v0.8.14 item G: Escape 取消编辑 */
   cancelRename: (s: SessionMeta) => void;
+  /** v0.12 (C2): 该会话命中的体检结果;undefined = 未命中或数据未就绪 */
+  flagged?: FlaggedSession;
 }
 
 interface Group {
@@ -59,6 +86,7 @@ export default function SessionsRoute() {
     error,
     filter,
     setFilter,
+    resetFilter,
     load,
     refresh,
     filteredSessions,
@@ -70,6 +98,31 @@ export default function SessionsRoute() {
   const [showArchived, setShowArchived] = useState(false);
   const [editingSid, setEditingSid] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
+  // v0.12 (FR-F2/F4): 高级筛选默认折叠,展开态重启保留
+  const [advancedOpen, setAdvancedOpen] = useState(readAdvancedOpen);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ADVANCED_FILTERS_KEY, advancedOpen ? "1" : "0");
+    } catch {
+      // ignore quota / privacy
+    }
+  }, [advancedOpen]);
+
+  // ---- v0.12 (C2 / FR-C2): 首页风险徽标数据桥 ----
+  // 强制复用 v0.11 的 foldGraphEntries + evaluateHealth,零第二套口径。
+  // graph 数据懒加载(仅 entries 为空时一次),不阻塞首屏;计算用 useMemo 缓存。
+  const graphEntries = useGraphStore((s) => s.entries);
+  const graphLoad = useGraphStore((s) => s.load);
+  const rawHealthRules = useSettingsStore((s) => s.settings.healthRules);
+  const healthRules = useMemo(() => normalizeHealthRules(rawHealthRules), [rawHealthRules]);
+  useEffect(() => {
+    if (!graphEntries) void graphLoad();
+  }, [graphEntries, graphLoad]);
+  const riskIndex = useMemo(
+    () => buildRiskIndex(graphEntries, healthRules),
+    [graphEntries, healthRules]
+  );
 
   useEffect(() => {
     void load();
@@ -224,32 +277,41 @@ export default function SessionsRoute() {
     setDraftTitle(displayTitleOf(s));
   };
 
+  /** v0.12 (FR-F3): 一步回到默认 —— store filter + 组件本地 hidden/archived 同步归位 */
+  const handleResetFilter = () => {
+    resetFilter();
+    setShowHidden(false);
+    setShowArchived(false);
+  };
+
+  const cardProps = (s: SessionMeta) => ({
+    s,
+    navigate,
+    overrides,
+    fmtOpts,
+    editingSid,
+    draftTitle,
+    setDraftTitle,
+    startRename,
+    commitRename,
+    cancelRename,
+    flagged: riskIndex.get(s.sessionId),
+  });
+
   return (
     <div className="sessions-page">
+      {/* v0.12 (A1 / FR-N1): graph/tools/settings 图标已由全局 SideNav 承担,
+          仅保留 search(全局搜索面板) 与 refresh(同步) 两个首页上下文操作。 */}
       <header className="topbar">
         <div className="topbar-title">
-          <h1>{t("app.title")}</h1>
+          <h1>{t("sessions.title")}</h1>
         </div>
         <div className="topbar-actions">
-          <button onClick={() => search.show()}>
+          <button onClick={() => search.show()} data-testid="home-search">
             <Search size={16} /> {t("search.placeholder")}
           </button>
-          <button onClick={() => void refresh()} title="刷新">
+          <button onClick={() => void refresh()} title="刷新" data-testid="home-refresh">
             <RefreshCw size={16} />
-          </button>
-          <button onClick={() => navigate("/graph?view=graph")} title="Graph Explorer (G1/G2/G3)">
-            <Network size={16} />
-          </button>
-          {/* v0.8.5 B: 全局 tool 聚合页 */}
-          <button
-            onClick={() => navigate("/tools")}
-            title="工具分析 (跨 session tool 排行)"
-            data-testid="nav-tools"
-          >
-            <Wrench size={16} />
-          </button>
-          <button onClick={() => navigate("/settings")} title={t("settings.title")}>
-            <Settings size={16} />
           </button>
         </div>
       </header>
@@ -263,114 +325,24 @@ export default function SessionsRoute() {
             <h3>
               <Filter size={14} /> {t("sessions.filter.title")}
             </h3>
-            <label>
-              <input
-                type="checkbox"
-                checked={filter.liveOnly}
-                onChange={(e) => setFilter({ liveOnly: e.target.checked })}
-              />
-              {t("sessions.filter.liveOnly")}
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={filter.hasSubagents}
-                onChange={(e) => setFilter({ hasSubagents: e.target.checked })}
-              />
-              {t("sessions.filter.hasSubagents")}
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={filter.last7Days}
-                onChange={(e) => setFilter({ last7Days: e.target.checked })}
-              />
-              {t("sessions.filter.last7Days")}
-            </label>
 
-            <h4 style={{ marginTop: 16 }}>{t("sessions.filter.source")}</h4>
-            <label>
-              <input
-                type="radio"
-                name="source"
-                checked={filter.source === "claude"}
-                onChange={() => setFilter({ source: "claude" })}
-              />
-              {t("sessions.source.claude")}
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="source"
-                checked={filter.source === "openclaw"}
-                onChange={() => setFilter({ source: "openclaw" })}
-              />
-              {t("sessions.source.openclaw")}
-            </label>
-            {/* v0.9.0: 第三种 source — Kimi Code */}
-            <label>
-              <input
-                type="radio"
-                name="source"
-                checked={filter.source === "kimi"}
-                onChange={() => setFilter({ source: "kimi" })}
-              />
-              {t("sessions.source.kimi")}
-            </label>
-            {/* v0.9.28 (M11): 第四种 source — DeepSeek Harness */}
-            <label>
-              <input
-                type="radio"
-                name="source"
-                checked={filter.source === "dsh"}
-                onChange={() => setFilter({ source: "dsh" })}
-              />
-              {t("sessions.source.dsh")}
-            </label>
-
-            {agents.length > 1 && (
-              <>
-                <h4 style={{ marginTop: 16 }}>{t("sessions.filter.agent")}</h4>
-                <label>
+            {/* ---- 常驻区(FR-F2):5 个 source radio + 搜索框 = 6 个控件 ---- */}
+            <h4>{t("sessions.filter.source")}</h4>
+            <div className="filter-source-group" data-testid="source-filter-group">
+              {SOURCE_OPTIONS.map((value) => (
+                <label key={value}>
                   <input
                     type="radio"
-                    name="agent"
-                    checked={!filter.agentId}
-                    onChange={() => setFilter({ agentId: undefined })}
+                    name="source"
+                    value={value}
+                    checked={filter.source === value}
+                    onChange={() => setFilter({ source: value, agentId: undefined })}
+                    data-testid={`source-${value}`}
                   />
-                  {t("sessions.filter.allAgents")}
+                  {t(`sessions.source.${value}`)}
                 </label>
-                {agents.map((id) => (
-                  <label key={id}>
-                    <input
-                      type="radio"
-                      name="agent"
-                      checked={filter.agentId === id}
-                      onChange={() => setFilter({ agentId: id })}
-                    />
-                    {id}
-                  </label>
-                ))}
-              </>
-            )}
-
-            <h4 style={{ marginTop: 16 }}>{t("sessions.show")}</h4>
-            <label>
-              <input
-                type="checkbox"
-                checked={showHidden}
-                onChange={(e) => setShowHidden(e.target.checked)}
-              />
-              {t("sessions.showHidden")}
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(e) => setShowArchived(e.target.checked)}
-              />
-              {t("sessions.showArchived")}
-            </label>
+              ))}
+            </div>
 
             <input
               type="text"
@@ -378,7 +350,120 @@ export default function SessionsRoute() {
               placeholder={t("sessions.searchPlaceholder")}
               value={filter.query}
               onChange={(e) => setFilter({ query: e.target.value })}
+              data-testid="session-search"
             />
+
+            {/* ---- 高级筛选(默认折叠,FR-F2/F4) ---- */}
+            <button
+              type="button"
+              className="advanced-filter-toggle"
+              aria-expanded={advancedOpen}
+              aria-controls="advanced-filters"
+              title={t("sessions.filter.expandHint")}
+              data-testid="advanced-filter-toggle"
+              onClick={() => setAdvancedOpen((v) => !v)}
+            >
+              <ChevronRight
+                size={12}
+                className={advancedOpen ? "rotated" : ""}
+                aria-hidden="true"
+              />
+              {t("sessions.filter.advanced")}
+            </button>
+
+            {advancedOpen && (
+              <div
+                id="advanced-filters"
+                className="advanced-filters"
+                data-testid="advanced-filters"
+              >
+                <h4>{t("sessions.filter.title")}</h4>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={filter.liveOnly}
+                    onChange={(e) => setFilter({ liveOnly: e.target.checked })}
+                    data-testid="filter-liveOnly"
+                  />
+                  {t("sessions.filter.liveOnly")}
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={filter.hasSubagents}
+                    onChange={(e) => setFilter({ hasSubagents: e.target.checked })}
+                    data-testid="filter-hasSubagents"
+                  />
+                  {t("sessions.filter.hasSubagents")}
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={filter.last7Days}
+                    onChange={(e) => setFilter({ last7Days: e.target.checked })}
+                    data-testid="filter-last7Days"
+                  />
+                  {t("sessions.filter.last7Days")}
+                </label>
+
+                {agents.length > 1 && (
+                  <>
+                    <h4 title={t("sessions.filter.agentHint")}>{t("sessions.filter.agent")}</h4>
+                    <label>
+                      <input
+                        type="radio"
+                        name="agent"
+                        checked={!filter.agentId}
+                        onChange={() => setFilter({ agentId: undefined })}
+                      />
+                      {t("sessions.filter.allAgents")}
+                    </label>
+                    {agents.map((id) => (
+                      <label key={id}>
+                        <input
+                          type="radio"
+                          name="agent"
+                          checked={filter.agentId === id}
+                          onChange={() => setFilter({ agentId: id })}
+                        />
+                        {id}
+                      </label>
+                    ))}
+                  </>
+                )}
+
+                <h4>{t("sessions.show")}</h4>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showHidden}
+                    onChange={(e) => setShowHidden(e.target.checked)}
+                    data-testid="filter-showHidden"
+                  />
+                  {t("sessions.showHidden")}
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showArchived}
+                    onChange={(e) => setShowArchived(e.target.checked)}
+                    data-testid="filter-showArchived"
+                  />
+                  {t("sessions.showArchived")}
+                </label>
+              </div>
+            )}
+
+            {/* ---- 重置筛选(FR-F3):任意态一步回默认 ---- */}
+            <button
+              type="button"
+              className="filter-reset"
+              data-testid="filter-reset"
+              onClick={handleResetFilter}
+            >
+              <RotateCcw size={12} aria-hidden="true" />
+              {t("sessions.filter.reset")}
+            </button>
           </div>
         </aside>
 
@@ -395,7 +480,7 @@ export default function SessionsRoute() {
             </div>
           )}
 
-          <div className="sessions-count">
+          <div className="sessions-count" data-testid="sessions-count">
             {t("sessions.totalCount", { count: visible.length })}
             {(overrides.snap.hidden &&
               Object.keys(overrides.snap.hidden).length > 0 &&
@@ -413,19 +498,7 @@ export default function SessionsRoute() {
                 <Pin size={12} /> {t("sessions.pinned", { count: pinned.length })}
               </h3>
               {pinned.map((s) => (
-                <SessionCard
-                  key={`${s.source}-${s.sessionId}`}
-                  s={s}
-                  navigate={navigate}
-                  overrides={overrides}
-                  fmtOpts={fmtOpts}
-                  editingSid={editingSid}
-                  draftTitle={draftTitle}
-                  setDraftTitle={setDraftTitle}
-                  startRename={startRename}
-                  commitRename={commitRename}
-                  cancelRename={cancelRename}
-                />
+                <SessionCard key={`${s.source}-${s.sessionId}`} {...cardProps(s)} />
               ))}
             </section>
           )}
@@ -441,19 +514,7 @@ export default function SessionsRoute() {
                 </span>
               </h2>
               {group.sessions.map((s) => (
-                <SessionCard
-                  key={`${s.source}-${s.sessionId}`}
-                  s={s}
-                  navigate={navigate}
-                  overrides={overrides}
-                  fmtOpts={fmtOpts}
-                  editingSid={editingSid}
-                  draftTitle={draftTitle}
-                  setDraftTitle={setDraftTitle}
-                  startRename={startRename}
-                  commitRename={commitRename}
-                  cancelRename={cancelRename}
-                />
+                <SessionCard key={`${s.source}-${s.sessionId}`} {...cardProps(s)} />
               ))}
             </section>
           ))}
@@ -476,8 +537,11 @@ function SessionCard({
   startRename,
   commitRename,
   cancelRename,
+  flagged,
 }: SessionCardProps) {
   const { t } = useTranslation();
+  // v0.12 (C1): 每张卡独立展开态;默认只露 ≤3 个高信号 chip
+  const [expanded, setExpanded] = useState(false);
   const displayTitle = overrides.snap.renames[s.sessionId] ?? s.title ?? s.sessionId.slice(0, 8);
   const isEditing = editingSid === s.sessionId;
   const isPinned = overrides.snap.pinned[s.sessionId];
@@ -485,11 +549,198 @@ function SessionCard({
   const isArchived = overrides.snap.archived[s.sessionId];
   const sessionTags = overrides.snap.tags[s.sessionId] ?? [];
 
+  // ---- v0.12 (C1 / FR-C1): 把原有 9 类 chip + topTools 收进有序数组 ----
+  // 优先级:error > repeat > duration 为高信号前三,其余折叠;展开后全部可见。
+  const chips: RankedChip<ReactNode>[] = [];
+  const push = (key: string, priority: number, node: ReactNode) =>
+    chips.push({ key, priority, node });
+
+  if (s.thinkingCount && s.thinkingCount > 0) {
+    push(
+      "thinking",
+      3,
+      <span
+        key="thinking"
+        className="stat-chip stat-thinking"
+        title={t("sessions.statThinking")}
+        data-testid="stats-chip"
+      >
+        🧠 {s.thinkingCount}
+      </span>
+    );
+  }
+  if (s.toolUseCount && s.toolUseCount > 0) {
+    push(
+      "tools",
+      4,
+      <span
+        key="tools"
+        className="stat-chip stat-tools"
+        title={t("sessions.statTools")}
+        data-testid="stats-chip"
+      >
+        🔧 {s.toolUseCount}
+      </span>
+    );
+  }
+  if (s.durationSeconds != null && s.durationSeconds > 0) {
+    push(
+      "duration",
+      2,
+      <span
+        key="duration"
+        className="stat-chip stat-duration"
+        title={t("sessions.statDuration")}
+        data-testid="stats-chip"
+      >
+        ⏱ {formatDuration(s.durationSeconds)}
+      </span>
+    );
+  }
+  if (s.errorCount != null && s.errorCount > 0) {
+    push(
+      "error",
+      0,
+      <span
+        key="error"
+        className="stat-chip stat-error"
+        title={
+          s.toolError && s.toolError.length > 0
+            ? t("sessions.statErrorDetail", {
+                list: s.toolError.map(([n, c]) => `${n}×${c}`).join(", "),
+              })
+            : t("sessions.statError")
+        }
+        data-testid="stats-chip"
+      >
+        ⚠ {s.errorCount}
+      </span>
+    );
+  }
+  if (s.repeatRunCount != null && s.repeatRunCount > 0) {
+    push(
+      "repeat",
+      1,
+      <span
+        key="repeat"
+        className="stat-chip stat-repeat"
+        title={
+          s.repeatRunMaxTool && s.repeatRunMaxCount
+            ? t("sessions.statRepeatDetail", {
+                tool: s.repeatRunMaxTool,
+                count: s.repeatRunMaxCount,
+              })
+            : t("sessions.statRepeat")
+        }
+        data-testid="stats-chip"
+      >
+        🔁 {s.repeatRunCount}
+      </span>
+    );
+  }
+  if (s.idleGapCount != null && s.idleGapCount > 0) {
+    push(
+      "idle",
+      5,
+      <span
+        key="idle"
+        className="stat-chip stat-idle"
+        title={
+          s.idleGapMaxMs
+            ? t("sessions.statIdleDetail", { min: (s.idleGapMaxMs / 60000).toFixed(1) })
+            : t("sessions.statIdle")
+        }
+        data-testid="stats-chip"
+      >
+        💤 {s.idleGapCount}
+      </span>
+    );
+  }
+  if (s.todoSummary) {
+    push(
+      "todo",
+      6,
+      <span
+        key="todo"
+        className="stat-chip stat-todo"
+        title={
+          s.todoSummary.current
+            ? t("sessions.statTodoDetail", {
+                current: s.todoSummary.current,
+                done: s.todoSummary.done,
+                total: s.todoSummary.total,
+              })
+            : t("sessions.statTodo", {
+                done: s.todoSummary.done,
+                total: s.todoSummary.total,
+              })
+        }
+        data-testid="stats-chip"
+      >
+        📋 {s.todoSummary.done}/{s.todoSummary.total}
+      </span>
+    );
+  }
+  if (
+    s.kimiTokenUsage &&
+    (s.kimiTokenUsage.input > 0 || s.kimiTokenUsage.output > 0 || s.kimiTokenUsage.cacheRead > 0)
+  ) {
+    push(
+      "tokens",
+      7,
+      <span
+        key="tokens"
+        className="stat-chip stat-tokens"
+        title={t("sessions.statTokens", {
+          input: formatNumber(s.kimiTokenUsage.input),
+          output: formatNumber(s.kimiTokenUsage.output),
+          cache: formatNumber(s.kimiTokenUsage.cacheRead),
+        })}
+        data-testid="stats-chip"
+      >
+        🪙 {formatNumber(s.kimiTokenUsage.input + s.kimiTokenUsage.cacheRead)}
+      </span>
+    );
+  }
+  if (s.metaBanner && s.metaBanner.compactionCount > 0) {
+    push(
+      "compaction",
+      8,
+      <span
+        key="compaction"
+        className="stat-chip stat-compaction"
+        title={
+          s.metaBanner.lastCompactionDurationMs
+            ? t("sessions.statCompactionDetail", {
+                count: s.metaBanner.compactionCount,
+                sec: (s.metaBanner.lastCompactionDurationMs / 1000).toFixed(1),
+              })
+            : t("sessions.statCompaction", { count: s.metaBanner.compactionCount })
+        }
+        data-testid="stats-chip"
+      >
+        🗜 {s.metaBanner.compactionCount}
+      </span>
+    );
+  }
+  s.topTools?.forEach((toolName, i) => {
+    push(
+      `toptool-${i}`,
+      9 + i,
+      <span key={`toptool-${i}`} className="tool-chip" title={toolName} data-testid="stats-chip">
+        {toolName}
+      </span>
+    );
+  });
+
+  const { shown, hasMore, hiddenCount } = selectStatChips(chips, expanded, MAX_VISIBLE_CHIPS);
+
   return (
     <article
       className={`session-card${isHidden ? " is-hidden" : ""}${isPinned ? " is-pinned" : ""}${
         isArchived ? " is-archived" : ""
       }`}
+      data-testid="session-card"
       onClick={() => {
         if (!isEditing) {
           navigate(`/session/${encodeURIComponent(s.sessionId)}`, { state: { session: s } });
@@ -523,6 +774,7 @@ function SessionCard({
               startRename(s);
             }}
             title={t("sessions.renameHint")}
+            data-testid="card-title"
           >
             {displayTitle}
           </span>
@@ -543,6 +795,27 @@ function SessionCard({
         <span className={`source-badge source-${s.source}`}>
           {t(`sessions.source.${s.source}`)}
         </span>
+        {/* v0.12 (C2 / FR-C2): 风险徽标前置 —— hover 显示命中规则 + 实际值/阈值,
+            点击直达体检(stopPropagation 防止触发卡片跳详情)。 */}
+        {flagged && (
+          <button
+            type="button"
+            className="risk-badge"
+            data-testid="risk-badge"
+            aria-label={t("sessions.riskBadgeAria", { count: flagged.score })}
+            title={[
+              t("sessions.riskBadgeHint"),
+              ...flagged.flags.map((f) => `${f.label}｜${f.detail}`),
+            ].join("\n")}
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate("/graph?view=health");
+            }}
+          >
+            <AlertTriangle size={11} aria-hidden="true" />
+            {t("sessions.riskBadge", { count: flagged.score })}
+          </button>
+        )}
         <span className="override-badges">
           {isPinned && <span className="badge-pinned">📌</span>}
           {isHidden && <span className="badge-hidden">{t("sessions.hiddenBadge")}</span>}
@@ -576,141 +849,32 @@ function SessionCard({
       )}
       {sessionTags.length > 0 && (
         <div className="session-tags-row">
-          {sessionTags.map((t: { id: number; name: string; color: string | null }) => (
-            <span key={t.id} className="tag-chip" title={`tag: ${t.name}`}>
-              {t.name}
+          {sessionTags.map((tag: { id: number; name: string; color: string | null }) => (
+            <span key={tag.id} className="tag-chip" title={`tag: ${tag.name}`}>
+              {tag.name}
             </span>
           ))}
         </div>
       )}
-      {(s.thinkingCount ||
-        s.toolUseCount ||
-        (s.topTools && s.topTools.length > 0) ||
-        s.durationSeconds != null ||
-        (s.errorCount != null && s.errorCount > 0) ||
-        (s.repeatRunCount != null && s.repeatRunCount > 0) ||
-        (s.idleGapCount != null && s.idleGapCount > 0) ||
-        // v0.9.8: kimi 专属聚合 chip
-        s.todoSummary ||
-        s.kimiTokenUsage ||
-        (s.metaBanner && s.metaBanner.compactionCount > 0)) && (
-        <div className="session-stats">
-          {s.thinkingCount && s.thinkingCount > 0 && (
-            <span className="stat-chip stat-thinking" title={t("sessions.statThinking")}>
-              🧠 {s.thinkingCount}
-            </span>
-          )}
-          {s.toolUseCount && s.toolUseCount > 0 && (
-            <span className="stat-chip stat-tools" title={t("sessions.statTools")}>
-              🔧 {s.toolUseCount}
-            </span>
-          )}
-          {/* v0.9.7: 派生指标 chip — 闭合 v0.9.5 enrich 数据的 UI 表面 */}
-          {s.durationSeconds != null && s.durationSeconds > 0 && (
-            <span className="stat-chip stat-duration" title={t("sessions.statDuration")}>
-              ⏱ {formatDuration(s.durationSeconds)}
-            </span>
-          )}
-          {s.errorCount != null && s.errorCount > 0 && (
-            <span
-              className="stat-chip stat-error"
-              title={
-                s.toolError && s.toolError.length > 0
-                  ? t("sessions.statErrorDetail", {
-                      list: s.toolError.map(([n, c]) => `${n}×${c}`).join(", "),
-                    })
-                  : t("sessions.statError")
-              }
+      {chips.length > 0 && (
+        <div className="session-stats" data-testid="session-stats">
+          {shown.map((c) => c.node)}
+          {hasMore && (
+            <button
+              type="button"
+              className="stats-toggle"
+              data-testid="stats-toggle"
+              aria-expanded={expanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((v) => !v);
+              }}
             >
-              ⚠ {s.errorCount}
-            </span>
+              {expanded
+                ? t("sessions.statsCollapse")
+                : t("sessions.statsExpand", { count: hiddenCount })}
+            </button>
           )}
-          {s.repeatRunCount != null && s.repeatRunCount > 0 && (
-            <span
-              className="stat-chip stat-repeat"
-              title={
-                s.repeatRunMaxTool && s.repeatRunMaxCount
-                  ? t("sessions.statRepeatDetail", {
-                      tool: s.repeatRunMaxTool,
-                      count: s.repeatRunMaxCount,
-                    })
-                  : t("sessions.statRepeat")
-              }
-            >
-              🔁 {s.repeatRunCount}
-            </span>
-          )}
-          {s.idleGapCount != null && s.idleGapCount > 0 && (
-            <span
-              className="stat-chip stat-idle"
-              title={
-                s.idleGapMaxMs
-                  ? t("sessions.statIdleDetail", {
-                      min: (s.idleGapMaxMs / 60000).toFixed(1),
-                    })
-                  : t("sessions.statIdle")
-              }
-            >
-              💤 {s.idleGapCount}
-            </span>
-          )}
-          {/* v0.9.8: kimi TodoWrite chip — 末次 `tools.update_store{key:"todo"}` 状态 */}
-          {s.todoSummary && (
-            <span
-              className="stat-chip stat-todo"
-              title={
-                s.todoSummary.current
-                  ? t("sessions.statTodoDetail", {
-                      current: s.todoSummary.current,
-                      done: s.todoSummary.done,
-                      total: s.todoSummary.total,
-                    })
-                  : t("sessions.statTodo", {
-                      done: s.todoSummary.done,
-                      total: s.todoSummary.total,
-                    })
-              }
-            >
-              📋 {s.todoSummary.done}/{s.todoSummary.total}
-            </span>
-          )}
-          {/* v0.9.8: kimi token chip — `usage.record{scope:"turn"}` 累加 */}
-          {s.kimiTokenUsage &&
-            (s.kimiTokenUsage.input > 0 ||
-              s.kimiTokenUsage.output > 0 ||
-              s.kimiTokenUsage.cacheRead > 0) && (
-              <span
-                className="stat-chip stat-tokens"
-                title={t("sessions.statTokens", {
-                  input: formatNumber(s.kimiTokenUsage.input),
-                  output: formatNumber(s.kimiTokenUsage.output),
-                  cache: formatNumber(s.kimiTokenUsage.cacheRead),
-                })}
-              >
-                🪙 {formatNumber(s.kimiTokenUsage.input + s.kimiTokenUsage.cacheRead)}
-              </span>
-            )}
-          {/* v0.9.8: kimi compaction chip — `full_compaction.{begin,complete}` 对数 */}
-          {s.metaBanner && s.metaBanner.compactionCount > 0 && (
-            <span
-              className="stat-chip stat-compaction"
-              title={
-                s.metaBanner.lastCompactionDurationMs
-                  ? t("sessions.statCompactionDetail", {
-                      count: s.metaBanner.compactionCount,
-                      sec: (s.metaBanner.lastCompactionDurationMs / 1000).toFixed(1),
-                    })
-                  : t("sessions.statCompaction", { count: s.metaBanner.compactionCount })
-              }
-            >
-              🗜 {s.metaBanner.compactionCount}
-            </span>
-          )}
-          {s.topTools?.map((t) => (
-            <span key={t} className="tool-chip" title={t}>
-              {t}
-            </span>
-          ))}
         </div>
       )}
       <div className="session-card-actions" onClick={(e) => e.stopPropagation()}>
@@ -735,8 +899,15 @@ function SessionCard({
         >
           <Archive size={11} />
         </button>
-        <button onClick={() => startRename(s)} title={t("sessions.rename")}>
-          ✎
+        {/* v0.12 (FR-C3): 显式重命名入口(此前仅一个无文字的 ✎,可发现性差);
+            双击标题仍保留,不破坏老用户肌肉记忆。 */}
+        <button
+          onClick={() => startRename(s)}
+          title={t("sessions.rename")}
+          aria-label={t("sessions.rename")}
+          data-testid="card-rename"
+        >
+          <Pencil size={11} aria-hidden="true" /> {t("sessions.rename")}
         </button>
       </div>
     </article>

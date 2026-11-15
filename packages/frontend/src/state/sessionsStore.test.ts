@@ -25,13 +25,16 @@ vi.mock("../lib/api", () => ({
   },
 }));
 
-import { useSessionsStore } from "./sessionsStore";
+import { useSessionsStore, DEFAULT_SESSIONS_FILTER } from "./sessionsStore";
 import type { SessionMeta } from "@ocsv/shared";
 
 // ===== fixture =====
 
 function makeSession(
-  overrides: Partial<SessionMeta> & { sessionId: string; source: "claude" | "openclaw" | "kimi" }
+  overrides: Partial<SessionMeta> & {
+    sessionId: string;
+    source: "claude" | "openclaw" | "kimi" | "dsh";
+  }
 ): SessionMeta {
   const base: SessionMeta = {
     sessionId: overrides.sessionId,
@@ -57,19 +60,13 @@ function makeSession(
 }
 
 beforeEach(() => {
-  // Reset store + mock calls
+  // Reset store + mock calls。v0.12 (B1): 直接消费 store 的真实默认定义,
+  // 让「默认 source」这条契约由实现驱动,而不是在测试里再写一份。
   useSessionsStore.setState({
     sessions: [],
     loading: false,
     error: null,
-    filter: {
-      query: "",
-      liveOnly: false,
-      hasSubagents: false,
-      last7Days: false,
-      source: "openclaw", // 默认值
-      agentId: undefined,
-    },
+    filter: { ...DEFAULT_SESSIONS_FILTER },
   });
   mockApiListSessions.mockReset();
   mockApiRefreshSessions.mockReset();
@@ -260,6 +257,8 @@ describe("sessionsStore.filteredSessions", () => {
 
 describe("sessionsStore.availableAgentIds", () => {
   it("返回 openclaw sessions 的去重排序 agentId 列表", () => {
+    // v0.12: 默认 source 已是 "all",agent 组只在显式切到 openclaw 时出现
+    useSessionsStore.getState().setFilter({ source: "openclaw" });
     useSessionsStore.setState({
       sessions: [
         makeSession({ sessionId: "a", source: "openclaw", agentId: "work" }),
@@ -288,14 +287,14 @@ describe("sessionsStore.availableAgentIds", () => {
 describe("sessionsStore.setFilter", () => {
   it("setFilter partial: 只覆盖指定字段,其他保留", () => {
     const initial = useSessionsStore.getState().filter;
-    expect(initial.source).toBe("openclaw");
+    expect(initial.source).toBe("all");
     expect(initial.query).toBe("");
 
     useSessionsStore.getState().setFilter({ query: "search" });
 
     const after = useSessionsStore.getState().filter;
     expect(after.query).toBe("search");
-    expect(after.source).toBe("openclaw");
+    expect(after.source).toBe("all");
     expect(after.liveOnly).toBe(false);
   });
 });
@@ -303,9 +302,9 @@ describe("sessionsStore.setFilter", () => {
 // ===== v0.9.0: Kimi Code 第三种 source =====
 
 describe("sessionsStore.v0.9.0 Kimi", () => {
-  it("默认 filter.source 保持 'openclaw' (回归保护 — 不要因为 kimi 加入而改默认值)", () => {
-    // beforeEach 已重置 filter — 直接验证
-    expect(useSessionsStore.getState().filter.source).toBe("openclaw");
+  it("默认 filter.source 为 'all' (v0.12 FR-F1 — 开箱四源同屏)", () => {
+    // beforeEach 已从 DEFAULT_SESSIONS_FILTER 重置,这里锁住新默认契约
+    expect(useSessionsStore.getState().filter.source).toBe("all");
   });
 
   it("setFilter source='kimi' 后只显示 kimi sessions,隐藏 claude/openclaw", () => {
@@ -364,5 +363,82 @@ describe("sessionsStore.v0.9.0 Kimi", () => {
     const filtered = useSessionsStore.getState().filteredSessions();
     expect(filtered).toHaveLength(1);
     expect(filtered[0]?.sessionId).toBe("k-with-subs");
+  });
+});
+
+// ===== v0.12 (B1 / FR-F1, FR-F3): 全部 source + 重置筛选 =====
+
+describe("sessionsStore.v0.12 全部 source 与 resetFilter", () => {
+  const FOUR = [
+    makeSession({ sessionId: "c1", source: "claude" }),
+    makeSession({ sessionId: "o1", source: "openclaw", agentId: "main" }),
+    makeSession({ sessionId: "k1", source: "kimi", agentId: "main" }),
+    makeSession({ sessionId: "d1", source: "dsh" }),
+  ];
+
+  it("FR-F1: 默认 source='all' 时四种 source 同屏,无遗漏", () => {
+    useSessionsStore.setState({ sessions: FOUR });
+    const filtered = useSessionsStore.getState().filteredSessions();
+    expect(filtered.map((s) => s.sessionId).sort()).toEqual(["c1", "d1", "k1", "o1"]);
+    expect(new Set(filtered.map((s) => s.source)).size).toBe(4);
+  });
+
+  it("FR-F1: 'all' 只是跳过 source 过滤,query / liveOnly 等仍生效", () => {
+    useSessionsStore.setState({
+      sessions: [
+        ...FOUR,
+        makeSession({ sessionId: "c2", source: "claude", title: "needle", livePid: 42 }),
+      ],
+    });
+    useSessionsStore.getState().setFilter({ query: "needle" });
+    expect(
+      useSessionsStore
+        .getState()
+        .filteredSessions()
+        .map((s) => s.sessionId)
+    ).toEqual(["c2"]);
+  });
+
+  it("FR-F1: 单 source 切换后再切回 'all' 恢复四源", () => {
+    useSessionsStore.setState({ sessions: FOUR });
+    useSessionsStore.getState().setFilter({ source: "claude" });
+    expect(useSessionsStore.getState().filteredSessions()).toHaveLength(1);
+    useSessionsStore.getState().setFilter({ source: "all" });
+    expect(useSessionsStore.getState().filteredSessions()).toHaveLength(4);
+  });
+
+  it("FR-F3: resetFilter 把 filter 全部字段一步归位(且产生新对象)", () => {
+    const before = useSessionsStore.getState().filter;
+    useSessionsStore.getState().setFilter({
+      source: "dsh",
+      query: "abc",
+      liveOnly: true,
+      hasSubagents: true,
+      last7Days: true,
+      agentId: "work",
+    });
+    useSessionsStore.getState().resetFilter();
+    const after = useSessionsStore.getState().filter;
+    expect(after).toEqual(DEFAULT_SESSIONS_FILTER);
+    expect(after.source).toBe("all");
+    expect(after.query).toBe("");
+    expect(after.liveOnly).toBe(false);
+    expect(after.hasSubagents).toBe(false);
+    expect(after.last7Days).toBe(false);
+    expect(after.agentId).toBeUndefined();
+    // 必须是新对象,否则 zustand 订阅者不会收到更新
+    expect(after).not.toBe(before);
+  });
+
+  it("FR-F2: 'all' 下 availableAgentIds 为空(低频 agent 组隐藏),切 openclaw 后恢复", () => {
+    useSessionsStore.setState({
+      sessions: [
+        makeSession({ sessionId: "o1", source: "openclaw", agentId: "main" }),
+        makeSession({ sessionId: "o2", source: "openclaw", agentId: "work" }),
+      ],
+    });
+    expect(useSessionsStore.getState().availableAgentIds()).toEqual([]);
+    useSessionsStore.getState().setFilter({ source: "openclaw" });
+    expect(useSessionsStore.getState().availableAgentIds()).toEqual(["main", "work"]);
   });
 });

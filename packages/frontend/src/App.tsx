@@ -16,6 +16,7 @@ import { ToolsRoute } from "./routes/ToolsRoute"; // v0.8.5 B: 全局 tool 聚�
 // 避免重型依赖拖进首屏主包。GraphExplorerRoute 为 default export,可直接 lazy。
 const GraphExplorerRoute = lazy(() => import("./routes/GraphExplorerRoute"));
 import { RevealErrorToast } from "./components/RevealErrorToast";
+import { AppLayout } from "./components/AppLayout"; // v0.12 A1: 全局侧边栏布局
 import { useOverridesBridge } from "./state/overridesStore";
 
 export default function App() {
@@ -59,39 +60,43 @@ export default function App() {
 
   return (
     <>
-      <Routes>
-        <Route path="/" element={<SessionsRoute />} />
-        <Route
-          path="/graph/*"
-          element={
-            <Suspense
-              fallback={
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    height: "100%",
-                    minHeight: 240,
-                    color: "var(--text-secondary, #888)",
-                    fontSize: 14,
-                  }}
-                >
-                  加载中…
-                </div>
-              }
-            >
-              <GraphExplorerRoute />
-            </Suspense>
-          }
-        />
-        <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
-        <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
-        <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
-        <Route path="/settings" element={<SettingsRoute />} />
-        <Route path="/tools" element={<ToolsRoute />} /> {/* v0.8.5 B */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      {/* v0.12 (A1): SideNav 挂在路由树外层,不随路由切换卸载;右侧仅内容区切换。
+          ?view= 深链与 explorer-tabs 原样保留,不受全局布局影响。 */}
+      <AppLayout>
+        <Routes>
+          <Route path="/" element={<SessionsRoute />} />
+          <Route
+            path="/graph/*"
+            element={
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: "100%",
+                      minHeight: 240,
+                      color: "var(--text-secondary, #888)",
+                      fontSize: 14,
+                    }}
+                  >
+                    加载中…
+                  </div>
+                }
+              >
+                <GraphExplorerRoute />
+              </Suspense>
+            }
+          />
+          <Route path="/session/:sessionId" element={<SessionDetailRoute />} />
+          <Route path="/session/:sessionId/trajectory" element={<TrajectoryRoute />} />
+          <Route path="/analyze/:sessionId" element={<AnalyzeRoute />} />
+          <Route path="/settings" element={<SettingsRoute />} />
+          <Route path="/tools" element={<ToolsRoute />} /> {/* v0.8.5 B */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AppLayout>
       {/* v0.6.x: 全局 reveal 错误 toast, 监听 REVEAL_ERROR_EVENT */}
       <RevealErrorToast />
     </>

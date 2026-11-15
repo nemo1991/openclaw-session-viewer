@@ -5,6 +5,19 @@ const zhCN = {
     error: "出错了",
     retry: "重试",
   },
+  // v0.12 (A1 / FR-N6): 全局侧边栏 7 个一级项 + logo/无障碍文案
+  nav: {
+    ariaLabel: "主导航",
+    home: "返回会话列表",
+    sessions: "会话",
+    graph: "图探索",
+    analytics: "分析",
+    health: "体检",
+    rag: "知识问答",
+    tools: "工具",
+    settings: "设置",
+    localOnly: "本地优先 · 零上传",
+  },
   sessions: {
     title: "会话",
     totalCount: "共 {{count}} 个",
@@ -16,8 +29,15 @@ const zhCN = {
       source: "数据源",
       agent: "按 Agent 过滤",
       allAgents: "所有 Agent",
+      // v0.12 (B1 / FR-F1~F3): 全部 source / 高级筛选折叠 / 重置
+      all: "全部",
+      advanced: "高级筛选",
+      reset: "重置筛选",
+      agentHint: "Agent 过滤仅在 OpenClaw 数据源下生效",
+      expandHint: "展开低频筛选（可记住展开状态）",
     },
     source: {
+      all: "全部",
       claude: "Claude Code",
       openclaw: "OpenClaw",
       // v0.9.0: Kimi Code (Moonshot Kimi CLI)
@@ -84,6 +104,13 @@ const zhCN = {
     statTokens: "input {{input}}, output {{output}}, cache hit {{cache}}",
     statCompaction: "{{count}} 次压缩",
     statCompactionDetail: "{{count}} 次压缩, 末次 {{sec}}s",
+    // v0.12 (C1 / FR-C1): stat-chip 分层
+    statsExpand: "展开 {{count}} 项指标",
+    statsCollapse: "收起指标",
+    // v0.12 (C2 / FR-C2): 首页体检风险徽标
+    riskBadge: "风险({{count}})",
+    riskBadgeAria: "命中 {{count}} 条会话体检规则，点击查看会话体检",
+    riskBadgeHint: "体检命中",
   },
   sync: {
     scanning: "扫描中…",
